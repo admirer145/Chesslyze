@@ -1,0 +1,33 @@
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { Layout } from './components/Layout';
+import './App.css';
+
+import { Dashboard } from './components/Dashboard/Dashboard';
+import { ImportGames } from './components/Import/ImportGames';
+// Removed placeholder Dashboard
+
+
+import { ReelFeed } from './components/Reel/ReelFeed';
+import { OpeningExplorer } from './components/Opening/OpeningExplorer';
+import { Settings } from './components/Settings/Settings';
+// Removed Openings placeholder
+
+
+function App() {
+  return (
+    <Router>
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/import" element={<ImportGames />} />
+          <Route path="/reels" element={<ReelFeed />} />
+          <Route path="/openings" element={<OpeningExplorer />} />
+          <Route path="/settings" element={<Settings />} />
+        </Routes>
+      </Layout>
+    </Router>
+  );
+}
+
+export default App;

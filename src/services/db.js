@@ -1,0 +1,76 @@
+import Dexie from 'dexie';
+
+export const db = new Dexie('ReelChessDB');
+
+db.version(1).stores({
+    games: '++id, site, date, white, black, result, eco, [white+result], [black+result], timestamp',
+    positions: 'fen, eval, classification, bestMove',
+    openings: 'eco, name, winRate, frequency',
+    analysis_queue: '++id, gameId, priority, status',
+});
+
+db.version(2).stores({
+    games: '++id, site, date, white, black, result, eco, [white+result], [black+result], timestamp, analyzed',
+});
+
+db.version(3).stores({
+    games: '++id, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed', // Added openingName
+    openings: 'eco, name, winRate, frequency',
+});
+
+db.version(5).stores({
+    positions: null // Drop table to allow primary key change
+});
+
+db.version(6).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus',
+    positions: '++id, gameId, fen, eval, classification, bestMove', // Recreate with new PK and index
+    openings: 'eco, name, winRate, frequency',
+}).upgrade(tx => {
+    // Version 6 migration logic if needed
+});
+
+db.version(7).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus',
+    positions: '++id, gameId, fen, eval, classification, bestMove',
+    openings: 'eco, name, winRate, frequency',
+}).upgrade(tx => {
+    // Stop auto-analysis: Convert all 'pending' to 'idle'
+    return tx.table('games').where('analysisStatus').equals('pending').modify({ analysisStatus: 'idle' });
+});
+
+db.version(8).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, whiteRating, blackRating, perf', // Added metadata
+    positions: '++id, gameId, fen, eval, classification, bestMove',
+    openings: 'eco, name, winRate, frequency',
+});
+
+db.version(9).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, whiteRating, blackRating, perf, speed, timeControl, analyzedAt',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency',
+}).upgrade(tx => {
+    return tx.table('games').toCollection().modify((game) => {
+        if (!game.analysisStatus) game.analysisStatus = 'idle';
+    });
+});
+
+db.version(10).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, whiteRating, blackRating, perf, speed, timeControl, analyzedAt',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+});
+
+db.version(11).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+});
+
+export const addGames = async (games) => {
+    return await db.games.bulkAdd(games);
+};
+
+export const getGame = async (id) => {
+    return await db.games.get(id);
+};

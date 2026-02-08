@@ -1,0 +1,541 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../../services/db';
+import { Chessboard } from 'react-chessboard';
+import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, Play, FastForward, Rewind, AlertCircle, BookOpen } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Chess } from 'chess.js';
+import { AnalyticsPanel } from './AnalyticsPanel';
+
+const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
+    <div className="flex items-center gap-4 p-3 rounded-md hover:bg-subtle transition-colors cursor-default">
+        <div className={`p-2 rounded-md bg-app border text-${color}-400`}>
+            <Icon size={16} />
+        </div>
+        <div className="flex-1">
+            <div className="flex justify-between items-baseline">
+                <span className="text-sm font-medium text-primary">{label}</span>
+                <span className="font-mono text-sm font-semibold text-primary">{value}</span>
+            </div>
+            {subtext && <p className="text-xs text-secondary mt-1">{subtext}</p>}
+        </div>
+    </div>
+);
+
+export const Dashboard = () => {
+    const latestGame = useLiveQuery(() => db.games.orderBy('date').reverse().first());
+    const [selectedGameId, setSelectedGameId] = useState(() => localStorage.getItem('activeGameId'));
+
+    useEffect(() => {
+        const handleActiveChange = () => {
+            setSelectedGameId(localStorage.getItem('activeGameId'));
+        };
+        window.addEventListener('activeGameChanged', handleActiveChange);
+        return () => window.removeEventListener('activeGameChanged', handleActiveChange);
+    }, []);
+
+    const selectedGame = useLiveQuery(async () => {
+        if (!selectedGameId) return null;
+        const id = Number(selectedGameId);
+        if (!id || Number.isNaN(id)) return null;
+        return db.games.get(id);
+    }, [selectedGameId]);
+
+    const stats = useLiveQuery(async () => {
+        const all = await db.games.toArray();
+        if (!all.length) return { total: 0, wins: 0, winRate: 0, accuracy: 0, avgCpLoss: 0, maxStreak: 0, maxSwing: 0 };
+
+        let wins = 0;
+        let totalAccuracy = 0;
+        let analyzedCount = 0;
+        let totalCpLoss = 0;
+        let cpCount = 0;
+        let maxStreak = 0;
+        let maxSwing = 0;
+        let bookMoves = 0;
+        let bookTotal = 0;
+
+        const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
+
+        all.forEach(g => {
+            const isWhite = heroUser && g.white?.toLowerCase() === heroUser;
+            const isBlack = heroUser && g.black?.toLowerCase() === heroUser;
+            if (isWhite && g.result === '1-0') wins++;
+            if (isBlack && g.result === '0-1') wins++;
+
+            if (g.accuracy) {
+                const acc = isWhite ? g.accuracy.white : g.accuracy.black;
+                if (typeof acc === 'number') {
+                    totalAccuracy += acc;
+                    analyzedCount++;
+                }
+            }
+            if (typeof g.avgCpLoss === 'number') {
+                totalCpLoss += g.avgCpLoss;
+                cpCount++;
+            }
+            if (typeof g.maxAccuracyStreak === 'number') {
+                maxStreak = Math.max(maxStreak, g.maxAccuracyStreak);
+            }
+            if (typeof g.maxEvalSwing === 'number') {
+                maxSwing = Math.max(maxSwing, g.maxEvalSwing);
+            }
+            if (Array.isArray(g.analysisLog)) {
+                g.analysisLog.forEach((entry) => {
+                    if (entry.bookMove) bookMoves += 1;
+                    if (entry.phase === 'opening') bookTotal += 1;
+                });
+            }
+        });
+
+        return {
+            total: all.length,
+            wins,
+            winRate: Math.round((wins / all.length) * 100),
+            accuracy: analyzedCount ? Math.round(totalAccuracy / analyzedCount) : 0,
+            avgCpLoss: cpCount ? Math.round(totalCpLoss / cpCount) : 0,
+            maxStreak,
+            maxSwing,
+            bookMoves,
+            bookTotal
+        };
+    });
+
+    const queueCount = useLiveQuery(() => db.games.filter(g => g.analysisStatus === 'pending' || (!g.analyzed && !g.analysisStatus)).count());
+    const failedCount = useLiveQuery(() => db.games.filter(g => g.analysisStatus === 'failed').count());
+
+    const [moveIndex, setMoveIndex] = useState(-1); // -1 = start
+    const [history, setHistory] = useState([]);
+    const [startFen, setStartFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+
+    // Track loaded game ID to prevent resetting when analysis updates the record
+    const loadedGameIdRef = React.useRef(null);
+
+    // Responsive board width
+    const [boardWidth, setBoardWidth] = useState(500);
+    const boardContainerRef = React.useRef(null);
+
+    const [activeTab, setActiveTab] = useState('moves'); // 'moves' | 'analysis'
+
+    // Auto-switch to analysis tab when analysis completes
+    useEffect(() => {
+        if (selectedGameId && selectedGame === null && latestGame?.id) {
+            localStorage.removeItem('activeGameId');
+            setSelectedGameId(null);
+        }
+    }, [selectedGameId, selectedGame, latestGame?.id]);
+
+    const activeGame = selectedGame || latestGame;
+
+    useEffect(() => {
+        if (activeGame?.analyzed) {
+            setActiveTab('analysis');
+        } else {
+            setActiveTab('moves');
+        }
+    }, [activeGame?.analyzed, activeGame?.id]);
+
+    useEffect(() => {
+        if (!boardContainerRef.current) return;
+        const resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.contentRect) {
+                    const width = Math.floor(entry.contentRect.width);
+                    if (width > 0) {
+                        setBoardWidth(width);
+                    }
+                }
+            }
+        });
+        resizeObserver.observe(boardContainerRef.current);
+        return () => resizeObserver.disconnect();
+    }, [activeGame]);
+
+
+    useEffect(() => {
+        if (activeGame && activeGame.pgn) {
+            // Only reset if it's a new game we haven't loaded yet
+            if (loadedGameIdRef.current !== activeGame.id) {
+                try {
+                    const chess = new Chess();
+                    chess.loadPgn(activeGame.pgn);
+
+                    // Check for custom start position
+                    const header = chess.header();
+                    const initFen = header['FEN'] || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+                    setStartFen(initFen);
+
+                    const moves = chess.history({ verbose: true });
+                    setHistory(moves);
+                    setMoveIndex(-1);
+
+                    loadedGameIdRef.current = activeGame.id;
+                } catch (e) {
+                    console.error("Invalid PGN in dashboard", e);
+                }
+            }
+        }
+    }, [activeGame]);
+
+    const handleNext = () => {
+        if (moveIndex < history.length - 1) {
+            setMoveIndex(moveIndex + 1);
+        }
+    };
+
+    const handlePrev = () => {
+        if (moveIndex >= 0) {
+            setMoveIndex(moveIndex - 1);
+        }
+    };
+
+    const handleStart = () => {
+        setMoveIndex(-1);
+    };
+
+    const handleEnd = () => {
+        setMoveIndex(history.length - 1);
+    };
+
+    const handleAnalyze = async () => {
+        if (!activeGame) return;
+        // Reset to pending to trigger queue
+        await db.games.update(activeGame.id, { analyzed: false, analysisStatus: 'pending' });
+    };
+
+    const handleJumpTo = (index) => {
+        setMoveIndex(index);
+    };
+
+    // DERIVE BOARD STATE: Robust derivation with start position support
+    const currentFen = useMemo(() => {
+        try {
+            // Initialize with the correct starting position
+            const chess = new Chess(startFen);
+
+            if (moveIndex > -1 && history.length > 0) {
+                for (let i = 0; i <= moveIndex; i++) {
+                    const move = history[i];
+                    if (move) {
+                        const result = chess.move({
+                            from: move.from,
+                            to: move.to,
+                            promotion: move.promotion
+                        });
+                        if (!result) console.error("Failed to apply move:", move.san, "at index", i);
+                    }
+                }
+            }
+            return chess.fen();
+        } catch (e) {
+            console.error("Error generating FEN:", e);
+            return startFen;
+        }
+    }, [moveIndex, history, startFen]);
+
+    const heroUser = useMemo(() => localStorage.getItem('heroUser'), []);
+    const getSafeName = (value) => {
+        if (!value) return '?';
+        if (typeof value === 'string') return value;
+        return value.name || '?';
+    };
+
+    // Determine orientation: If hero is Black, flip board. Default to White.
+    const boardOrientation = useMemo(() => {
+        if (!activeGame || !heroUser) return 'white';
+        // Case insensitive check
+        if (getSafeName(activeGame.black).toLowerCase() === heroUser.toLowerCase()) return 'black';
+        return 'white';
+    }, [activeGame, heroUser]);
+
+    useEffect(() => {
+        // Scroll active move into view
+        if (moveIndex >= 0) {
+            const el = document.getElementById(`move-${moveIndex}`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }, [moveIndex]);
+
+    const getMeta = (key) => {
+        if (!activeGame) return '?';
+        if (activeGame[key]) return getSafeName(activeGame[key]);
+        const match = activeGame.pgn && activeGame.pgn.match(new RegExp(`\\[${key} "(.+?)"\\]`));
+        return match ? match[1] : '?';
+    };
+
+    // Derived metadata for Top (Opponent) vs Bottom (Hero)
+    const topPlayer = boardOrientation === 'white' ?
+        { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating') } :
+        { name: getMeta('White'), rating: getMeta('WhiteElo') || getMeta('whiteRating') };
+
+    const bottomPlayer = boardOrientation === 'white' ?
+        { name: getMeta('White'), rating: getMeta('WhiteElo') || getMeta('whiteRating') } :
+        { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating') };
+    const chessboardOptions = useMemo(() => ({
+        id: "dashboard-board",
+        position: currentFen,
+        boardWidth: boardWidth || 500,
+        boardOrientation: boardOrientation,
+        arePiecesDraggable: false,
+        animationDuration: 300,
+        customDarkSquareStyle: { backgroundColor: '#475569' },
+        customLightSquareStyle: { backgroundColor: '#e2e8f0' }
+    }), [currentFen, boardWidth, boardOrientation]);
+
+    const classificationBadge = useMemo(() => {
+        if (!activeGame?.analysisLog || moveIndex < 0) return null;
+        const entry = activeGame.analysisLog[moveIndex];
+        if (!entry?.classification) return null;
+
+        const map = {
+            brilliant: { label: '!!', tone: 'brilliant' },
+            great: { label: '!', tone: 'great' },
+            best: { label: '★', tone: 'best' },
+            good: { label: '✓', tone: 'good' },
+            inaccuracy: { label: '?!', tone: 'inaccuracy' },
+            mistake: { label: '?', tone: 'mistake' },
+            blunder: { label: '??', tone: 'blunder' }
+        };
+
+        return map[entry.classification] || null;
+    }, [activeGame?.analysisLog, moveIndex]);
+
+    const badgePosition = useMemo(() => {
+        if (!classificationBadge || !history[moveIndex]?.to) return null;
+        const square = history[moveIndex].to;
+        const file = square.charCodeAt(0) - 97;
+        const rank = parseInt(square[1], 10) - 1;
+        const size = (boardWidth || 500) / 8;
+
+        let x = file;
+        let y = 7 - rank;
+        if (boardOrientation === 'black') {
+            x = 7 - file;
+            y = rank;
+        }
+
+        return {
+            left: Math.round(x * size + size - 18),
+            top: Math.round(y * size + 4)
+        };
+    }, [classificationBadge, history, moveIndex, boardWidth, boardOrientation]);
+
+    if (!stats) return <div className="p-8 text-secondary">Loading dashboard...</div>;
+
+    return (
+        <div className="dashboard-shell bg-app">
+
+            {/* LEFT / CENTER: Chessboard Area */}
+            <div className="dashboard-center flex flex-col min-w-0 overflow-y-auto relative">
+                {/* Added w-full to ensure this container takes width */}
+                {/* Main Board Area */}
+                <div className="flex-1 flex flex-col items-center justify-center min-h-0 w-full p-4">
+
+                    {/* Game Header (Date/Result) */}
+                    {activeGame && (
+                        <div className="text-xs text-secondary flex items-center justify-center gap-3 mb-2 shrink-0">
+                            <span className="uppercase tracking-wider font-semibold">{getMeta('perf')}</span>
+                            <span>•</span>
+                            <span>{new Date(activeGame.date).toLocaleDateString()}</span>
+                            <span>•</span>
+                            <span>{activeGame.result}</span>
+                        </div>
+                    )}
+
+                    {activeGame ? (
+                        <div className="board-wrap flex flex-col gap-1 shrink-0">
+                            {/* Top Player */}
+                            <div className="flex justify-between items-end px-1">
+                                <div className="flex items-baseline gap-2 text-secondary">
+                                    <span className="font-semibold">{topPlayer.name}</span>
+                                    <span className="text-sm font-light">({topPlayer.rating})</span>
+                                </div>
+                                <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'Black' : 'White'}</div>
+                            </div>
+
+                            {/* BOARD CONTAINER */}
+                            <div
+                                ref={boardContainerRef}
+                                className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
+                            >
+                                <Chessboard options={chessboardOptions} />
+                                {badgePosition && classificationBadge && (
+                                    <div
+                                        className={`board-badge badge-${classificationBadge.tone}`}
+                                        style={{ left: badgePosition.left, top: badgePosition.top }}
+                                    >
+                                        {classificationBadge.label}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Bottom Player */}
+                            <div className="flex justify-between items-start px-1">
+                                <div className="flex items-baseline gap-2 text-primary">
+                                    <span className="font-bold text-lg">{bottomPlayer.name}</span>
+                                    <span className="text-sm font-light">({bottomPlayer.rating})</span>
+                                </div>
+                                <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'White' : 'Black'}</div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-white/10 rounded-xl">
+                            <Activity size={48} className="text-muted mb-4" />
+                            <h3 className="text-lg font-medium text-primary">No game selected</h3>
+                            <p className="text-secondary text-center mb-6 max-w-xs">Import a game PGN to start analyzing your moves.</p>
+                            <Link to="/import" className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-medium transition-colors">
+                                Import Game
+                            </Link>
+                        </div>
+                    )}
+
+                    {/* Controls */}
+                    <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
+                        <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
+                        <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
+                        <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
+                        <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
+
+                        {activeGame && (
+                            <button
+                                onClick={handleAnalyze}
+                                disabled={activeGame.analysisStatus === 'analyzing'}
+                                className={`ml-4 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium transition-colors ${activeGame.analysisStatus === 'analyzing' ? 'bg-blue-500/10 text-blue-400 cursor-wait' :
+                                    activeGame.analysisStatus === 'failed' ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' :
+                                        activeGame.analyzed ? 'bg-subtle text-secondary hover:text-primary' :
+                                            'bg-primary text-black hover:opacity-90'
+                                    }`}
+                            >
+                                <Zap size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
+                                {activeGame.analysisStatus === 'analyzing' ? 'Analyzing...' :
+                                    activeGame.analysisStatus === 'failed' ? 'Retry Analysis' :
+                                        activeGame.analyzed ? 'Re-analyze' : 'Analyze'}
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* RIGHT: Context Panel (Move List + Stats) */}
+            <div className="dashboard-side bg-panel border-l flex flex-col shrink-0 overflow-hidden">
+
+                {/* 1. Right Panel Content (Moves or Analytics) */}
+                <div className="flex-1 flex flex-col min-h-0 relative">
+                    {/* Tab Header */}
+                    <div className="flex items-center border-b bg-subtle/50 shrink-0">
+                        <button
+                            onClick={() => setActiveTab('moves')}
+                            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'moves' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary'}`}
+                        >
+                            Moves
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('analysis')}
+                            disabled={!latestGame?.analyzed}
+                            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'analysis' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
+                        >
+                            Analytics
+                        </button>
+                    </div>
+
+                    {/* Scrollable Content Area */}
+                    <div className="flex-1 overflow-y-auto min-h-0 bg-panel relative">
+                        {activeTab === 'analysis' ? (
+                            activeGame?.analyzed ? (
+                                <AnalyticsPanel game={activeGame} onJumpToMove={handleJumpTo} />
+                            ) : (
+                                <div className="p-8 text-center text-muted">
+                                    Analysis not available yet. Run analysis to unlock move quality and evaluation insights.
+                                </div>
+                            )
+                        ) : (
+                            /* Move List Grid */
+                            <div className="move-list text-sm">
+                                <div className="move-row move-header">
+                                    <div className="move-num text-muted">#</div>
+                                    <div className="move-cell move-cell-white text-muted">White</div>
+                                    <div className="move-cell move-cell-black text-muted">Black</div>
+                                </div>
+                                {history.reduce((rows, move, i) => {
+                                    if (i % 2 === 0) {
+                                        rows.push([move]);
+                                    } else {
+                                        rows[rows.length - 1].push(move);
+                                    }
+                                    return rows;
+                                }, []).map((pair, rowIdx) => {
+                                    const whiteMove = pair[0];
+                                    const blackMove = pair[1];
+                                    const whiteIndex = rowIdx * 2;
+                                    const blackIndex = rowIdx * 2 + 1;
+                                    return (
+                                        <div key={rowIdx} className={`move-row ${rowIdx % 2 === 0 ? 'move-row-even' : 'move-row-odd'}`}>
+                                            <div className="move-num text-muted">{rowIdx + 1}</div>
+                                            <button
+                                                id={`move-${whiteIndex}`}
+                                                onClick={() => handleJumpTo(whiteIndex)}
+                                                className={`move-cell move-cell-white ${moveIndex === whiteIndex ? 'move-cell-active' : ''}`}
+                                            >
+                                                {whiteMove?.san || '-'}
+                                            </button>
+                                            <button
+                                                id={`move-${blackIndex}`}
+                                                onClick={() => handleJumpTo(blackIndex)}
+                                                disabled={!blackMove}
+                                                className={`move-cell move-cell-black ${moveIndex === blackIndex ? 'move-cell-active' : ''}`}
+                                            >
+                                                {blackMove?.san || '-'}
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* 2. Stats (Bottom Half) - Only show in Moves view */}
+                {activeTab !== 'analysis' && (
+                    <div className="dashboard-performance flex flex-col bg-panel/50 border-t shrink-0">
+                        <div className="p-4 border-b sticky top-0 bg-panel z-10">
+                            <h2 className="text-sm font-semibold text-primary">Performance</h2>
+                        </div>
+
+                        <div className="performance-scroll p-4 flex flex-col gap-2">
+                            <StatRow label="Games" value={stats.total} subtext="Total analyzed" icon={Activity} color="blue" />
+                            <StatRow label="Win Rate" value={`${stats.winRate}%`} subtext="Recent trend" icon={ArrowUpRight} color="green" />
+                            <StatRow label="Accuracy" value={stats.accuracy ? `${stats.accuracy}%` : '-'} subtext="Avg CP Loss" icon={Target} color="orange" />
+                            <StatRow label="Avg CP Loss" value={stats.avgCpLoss ? `${stats.avgCpLoss}` : '-'} subtext="Lower is better" icon={Target} color="yellow" />
+                            <StatRow label="Accuracy Streak" value={stats.maxStreak || '-'} subtext="Best streak (>=90%)" icon={Zap} color="green" />
+                            <StatRow label="Max Swing" value={stats.maxSwing || '-'} subtext="Largest eval swing" icon={Activity} color="red" />
+                            <StatRow label="Book Moves" value={stats.bookTotal ? `${Math.round((stats.bookMoves / stats.bookTotal) * 100)}%` : '-'} subtext="Opening moves in book" icon={BookOpen} color="blue" />
+                            {queueCount > 0 && (
+                                <StatRow label="Queue" value={queueCount} subtext="Pending analysis" icon={Zap} color="yellow" />
+                            )}
+                            {failedCount > 0 && (
+                                <StatRow label="Failed" value={failedCount} subtext="Analysis errors" icon={AlertCircle} color="red" />
+                            )}
+                        </div>
+
+                        <div className="p-4 mt-auto">
+                            <div className="p-3 rounded-md bg-subtle border">
+                                <div className="flex items-start gap-3">
+                                    <Zap size={16} className="text-orange-400 mt-1 shrink-0" />
+                                    <div>
+                                        <h4 className="text-sm font-medium text-primary">Opening</h4>
+                                        <p className="text-xs text-secondary mt-1 leading-relaxed">
+                                            {activeGame?.openingName || activeGame?.eco || 'Unknown'}
+                                        </p>
+                                        <Link to="/openings" className="inline-flex items-center gap-1 text-xs text-blue-400 mt-3 font-medium hover:text-white">
+                                            View Stats <ArrowUpRight size={12} />
+                                        </Link>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
