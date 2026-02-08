@@ -1,11 +1,30 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { Chessboard } from 'react-chessboard';
 import { ArrowRight, Eye, CheckCircle, XCircle, HelpCircle, ChevronLeft, ChevronRight, FastForward, Rewind } from 'lucide-react';
 import { Chess } from 'chess.js';
 
+const MOVE_BADGE_MAP = {
+    brilliant: { label: '!!', tone: 'brilliant' },
+    great: { label: '!', tone: 'great' },
+    best: { label: '★', tone: 'best' },
+    good: { label: '✓', tone: 'good' },
+    inaccuracy: { label: '?!', tone: 'inaccuracy' },
+    mistake: { label: '?', tone: 'mistake' },
+    blunder: { label: '??', tone: 'blunder' }
+};
+
+const getMoveBadge = (classification) => {
+    if (!classification) return null;
+    return MOVE_BADGE_MAP[classification] || null;
+};
+
 const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
+    const BADGE_SIZE = 26;
+    const BADGE_INSET = 2;
+    const PIECE_ANIMATION_MS = 300;
+
     const [showSolution, setShowSolution] = useState(false);
     const [game, setGame] = useState(null);
     const [userMove, setUserMove] = useState(null); // Track user attempt if we want interactivity
@@ -27,6 +46,11 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
     const resetTimerRef = useRef(null);
     const introTimerRef = useRef(null);
     const messageTimerRef = useRef(null);
+    const badgeTimerRef = useRef(null);
+    const [badgesReady, setBadgesReady] = useState(true);
+    const [blunderBadgeStyle, setBlunderBadgeStyle] = useState(null);
+    const [solutionBadgeStyle, setSolutionBadgeStyle] = useState(null);
+    const [exploreBadgeStyle, setExploreBadgeStyle] = useState(null);
 
     useEffect(() => {
         db.games.get(position.gameId).then(setGame);
@@ -41,6 +65,10 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         setLastAttempt(null);
         setStage('puzzle');
         setAttemptLocked(false);
+        setBadgesReady(false);
+        setBlunderBadgeStyle(null);
+        setSolutionBadgeStyle(null);
+        setExploreBadgeStyle(null);
         if (resetTimerRef.current) {
             clearTimeout(resetTimerRef.current);
             resetTimerRef.current = null;
@@ -52,6 +80,10 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         if (messageTimerRef.current) {
             clearTimeout(messageTimerRef.current);
             messageTimerRef.current = null;
+        }
+        if (badgeTimerRef.current) {
+            clearTimeout(badgeTimerRef.current);
+            badgeTimerRef.current = null;
         }
     }, [position.id]);
 
@@ -68,6 +100,40 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         resizeObserver.observe(boardRef.current);
         return () => resizeObserver.disconnect();
     }, [position.id]);
+
+    const computeBadgeStyle = (square) => {
+        if (!square) return null;
+
+        const root = boardRef.current;
+        if (root) {
+            // react-chessboard squares usually expose `data-square="<sq>"`
+            const el = root.querySelector(`[data-square="${square}"]`);
+            if (el) {
+                const rootRect = root.getBoundingClientRect();
+                const rect = el.getBoundingClientRect();
+                return {
+                    left: Math.round(rect.left - rootRect.left + rect.width - BADGE_SIZE + BADGE_INSET),
+                    top: Math.round(rect.top - rootRect.top + BADGE_INSET)
+                };
+            }
+        }
+
+        // Fallback: math-based placement (square top-right, orientation aware)
+        const file = square.charCodeAt(0) - 97;
+        const rank = parseInt(square[1], 10) - 1;
+        if (Number.isNaN(file) || Number.isNaN(rank)) return null;
+        const size = boardSize / 8;
+        let x = file;
+        let y = 7 - rank;
+        if (!isHeroWhite) {
+            x = 7 - file;
+            y = rank;
+        }
+        return {
+            left: Math.round(x * size + size - BADGE_SIZE + BADGE_INSET),
+            top: Math.round(y * size + BADGE_INSET)
+        };
+    };
 
     const onDrop = (...args) => {
         console.log("[ReelFeed] onDrop args:", args);
@@ -203,18 +269,13 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         }
     }, [game?.pgn, position?.ply]);
 
-    const classificationBadge = useMemo(() => {
-        if (!position?.classification) return null;
-        const map = {
-            brilliant: { label: '!!', tone: 'brilliant' },
-            great: { label: '!', tone: 'great' },
-            best: { label: '★', tone: 'best' },
-            good: { label: '✓', tone: 'good' },
-            inaccuracy: { label: '?!', tone: 'inaccuracy' },
-            mistake: { label: '?', tone: 'mistake' },
-            blunder: { label: '??', tone: 'blunder' }
-        };
-        return map[position.classification] || null;
+    const classificationBadge = useMemo(() => getMoveBadge(position?.classification), [position?.classification]);
+
+    const solutionBadge = useMemo(() => {
+        if (!position?.classification) return { label: '★', tone: 'best' };
+        const positive = ['brilliant', 'great', 'best', 'good'];
+        if (positive.includes(position.classification)) return getMoveBadge(position.classification);
+        return { label: '★', tone: 'best' };
     }, [position?.classification]);
 
     const heroMoved = useMemo(() => {
@@ -289,28 +350,16 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         return puzzleFen; // Default start state for puzzle
     }, [stage, blunderFen, exploreMode, exploreFen, tempFen, puzzleFen]);
 
-    const getSquarePosition = (square) => {
-        if (!square) return null;
-        const file = square.charCodeAt(0) - 97;
-        const rank = parseInt(square[1], 10) - 1;
-        const size = boardSize / 8;
-        let x = file;
-        let y = 7 - rank;
-        if (!isHeroWhite) {
-            x = 7 - file;
-            y = rank;
-        }
-        return {
-            left: Math.round(x * size + size - 18),
-            top: Math.round(y * size + 4)
-        };
-    };
+    const solutionSquare = useMemo(() => {
+        if (!targetMove || targetMove.length < 4) return null;
+        return targetMove.substring(2, 4);
+    }, [targetMove]);
 
-    const blunderBadgePos = useMemo(() => getSquarePosition(blunderInfo?.to), [blunderInfo?.to, boardSize, isHeroWhite]);
-    const solveBadgePos = useMemo(() => {
-        if (!lastAttempt?.uci) return null;
-        return getSquarePosition(lastAttempt.uci.substring(2, 4));
-    }, [lastAttempt?.uci, boardSize, isHeroWhite]);
+    const exploreBadge = useMemo(() => {
+        if (!exploreMode || exploreIndex < 0) return null;
+        const entry = game?.analysisLog?.[exploreIndex];
+        return getMoveBadge(entry?.classification);
+    }, [exploreMode, exploreIndex, game?.analysisLog]);
 
     useEffect(() => {
         if (!heroMoved) {
@@ -328,6 +377,41 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
             if (introTimerRef.current) clearTimeout(introTimerRef.current);
         };
     }, [heroMoved, position?.id]);
+
+    // Delay badge render until piece animation likely finished
+    useEffect(() => {
+        setBadgesReady(false);
+        if (badgeTimerRef.current) clearTimeout(badgeTimerRef.current);
+        badgeTimerRef.current = setTimeout(() => setBadgesReady(true), PIECE_ANIMATION_MS + 60);
+        return () => {
+            if (badgeTimerRef.current) clearTimeout(badgeTimerRef.current);
+        };
+    }, [displayFen, exploreMode, stage, tempFen, exploreIndex]);
+
+    // Recompute badge positions after the board has rendered and the piece animation settles.
+    useLayoutEffect(() => {
+        if (!badgesReady) return;
+
+        const wantBlunderSquare = (stage === 'intro' || !heroMoved) ? blunderInfo?.to : null;
+        const wantSolutionSquare = showSolution ? solutionSquare : null;
+        const wantExploreSquare = (exploreMode && exploreIndex >= 0) ? exploreHistory?.[exploreIndex]?.to : null;
+
+        setBlunderBadgeStyle(computeBadgeStyle(wantBlunderSquare));
+        setSolutionBadgeStyle(computeBadgeStyle(wantSolutionSquare));
+        setExploreBadgeStyle(computeBadgeStyle(wantExploreSquare));
+    }, [
+        badgesReady,
+        boardSize,
+        isHeroWhite,
+        stage,
+        heroMoved,
+        blunderInfo?.to,
+        showSolution,
+        solutionSquare,
+        exploreMode,
+        exploreIndex,
+        exploreHistory
+    ]);
 
     const handleExploreReset = () => {
         setExploreMode(false);
@@ -410,6 +494,27 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
     const handleExploreNext = () => setExploreIndex(i => Math.min(exploreHistory.length - 1, i + 1));
     const handleExploreEnd = () => setExploreIndex(exploreHistory.length - 1);
 
+    // When user reveals solution, show the best move on the board.
+    useEffect(() => {
+        if (!showSolution) {
+            setTempFen(null);
+            return;
+        }
+        if (!puzzleFen || !targetMove || targetMove.length < 4) return;
+        try {
+            const chess = new Chess(puzzleFen);
+            const from = targetMove.substring(0, 2);
+            const to = targetMove.substring(2, 4);
+            const promotion = targetMove.length > 4 ? targetMove.substring(4, 5) : undefined;
+            const move = chess.move({ from, to, promotion });
+            if (move) {
+                setTempFen(chess.fen());
+            }
+        } catch (e) {
+            console.error("Failed to apply solution move", e);
+        }
+    }, [showSolution, puzzleFen, targetMove]);
+
     if (!game) return <div className="h-full flex items-center justify-center text-muted">Loading context...</div>;
 
     const promptText = () => {
@@ -470,24 +575,33 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
                                 arePiecesDraggable: exploreMode || (!showSolution && stage === 'puzzle'),
                                 onPieceDrop: exploreMode ? onExploreDrop : onDrop,
                                 boardOrientation: isHeroWhite ? 'white' : 'black',
+                                animationDuration: PIECE_ANIMATION_MS,
                                 customDarkSquareStyle: { backgroundColor: '#71717a' },
                                 customLightSquareStyle: { backgroundColor: '#e4e4e7' }
                             }}
                         />
-                        {classificationBadge && blunderBadgePos && (stage === 'intro' || !heroMoved) && (
+                        {!exploreMode && badgesReady && classificationBadge && blunderBadgeStyle && (stage === 'intro' || !heroMoved) && (
                             <div
                                 className={`board-badge badge-${classificationBadge.tone}`}
-                                style={{ left: blunderBadgePos.left, top: blunderBadgePos.top }}
+                                style={{ left: blunderBadgeStyle.left, top: blunderBadgeStyle.top }}
                             >
                                 {classificationBadge.label}
                             </div>
                         )}
-                        {showSolution && solveBadgePos && (
+                        {!exploreMode && badgesReady && showSolution && solutionBadge && solutionBadgeStyle && (
                             <div
-                                className="board-badge badge-best"
-                                style={{ left: solveBadgePos.left, top: solveBadgePos.top }}
+                                className={`board-badge badge-${solutionBadge.tone}`}
+                                style={{ left: solutionBadgeStyle.left, top: solutionBadgeStyle.top }}
                             >
-                                ★
+                                {solutionBadge.label}
+                            </div>
+                        )}
+                        {exploreMode && badgesReady && exploreBadge && exploreBadgeStyle && (
+                            <div
+                                className={`board-badge badge-${exploreBadge.tone}`}
+                                style={{ left: exploreBadgeStyle.left, top: exploreBadgeStyle.top }}
+                            >
+                                {exploreBadge.label}
                             </div>
                         )}
                     </div>
