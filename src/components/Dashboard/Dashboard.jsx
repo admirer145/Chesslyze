@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useLayoutEffect, useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { Chessboard } from 'react-chessboard';
@@ -116,6 +116,9 @@ export const Dashboard = () => {
     const boardContainerRef = React.useRef(null);
 
     const [activeTab, setActiveTab] = useState('moves'); // 'moves' | 'analysis'
+    const [hoverArrow, setHoverArrow] = useState(null); // { from, to }
+    const [previewFen, setPreviewFen] = useState(null);
+    const [badgeStyle, setBadgeStyle] = useState(null); // { left, top }
 
     // Auto-switch to analysis tab when analysis completes
     useEffect(() => {
@@ -134,6 +137,14 @@ export const Dashboard = () => {
             setActiveTab('moves');
         }
     }, [activeGame?.analyzed, activeGame?.id]);
+
+    useEffect(() => {
+        if (activeTab !== 'analysis') setHoverArrow(null);
+    }, [activeTab]);
+
+    useEffect(() => {
+        if (activeTab !== 'analysis') setPreviewFen(null);
+    }, [activeTab]);
 
     useEffect(() => {
         if (!boardContainerRef.current) return;
@@ -273,21 +284,23 @@ export const Dashboard = () => {
         { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating') };
     const chessboardOptions = useMemo(() => ({
         id: "dashboard-board",
-        position: currentFen,
+        position: previewFen || currentFen,
         boardWidth: boardWidth || 500,
         boardOrientation: boardOrientation,
         arePiecesDraggable: false,
         animationDuration: 300,
+        customArrows: hoverArrow ? [[hoverArrow.from, hoverArrow.to, 'rgba(245, 200, 75, 0.95)']] : [],
         customDarkSquareStyle: { backgroundColor: '#475569' },
         customLightSquareStyle: { backgroundColor: '#e2e8f0' }
-    }), [currentFen, boardWidth, boardOrientation]);
+    }), [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow]);
 
     const classificationBadge = useMemo(() => {
         if (!activeGame?.analysisLog || moveIndex < 0) return null;
         const entry = activeGame.analysisLog[moveIndex];
-        if (!entry?.classification) return null;
+        if (!entry) return null;
 
         const map = {
+            book: { label: 'B', tone: 'book' },
             brilliant: { label: '!!', tone: 'brilliant' },
             great: { label: '!', tone: 'great' },
             best: { label: '★', tone: 'best' },
@@ -297,12 +310,38 @@ export const Dashboard = () => {
             blunder: { label: '??', tone: 'blunder' }
         };
 
+        // Back-compat: show Book badge even if older analysis kept `classification` as best/good.
+        if (entry.bookMove) return map.book;
         return map[entry.classification] || null;
     }, [activeGame?.analysisLog, moveIndex]);
 
-    const badgePosition = useMemo(() => {
-        if (!classificationBadge || !history[moveIndex]?.to) return null;
+    useLayoutEffect(() => {
+        if (!classificationBadge || moveIndex < 0 || !history[moveIndex]?.to) {
+            setBadgeStyle(null);
+            return;
+        }
+        if (previewFen) {
+            // When previewing a PV step, the board is no longer aligned to the "current move" badge.
+            setBadgeStyle(null);
+            return;
+        }
+
         const square = history[moveIndex].to;
+        const root = boardContainerRef.current;
+        if (root) {
+            const el = root.querySelector(`[data-square="${square}"]`);
+            if (el) {
+                const rootRect = root.getBoundingClientRect();
+                const rect = el.getBoundingClientRect();
+                setBadgeStyle({
+                    left: Math.round(rect.left - rootRect.left + rect.width - 26 + 2),
+                    top: Math.round(rect.top - rootRect.top + 2)
+                });
+                return;
+            }
+        }
+
+        // Fallback: math-based placement (square top-right)
         const file = square.charCodeAt(0) - 97;
         const rank = parseInt(square[1], 10) - 1;
         const size = (boardWidth || 500) / 8;
@@ -313,12 +352,11 @@ export const Dashboard = () => {
             x = 7 - file;
             y = rank;
         }
-
-        return {
-            left: Math.round(x * size + size - 18),
-            top: Math.round(y * size + 4)
-        };
-    }, [classificationBadge, history, moveIndex, boardWidth, boardOrientation]);
+        setBadgeStyle({
+            left: Math.round(x * size + size - 26 + 2),
+            top: Math.round(y * size + 2)
+        });
+    }, [classificationBadge, history, moveIndex, boardWidth, boardOrientation, previewFen]);
 
     if (!stats) return <div className="p-8 text-secondary">Loading dashboard...</div>;
 
@@ -359,10 +397,10 @@ export const Dashboard = () => {
                                 className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
                             >
                                 <Chessboard options={chessboardOptions} />
-                                {badgePosition && classificationBadge && (
+                                {badgeStyle && classificationBadge && (
                                     <div
                                         className={`board-badge badge-${classificationBadge.tone}`}
-                                        style={{ left: badgePosition.left, top: badgePosition.top }}
+                                        style={{ left: badgeStyle.left, top: badgeStyle.top }}
                                     >
                                         {classificationBadge.label}
                                     </div>
@@ -431,7 +469,7 @@ export const Dashboard = () => {
                         </button>
                         <button
                             onClick={() => setActiveTab('analysis')}
-                            disabled={!latestGame?.analyzed}
+                            disabled={!(activeGame?.analysisLog && activeGame.analysisLog.length > 0)}
                             className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'analysis' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
                         >
                             Analytics
@@ -441,8 +479,22 @@ export const Dashboard = () => {
                     {/* Scrollable Content Area */}
                     <div className="flex-1 overflow-y-auto min-h-0 bg-panel relative">
                         {activeTab === 'analysis' ? (
-                            activeGame?.analyzed ? (
-                                <AnalyticsPanel game={activeGame} onJumpToMove={handleJumpTo} />
+                            (activeGame?.analysisLog && activeGame.analysisLog.length > 0) ? (
+                                <AnalyticsPanel
+                                    game={activeGame}
+                                    onJumpToMove={handleJumpTo}
+                                    activeIndex={moveIndex}
+                                    onBestHover={(uci, fen) => {
+                                        if (!uci || typeof uci !== 'string' || uci.length < 4) {
+                                            setHoverArrow(null);
+                                            return;
+                                        }
+                                        const from = uci.substring(0, 2);
+                                        const to = uci.substring(2, 4);
+                                        setHoverArrow({ from, to });
+                                    }}
+                                    onPreviewFen={(fen) => setPreviewFen(fen)}
+                                />
                             ) : (
                                 <div className="p-8 text-center text-muted">
                                     Analysis not available yet. Run analysis to unlock move quality and evaluation insights.

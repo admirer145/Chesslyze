@@ -734,7 +734,7 @@ export const ReelFeed = () => {
 
         // 1. Get all critical positions
         const candidates = await db.positions
-            .where('classification').anyOf(['blunder', 'mistake', 'inaccuracy', 'brilliant', 'great', 'best', 'good'])
+            .where('classification').anyOf(['blunder', 'mistake', 'inaccuracy', 'brilliant', 'great'])
             .limit(300)
             .toArray();
 

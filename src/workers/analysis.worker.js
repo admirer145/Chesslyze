@@ -5,6 +5,7 @@
 const rawPostMessage = self.postMessage.bind(self);
 
 let currentJobId = null;
+let currentMultiPv = 1;
 
 // This will be called by stockfish.js when it wants to "print"
 self.postMessage = (msg) => {
@@ -27,6 +28,20 @@ const logCheck = (msg) => {
 const handleEngineOutput = (line) => {
     logCheck("Engine Output: " + line);
 
+    if (line.startsWith('id name')) {
+        const name = line.substring('id name'.length).trim();
+        rawPostMessage({ type: 'ENGINE_ID', name });
+        return;
+    }
+    if (line.startsWith('option name Use NNUE')) {
+        rawPostMessage({ type: 'ENGINE_CAPS', caps: { nnue: true } });
+        return;
+    }
+    if (line.startsWith('option name MultiPV')) {
+        rawPostMessage({ type: 'ENGINE_CAPS', caps: { multipv: true } });
+        return;
+    }
+
     if (line.startsWith('bestmove')) {
         const parts = line.split(' ');
         const bestMove = parts[1];
@@ -34,10 +49,11 @@ const handleEngineOutput = (line) => {
         currentJobId = null;
     } else if (line.startsWith('info') && line.includes('score')) {
         const parts = line.split(' ');
-        let depth = 0, score = 0, mate = null, pv = '';
+        let depth = 0, score = 0, mate = null, pv = '', multipv = 1;
 
         for (let i = 0; i < parts.length; i++) {
             if (parts[i] === 'depth') depth = parseInt(parts[i + 1]);
+            if (parts[i] === 'multipv') multipv = parseInt(parts[i + 1]);
             if (parts[i] === 'score') {
                 if (parts[i + 1] === 'cp') score = parseInt(parts[i + 2]);
                 if (parts[i + 1] === 'mate') mate = parseInt(parts[i + 2]);
@@ -51,7 +67,7 @@ const handleEngineOutput = (line) => {
         rawPostMessage({
             type: 'INFO',
             jobId: currentJobId,
-            evaluation: { depth, score, mate, pv }
+            evaluation: { depth, score, mate, pv, multipv }
         });
     }
 };
@@ -86,14 +102,19 @@ self.onmessage = (e) => {
         // Send internal initialization if needed, or just warm it up
         if (stockfishOnMessage) {
             stockfishOnMessage({ data: 'uci' });
+            stockfishOnMessage({ data: 'isready' });
         }
     }
 
     if (type === 'ANALYZE') {
         currentJobId = jobId;
-        const { fen, depth = 15 } = data;
+        const { fen, depth = 15, multiPv = 1 } = data;
+        currentMultiPv = Math.max(1, Math.min(8, parseInt(multiPv, 10) || 1));
 
         if (stockfishOnMessage) {
+            stockfishOnMessage({ data: 'stop' });
+            stockfishOnMessage({ data: 'ucinewgame' });
+            stockfishOnMessage({ data: `setoption name MultiPV value ${currentMultiPv}` });
             stockfishOnMessage({ data: 'position fen ' + fen });
             stockfishOnMessage({ data: 'go depth ' + depth });
         } else {
@@ -101,8 +122,22 @@ self.onmessage = (e) => {
         }
     }
 
+    if (type === 'SET_OPTIONS') {
+        if (!stockfishOnMessage) return;
+        const options = (data && data.options) || [];
+        for (const opt of options) {
+            if (!opt?.name) continue;
+            if (opt.value === undefined || opt.value === null) {
+                stockfishOnMessage({ data: `setoption name ${opt.name}` });
+            } else {
+                stockfishOnMessage({ data: `setoption name ${opt.name} value ${opt.value}` });
+            }
+        }
+    }
+
     if (type === 'STOP') {
         if (stockfishOnMessage) stockfishOnMessage({ data: 'stop' });
         currentJobId = null;
+        currentMultiPv = 1;
     }
 };

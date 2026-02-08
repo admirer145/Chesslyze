@@ -23,6 +23,7 @@ const calculateAccuracy = (cpLoss) => {
 
 const applyClassificationPenalty = (accuracy, classification) => {
     const penalties = {
+        book: 0,
         blunder: 25,
         mistake: 15,
         inaccuracy: 8,
@@ -41,7 +42,9 @@ const getClassification = ({
     bestMoveUCI,
     scoreBefore,
     myScoreAfter,
-    materialDelta
+    materialDelta,
+    phase,
+    isInTopLines
 }) => {
     const isBest = userMoveUCI === bestMoveUCI;
 
@@ -55,9 +58,23 @@ const getClassification = ({
         return 'best';
     }
 
-    if (evalDiff > THRESHOLDS.BLUNDER) return 'blunder';
-    if (evalDiff > THRESHOLDS.MISTAKE) return 'mistake';
-    if (evalDiff > THRESHOLDS.INACCURACY) return 'inaccuracy';
+    const multiplier = phase === 'opening' ? 1.6 : 1;
+
+    // If a move flips the evaluation across a meaningful threshold, treat it as a blunder
+    // even if raw evalDiff is borderline (prevents obvious throw moves being labeled as "mistake").
+    const before = typeof scoreBefore === 'number' ? scoreBefore : 0;
+    const after = typeof myScoreAfter === 'number' ? myScoreAfter : 0;
+    const flipThreshold = 120;
+    if ((before >= flipThreshold && after <= -flipThreshold) || (before <= -flipThreshold && after >= flipThreshold)) {
+        return 'blunder';
+    }
+
+    if (evalDiff > THRESHOLDS.BLUNDER * multiplier) return 'blunder';
+    if (evalDiff > THRESHOLDS.MISTAKE * multiplier) return 'mistake';
+    if (evalDiff > THRESHOLDS.INACCURACY * multiplier) return 'inaccuracy';
+
+    // If your move is one of the engine's top candidates, don't call it an inaccuracy.
+    if (isInTopLines && evalDiff <= THRESHOLDS.INACCURACY * multiplier) return 'good';
     if (evalDiff > THRESHOLDS.GOOD) return 'good';
     return 'good';
 };
@@ -90,6 +107,12 @@ const getGamePhase = (ply, material) => {
     if (ply <= 20) return 'opening';
     if (material <= 14) return 'endgame';
     return 'middlegame';
+};
+
+const fenKey = (fen) => {
+    if (!fen || typeof fen !== 'string') return '';
+    // Ignore move clocks to make book lookups stable across transpositions/time.
+    return fen.split(' ').slice(0, 4).join(' ');
 };
 
 const getSquareCoords = (square) => {
@@ -221,6 +244,7 @@ const generatePlanHint = ({ phase, motifs, classification }) => {
 };
 
 const generateExplanation = (classification, evalDiff, move, bestMove) => {
+    if (classification === 'book') return `Book move. This is a known opening line.`;
     if (classification === 'brilliant') return `Brilliant!! A difficult-to-find, winning sacrifice. ${move} is the engine's top choice.`;
     if (classification === 'great') return `Great! A critical, often only, good move. ${move} keeps you on track.`;
     if (classification === 'blunder') return `This move loses significant material or allows a mate. You played ${move}, but ${bestMove} was much better.`;
@@ -248,7 +272,11 @@ export const processGame = async (gameId) => {
         return;
     }
 
-    await db.games.update(gameId, { analysisStatus: 'analyzing', analysisStartedAt: new Date().toISOString() });
+    await db.games.update(gameId, {
+        analysisStatus: 'analyzing',
+        analysisStartedAt: new Date().toISOString(),
+        analysisHeartbeatAt: new Date().toISOString()
+    });
     await db.positions.where('gameId').equals(gameId).delete();
 
     const chess = new Chess();
@@ -276,31 +304,69 @@ export const processGame = async (gameId) => {
     let prevScore = 0;
 
     let bookMoves = [];
+    let bookMoveByFen = null;
     try {
         if (game.eco) {
             const opening = await db.openings.get(game.eco);
             if (opening?.masterMoves?.length) bookMoves = opening.masterMoves;
+            if (opening?.masterMoveByFen && typeof opening.masterMoveByFen === 'object') bookMoveByFen = opening.masterMoveByFen;
         }
     } catch (e) {
         console.warn("Failed to load opening book moves", e);
     }
+    const getBookMovesForFen = (fen) => {
+        const key = fenKey(fen);
+        const arr = bookMoveByFen?.[key];
+        if (Array.isArray(arr) && arr.length) return arr;
+        return bookMoves;
+    };
 
     const depthSetting = parseInt(localStorage.getItem('engineDepth') || '15', 10);
     const depth = Number.isNaN(depthSetting) ? 15 : depthSetting;
     const shallowDepth = Math.max(8, depth - 4);
+    const multiPvSetting = parseInt(localStorage.getItem('engineMultiPv') || '1', 10);
+    const multiPv = Number.isNaN(multiPvSetting) ? 1 : Math.max(1, Math.min(5, multiPvSetting));
+    const deepDepthSetting = parseInt(localStorage.getItem('engineDeepDepth') || '0', 10);
+    const deepDepthRaw = Number.isNaN(deepDepthSetting) ? 0 : deepDepthSetting;
+    const deepDepth = Math.max(0, Math.min(60, deepDepthRaw));
+
+    const safeAnalyze = async (fen, opts) => {
+        try {
+            return await engine.analyze(fen, opts);
+        } catch (e) {
+            const msg = String(e?.message || e || '');
+            if (msg.toLowerCase().includes('timeout')) {
+                try {
+                    await engine.restart();
+                } catch {
+                    // ignore
+                }
+            }
+            return { bestMove: null, evaluation: { score: 0, mate: null, pv: '' }, pvLines: [], timedOut: true };
+        }
+    };
 
     try {
         for (let i = 0; i < history.length; i++) {
+            if (i % 2 === 0) {
+                await db.games.update(gameId, {
+                    analysisHeartbeatAt: new Date().toISOString(),
+                    analysisProgress: Math.round((i / Math.max(1, history.length)) * 100)
+                });
+            }
             const move = history[i];
             const fenBefore = chess.fen();
             const sideToMove = chess.turn(); // 'w' or 'b'
             const ply = i + 1;
 
             // 1. Analyze position BEFORE the move
-            const result = await engine.analyze(fenBefore, depth);
-            const bestMoveUCI = result.bestMove;
-            const evaluation = result.evaluation; // { score, mate }
-            const scoreBefore = evaluation.score || 0;
+            await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
+            const result = await safeAnalyze(fenBefore, { depth, multiPv });
+            let bestMoveUCI = result.bestMove || '';
+            const evaluation = result.evaluation; // { score, mate, pv, multipv }
+            let pvLines = Array.isArray(result.pvLines) ? result.pvLines : [];
+            const bestLine = pvLines.find((l) => (l?.multipv || 1) === 1) || evaluation || {};
+            let scoreBefore = typeof bestLine.score === 'number' ? bestLine.score : 0;
 
             // 2. Identify User's Move
             const userMoveUCI = move.from + move.to + (move.promotion || '');
@@ -313,12 +379,13 @@ export const processGame = async (gameId) => {
             // 3. Evaluate after move (for all moves)
             chess.move(move);
             const fenAfter = chess.fen();
-            const resultAfter = await engine.analyze(fenAfter, shallowDepth);
+            await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
+            const resultAfter = await safeAnalyze(fenAfter, { depth: shallowDepth, multiPv: 1 });
             const chessAfter = new Chess(fenAfter);
             chess.undo();
 
             const scoreAfter = resultAfter.evaluation.score || 0;
-            // scoreAfter is from Opponent's perspective.
+            // After the move, side-to-move flips, so negate to keep perspective consistent with scoreBefore.
             myScoreAfter = -scoreAfter;
 
             const beforeMaterial = materialScore(fenBefore);
@@ -329,18 +396,75 @@ export const processGame = async (gameId) => {
                 materialDelta = afterMaterial.black - beforeMaterial.black;
             }
 
-            // CP Loss
-            evalDiff = Math.max(0, scoreBefore - myScoreAfter);
+            const phase = getGamePhase(ply, materialTotal(fenBefore));
+
+            // CP Loss: prefer MultiPV score difference if we can match the user's move to a PV line.
+            const userMoveLower = userMoveUCI.toLowerCase();
+            const userLine = pvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveLower);
+            const userScoreFromLines = typeof userLine?.score === 'number' ? userLine.score : null;
+            evalDiff = Math.max(0, scoreBefore - (userScoreFromLines ?? myScoreAfter));
+
+            const bookMovesForFen = getBookMovesForFen(fenBefore) || [];
+            const isBookMove = phase === 'opening' && Array.isArray(bookMovesForFen) && bookMovesForFen.includes(userMoveUCI);
+            const topLineMoves = pvLines.slice(0, Math.max(1, Math.min(3, multiPv))).map((l) => (typeof l?.pv === 'string' ? l.pv.split(' ')[0] : null)).filter(Boolean);
+            const isInTopLines = topLineMoves.some((m) => m.toLowerCase() === userMoveLower);
+
             classification = getClassification({
                 evalDiff,
                 userMoveUCI,
                 bestMoveUCI,
                 scoreBefore,
                 myScoreAfter,
-                materialDelta
+                materialDelta,
+                phase,
+                isInTopLines
             });
 
-            const phase = getGamePhase(ply, materialTotal(fenBefore));
+            // Book is its own move-quality bucket (not "good/best") so stats are not confusing.
+            if (isBookMove) classification = 'book';
+
+            // Optional second pass: only re-check BLUNDERS at a deeper depth to reduce false positives
+            // without making analysis unbearably slow.
+            if (deepDepth > 0 && deepDepth > depth && classification === 'blunder' && !isBookMove) {
+                try {
+                    await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
+                    const deepResult = await safeAnalyze(fenBefore, { depth: deepDepth, multiPv, timeoutMs: 12 * 60 * 1000 });
+                    const deepPvLines = Array.isArray(deepResult.pvLines) ? deepResult.pvLines : [];
+                    const deepBestMoveUCI = deepResult.bestMove || bestMoveUCI;
+                    const deepBestLine = deepPvLines.find((l) => (l?.multipv || 1) === 1) || deepResult.evaluation || {};
+                    const deepScoreBefore = typeof deepBestLine.score === 'number' ? deepBestLine.score : scoreBefore;
+
+                    const deepUserLine = deepPvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveLower);
+                    const deepUserScoreFromLines = typeof deepUserLine?.score === 'number' ? deepUserLine.score : null;
+                    const deepEvalDiff = Math.max(0, deepScoreBefore - (deepUserScoreFromLines ?? myScoreAfter));
+
+                    const deepTopLineMoves = deepPvLines.slice(0, Math.max(1, Math.min(3, multiPv)))
+                        .map((l) => (typeof l?.pv === 'string' ? l.pv.split(' ')[0] : null))
+                        .filter(Boolean);
+                    const deepIsInTopLines = deepTopLineMoves.some((m) => m.toLowerCase() === userMoveLower);
+
+                    const deepClassification = getClassification({
+                        evalDiff: deepEvalDiff,
+                        userMoveUCI,
+                        bestMoveUCI: deepBestMoveUCI,
+                        scoreBefore: deepScoreBefore,
+                        myScoreAfter,
+                        materialDelta,
+                        phase,
+                        isBookMove,
+                        isInTopLines: deepIsInTopLines
+                    });
+
+                    // If the deep pass disagrees, trust it (prevents reels from being polluted).
+                    bestMoveUCI = deepBestMoveUCI;
+                    pvLines = deepPvLines;
+                    scoreBefore = deepScoreBefore;
+                    evalDiff = deepEvalDiff;
+                    classification = deepClassification;
+                } catch (e) {
+                    // Ignore deep pass failures and keep the first pass result.
+                }
+            }
             const motifs = detectMotifs({
                 chessAfter,
                 move,
@@ -376,14 +500,12 @@ export const processGame = async (gameId) => {
             maxEvalSwing = Math.max(maxEvalSwing, Math.abs(scoreBefore - prevScore));
             prevScore = scoreBefore;
 
-            // Log Data (for Analytics Panel)
-            const isBookMove = phase === 'opening' && bookMoves.includes(bestMoveUCI);
-
             analysisLog.push({
                 ply,
                 fen: fenBefore,
                 move: userMoveUCI,
                 bestMove: bestMoveUCI,
+                pvLines: pvLines.slice(0, multiPv),
                 score: scoreBefore, // Evaluation *before* the move (graph point)
                 classification,
                 evalDiff,
@@ -396,12 +518,20 @@ export const processGame = async (gameId) => {
                 bookMove: isBookMove
             });
 
+            if (i % 10 === 0) {
+                await db.games.update(gameId, {
+                    analysisHeartbeatAt: new Date().toISOString(),
+                    analysisLog,
+                    analyzed: true
+                });
+            }
+
             const tags = [
                 classification,
                 phase,
                 ...motifs
             ];
-            if (isBookMove) tags.push('book');
+            // Book is already represented by the classification.
             if (missedWin) tags.push('missedWin');
             if (missedDefense) tags.push('missedDefense');
 
@@ -441,7 +571,24 @@ export const processGame = async (gameId) => {
         }
     } catch (err) {
         console.error(`Analysis failed for game ${gameId}`, err);
-        await db.games.update(gameId, { analyzed: true, analysisStatus: 'failed', analysisStartedAt: null });
+        // Save partial analysis if we have any, so Dashboard can still show openings and some lines.
+        if (analysisLog.length > 0) {
+            try {
+                if (reelPositions.length > 0) await db.positions.bulkAdd(reelPositions);
+            } catch {
+                // ignore
+            }
+            await db.games.update(gameId, {
+                analyzed: true,
+                analysisStatus: 'failed',
+                analysisStartedAt: null,
+                analysisHeartbeatAt: null,
+                analysisProgress: Math.round((analysisLog.length / Math.max(1, history.length)) * 100),
+                analysisLog
+            });
+        } else {
+            await db.games.update(gameId, { analyzed: true, analysisStatus: 'failed', analysisStartedAt: null, analysisHeartbeatAt: null });
+        }
         return;
     }
 
@@ -455,6 +602,8 @@ export const processGame = async (gameId) => {
         analyzed: true,
         analysisStatus: 'completed',
         analysisStartedAt: null,
+        analysisHeartbeatAt: null,
+        analysisProgress: 100,
         analyzedAt: new Date().toISOString(),
         analysisLog, // Full history for graph
         accuracy: {

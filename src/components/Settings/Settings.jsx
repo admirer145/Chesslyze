@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { engine } from '../../services/engine';
@@ -9,10 +9,27 @@ export const Settings = () => {
     const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
     const [status, setStatus] = useState(null);
     const [depth, setDepth] = useState(() => parseInt(localStorage.getItem('engineDepth') || '15', 10));
+    const [multiPv, setMultiPv] = useState(() => {
+        const v = parseInt(localStorage.getItem('engineMultiPv') || '3', 10);
+        return Number.isNaN(v) ? 3 : v;
+    });
+    const [preset, setPreset] = useState(() => localStorage.getItem('enginePreset') || 'custom');
     const [bookStatus, setBookStatus] = useState(null);
+    const [engineInfo, setEngineInfo] = useState(() => engine.getInfo());
+    const [deepDepth, setDeepDepth] = useState(() => {
+        const v = parseInt(localStorage.getItem('engineDeepDepth') || '0', 10);
+        return Number.isNaN(v) ? 0 : v;
+    });
 
     const games = useLiveQuery(async () => {
         return await db.games.toArray();
+    }, []);
+
+    useEffect(() => {
+        // Ensure worker initialized so we can read id name / caps.
+        engine.init().then(() => setEngineInfo(engine.getInfo())).catch(() => { });
+        const t = setTimeout(() => setEngineInfo(engine.getInfo()), 400);
+        return () => clearTimeout(t);
     }, []);
 
     const stats = useMemo(() => {
@@ -55,7 +72,7 @@ export const Settings = () => {
             engine.stop();
             engine.terminate();
             await db.games.where('analysisStatus').equals('pending').modify({ analysisStatus: 'idle' });
-            await db.games.where('analysisStatus').equals('analyzing').modify({ analysisStatus: 'failed', analysisStartedAt: null });
+            await db.games.where('analysisStatus').equals('analyzing').modify({ analysisStatus: 'failed', analysisStartedAt: null, analysisHeartbeatAt: null });
             setStatus({ type: 'success', message: 'Analysis stopped. Pending queue cleared and analyzing games reset.' });
         } catch (err) {
             console.error(err);
@@ -68,6 +85,11 @@ export const Settings = () => {
         const res = await fetch(url);
         if (!res.ok) throw new Error('Failed to fetch master games');
         return await res.json();
+    };
+
+    const fenKey = (fen) => {
+        if (!fen || typeof fen !== 'string') return '';
+        return fen.split(' ').slice(0, 4).join(' ');
     };
 
     const syncBookMoves = async () => {
@@ -92,26 +114,46 @@ export const Settings = () => {
                 const game = await db.games.get(opening.sampleGameId);
                 if (!game?.pgn) continue;
 
-                const chess = new Chess();
-                chess.loadPgn(game.pgn);
-                const moves = chess.history({ verbose: true });
-                chess.reset();
-                const plyTarget = Math.min(10, moves.length);
-                for (let j = 0; j < plyTarget; j++) {
-                    const m = moves[j];
-                    chess.move({ from: m.from, to: m.to, promotion: m.promotion });
-                }
-                const fen = chess.fen();
-                const data = await fetchMasterGames(fen);
+                const base = new Chess();
+                base.loadPgn(game.pgn);
+                const header = base.header();
+                const initFen = header['FEN'] || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+                const moves = base.history({ verbose: true });
 
-                const masterMoves = (data.moves || []).map((m) => (typeof m === 'string' ? m : m.uci)).filter(Boolean);
+                const walk = new Chess(initFen);
+                const masterMoveByFen = {};
+                const masterMovesAll = new Set();
+                const seenKeys = new Set();
+
+                // Fetch book moves for early positions in the opening (pre-move positions).
+                const plyTarget = Math.min(14, moves.length);
+                for (let j = 0; j <= plyTarget; j++) {
+                    const fen = walk.fen();
+                    const key = fenKey(fen);
+                    if (key && !seenKeys.has(key)) {
+                        const data = await fetchMasterGames(fen);
+                        const masterMoves = (data.moves || [])
+                            .map((m) => (typeof m === 'string' ? m : m.uci))
+                            .filter(Boolean);
+                        masterMoveByFen[key] = masterMoves;
+                        masterMoves.forEach((m) => masterMovesAll.add(m));
+                        seenKeys.add(key);
+                        await new Promise((r) => setTimeout(r, 120));
+                    }
+
+                    const nextMove = moves[j];
+                    if (!nextMove) break;
+                    walk.move({ from: nextMove.from, to: nextMove.to, promotion: nextMove.promotion });
+                }
+
+                const masterMoves = Array.from(masterMovesAll);
                 await db.openings.put({
                     eco: opening.eco,
                     name: opening.name,
-                    masterMoves
+                    masterMoves,
+                    masterMoveByFen
                 });
 
-                await new Promise((r) => setTimeout(r, 120));
             }
 
             setBookStatus({ type: 'success', message: 'Book moves synced for openings.' });
@@ -124,6 +166,36 @@ export const Settings = () => {
     const handleDepthChange = (value) => {
         setDepth(value);
         localStorage.setItem('engineDepth', String(value));
+        setPreset('custom');
+        localStorage.setItem('enginePreset', 'custom');
+    };
+
+    const handleMultiPvChange = (value) => {
+        setMultiPv(value);
+        localStorage.setItem('engineMultiPv', String(value));
+        setPreset('custom');
+        localStorage.setItem('enginePreset', 'custom');
+    };
+
+    const handleDeepDepthChange = (value) => {
+        setDeepDepth(value);
+        localStorage.setItem('engineDeepDepth', String(value));
+    };
+
+    const handlePresetChange = (value) => {
+        setPreset(value);
+        localStorage.setItem('enginePreset', value);
+        const presets = {
+            fast: { depth: 10, multiPv: 1 },
+            balanced: { depth: 14, multiPv: 2 },
+            deep: { depth: 20, multiPv: 3 }
+        };
+        const next = presets[value];
+        if (!next) return;
+        setDepth(next.depth);
+        setMultiPv(next.multiPv);
+        localStorage.setItem('engineDepth', String(next.depth));
+        localStorage.setItem('engineMultiPv', String(next.multiPv));
     };
 
     return (
@@ -182,19 +254,78 @@ export const Settings = () => {
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Engine Profile</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        This app currently runs a single Stockfish build locally, but you can switch between analysis profiles
+                        (depth + top lines) depending on speed vs accuracy.
+                    </p>
+                    <div className="text-xs text-muted mb-4">
+                        Engine: {engineInfo?.name || 'Unknown'} • NNUE: {engineInfo?.caps?.nnue ? 'Yes' : 'No'} • MultiPV: {engineInfo?.caps?.multipv ? 'Yes' : 'No'}
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <select
+                            value={preset}
+                            onChange={(e) => handlePresetChange(e.target.value)}
+                            className="bg-subtle border rounded px-3 py-2 text-sm text-primary"
+                        >
+                            <option value="fast">Fast</option>
+                            <option value="balanced">Balanced</option>
+                            <option value="deep">Deep</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                        <div className="text-xs text-muted">Applies to new analysis runs.</div>
+                    </div>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
                     <h3 className="text-sm font-semibold text-primary mb-3">Engine Depth</h3>
                     <p className="text-sm text-secondary mb-4">
-                        Higher depth improves accuracy but is slower. Recommended: 12-18.
+                        Higher depth improves accuracy but is slower. Depth 50+ is expensive in WASM; consider using MultiPV first.
                     </p>
                     <div className="flex items-center gap-4">
                         <input
                             type="range"
                             min="8"
-                            max="22"
+                            max="60"
                             value={depth}
                             onChange={(e) => handleDepthChange(parseInt(e.target.value, 10))}
                         />
                         <div className="text-sm text-primary">Depth {depth}</div>
+                    </div>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Top Lines (MultiPV)</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Show more than one best line. This also helps avoid false "opening mistakes" by considering multiple strong candidates.
+                    </p>
+                    <div className="flex items-center gap-4">
+                        <input
+                            type="range"
+                            min="1"
+                            max="5"
+                            value={multiPv}
+                            onChange={(e) => handleMultiPvChange(parseInt(e.target.value, 10))}
+                        />
+                        <div className="text-sm text-primary">{multiPv} line{multiPv === 1 ? '' : 's'}</div>
+                    </div>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Deep Verification Depth</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Optional second-pass depth used only to re-check moves the engine flags as blunders.
+                        This reduces false positives without analyzing every move at depth 50+.
+                    </p>
+                    <div className="flex items-center gap-4">
+                        <input
+                            type="range"
+                            min="0"
+                            max="60"
+                            value={deepDepth}
+                            onChange={(e) => handleDeepDepthChange(parseInt(e.target.value, 10))}
+                        />
+                        <div className="text-sm text-primary">{deepDepth === 0 ? 'Off' : `Depth ${deepDepth}`}</div>
                     </div>
                 </div>
 
