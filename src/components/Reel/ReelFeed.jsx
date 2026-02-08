@@ -618,6 +618,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
 export const ReelFeed = () => {
     const heroUser = localStorage.getItem('heroUser');
     const navigate = useNavigate();
+    const [solvedInSession, setSolvedInSession] = useState([]);
 
     // Complex query: Join positions with games to filter by Hero's turn
     const positions = useLiveQuery(async () => {
@@ -669,6 +670,10 @@ export const ReelFeed = () => {
             // Solved vs Unsolved
             if (pos.solveStatus === 'correct') {
                 solved.push(pos);
+                // Also keep in unsolved if it was solved in this session
+                if (solvedInSession.includes(pos.id)) {
+                    unsolved.push(pos);
+                }
             } else {
                 unsolved.push(pos);
             }
@@ -684,7 +689,7 @@ export const ReelFeed = () => {
             unsolved: unsolved.slice(0, 50),
             review: review.slice(0, 50)
         };
-    }, [heroUser]);
+    }, [heroUser, solvedInSession]);
 
     const [section, setSection] = useState('unsolved');
     const [mode, setMode] = useState('best_move');
@@ -735,6 +740,9 @@ export const ReelFeed = () => {
         const days = correct ? 7 : 1;
         const next = new Date();
         next.setDate(next.getDate() + days);
+        if (correct) {
+            setSolvedInSession(prev => [...prev, pos.id]);
+        }
         await db.positions.update(pos.id, {
             nextReviewAt: next.toISOString(),
             lastReviewedAt: new Date().toISOString(),

@@ -91,20 +91,20 @@ const OpeningDetail = ({ opening }) => {
 
             <div className="grid grid-cols-3 text-center text-sm mb-12 gap-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 <div>
-                    <span className="block font-bold text-green-400">{opening.wins}</span>
+                    <span className="block font-bold text-green-400 mr-2">{opening.wins}</span>
                     <span className="text-secondary">Wins</span>
                 </div>
                 <div>
-                    <span className="block font-bold text-muted">{opening.draws}</span>
+                    <span className="block font-bold text-muted mr-2">{opening.draws}</span>
                     <span className="text-secondary">Draws</span>
                 </div>
                 <div>
-                    <span className="block font-bold text-red-400">{opening.losses}</span>
+                    <span className="block font-bold text-red-400 mr-2">{opening.losses}</span>
                     <span className="text-secondary">Losses</span>
                 </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4 text-sm mb-8" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="grid grid-cols-3 gap-4 text-sm mb-8 mt-8" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 <div className="p-4 rounded-lg border bg-panel text-center">
                     <div className="text-xs text-muted uppercase tracking-wider mb-1">Avg Accuracy</div>
                     <div className="text-2xl font-bold text-primary">{opening.avgAccuracy || 0}%</div>
