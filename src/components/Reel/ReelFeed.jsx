@@ -47,7 +47,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
             clearTimeout(messageTimerRef.current);
             messageTimerRef.current = null;
         }
-    }, [position]);
+    }, [position.id]);
 
     useEffect(() => {
         if (!boardRef.current) return;
@@ -61,7 +61,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         });
         resizeObserver.observe(boardRef.current);
         return () => resizeObserver.disconnect();
-    }, [position]);
+    }, [position.id]);
 
     const onDrop = (...args) => {
         console.log("[ReelFeed] onDrop args:", args);
@@ -101,17 +101,16 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         if (!moveResult) return false;
 
         const attemptUCI = (moveResult.from + moveResult.to + (moveResult.promotion || '')).toLowerCase();
+
         const targetFull = (targetMove || position.bestMove || '').trim().toLowerCase();
         const targetUCI = targetFull.substring(0, 4);
+
         if (moveResult) {
             setTempFen(base.fen());
             setLastAttempt({ san: moveResult.san, uci: attemptUCI });
         }
         setAttemptLocked(true);
 
-        // console.log(`[ReelFeed] Validating move. Attempt: '${attemptUCI}', Target: '${targetUCI}' (Full: ${position.bestMove})`);
-
-        // Need precise handling for promotion, but for basic...
         const shouldReset = true;
 
         const isCorrect = targetFull.length >= 4 && (targetFull.length > 4
@@ -119,25 +118,38 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
             : attemptUCI.substring(0, 4) === targetUCI);
 
         if (isCorrect) {
+
             setFeedback('correct');
             setShowSolution(true);
             setStage('solved');
+            // Keep the piece on the board and show the move
+            setTempFen(base.fen());
+            setLastAttempt({ san: moveResult.san, uci: attemptUCI });
+
             if (onSolved) onSolved(true);
             return true;
         } else {
+            // Wrong move: Show for a bit, then reset
             if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
             if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+
+            // 1. Show the wrong move immediately (already done by returning true + tempFen set above)
+
+            // 2. Wait, then reset board and show feedback
             resetTimerRef.current = setTimeout(() => {
                 if (shouldReset) {
-                    setTempFen(null);
-                    setLastAttempt(null);
+                    setTempFen(null); // Clear the wrong move from board
+                    setLastAttempt(null); // Clear the move notation
                 }
                 setFeedback('incorrect');
                 setAttemptLocked(false);
+
+                // 3. Clear feedback message after a delay
                 messageTimerRef.current = setTimeout(() => {
                     setFeedback(null);
-                }, 1200);
-            }, 900);
+                }, 2000);
+            }, 800); // 800ms of showing the wrong move
+
             if (onSolved) onSolved(false);
             return true;
         }
@@ -218,23 +230,39 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
     }, [position?.fen, position?.move]);
 
     const puzzleFen = useMemo(() => {
+        // If Hero blundered: We solve from BEFORE the blunder (position.fen)
+        // If Opponent blundered: We solve from AFTER the blunder (blunderFen) to punish it
         return heroMoved ? (position?.fen || '') : (blunderFen || position?.fen || '');
     }, [heroMoved, blunderFen, position?.fen]);
 
     const targetMove = useMemo(() => {
         if (!game?.analysisLog || !position?.ply) return position.bestMove;
-        if (!heroMoved) {
-            const entry = game.analysisLog.find((e) => e.ply === position.ply + 1);
-            return entry?.bestMove || position.bestMove;
+
+        // If it's our blunder (heroMoved), we are looking for the best move from the *original* position
+        // This is stored in position.bestMove (engine analyzed the pre-move position)
+        if (heroMoved) {
+            return position.bestMove;
         }
+
+        // If it's opponent's blunder (!heroMoved), we are looking for the move that *punishes* it.
+        // This corresponds to the *next* ply in the game... BUT wait. 
+        // The game analysis log stores "bestMove" for the position *before* the move at that ply.
+        // So for ply X (opponent move), we want the best move for ply X+1 (our response).
+        const nextEntry = game.analysisLog.find((e) => e.ply === position.ply + 1);
+        if (nextEntry) return nextEntry.bestMove;
+
+        // Fallback: If we don't have next entry (e.g. end of game), we might need to rely on engine
+        // or just use what we have if it makes sense. 
+        // For now, let's trust position.bestMove if we can't find next entry, 
+        // though position.bestMove is usually for the position at `ply`.
         return position.bestMove;
     }, [game?.analysisLog, position?.ply, heroMoved, position?.bestMove]);
 
     const displayFen = useMemo(() => {
-        if (stage === 'intro') return blunderFen || puzzleFen;
+        if (stage === 'intro') return blunderFen; // Always show the blunder being played/played
         if (exploreMode) return exploreFen || puzzleFen;
-        if (tempFen) return tempFen;
-        return puzzleFen;
+        if (tempFen) return tempFen; // Shows user's attempt (correct or wrong)
+        return puzzleFen; // Default start state for puzzle
     }, [stage, blunderFen, exploreMode, exploreFen, tempFen, puzzleFen]);
 
     const getSquarePosition = (square) => {
