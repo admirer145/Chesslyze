@@ -78,11 +78,19 @@ export const AnalyticsPanel = ({ game, onJumpToMove, activeIndex = -1, onBestHov
     const activeEntry = activeIndex >= 0 ? analysisLog[activeIndex] : null;
     const afterEntry = activeIndex >= 0 ? analysisLog[activeIndex + 1] : null;
 
+    const whiteScore = (entry) => {
+        if (!entry) return 0;
+        const raw = typeof entry.score === 'number' ? entry.score : Number(entry.score);
+        const s = Number.isFinite(raw) ? raw : 0;
+        if (entry.scorePov === 'white') return s;
+        // Back-compat: older analysis stored score as side-to-move POV.
+        return entry.turn === 'w' ? s : -s;
+    };
+
     const formatEval = (entry) => {
         if (!entry) return '-';
         if (typeof entry.mate === 'number') return `${entry.mate > 0 ? '#' : '#'}${entry.mate}`;
-        const cp = typeof entry.score === 'number' ? entry.score : null;
-        if (cp === null) return '-';
+        const cp = whiteScore(entry);
         const pawns = (cp / 100).toFixed(2);
         return `${cp >= 0 ? '+' : ''}${pawns}`;
     };
@@ -182,14 +190,30 @@ export const AnalyticsPanel = ({ game, onJumpToMove, activeIndex = -1, onBestHov
                             <div className="space-y-2">
                                 {topEntry.pvLines.slice(0, 5).map((line) => {
                                     const pv = typeof line.pv === 'string' ? line.pv : '';
-                                    const scoreText = typeof line.mate === 'number'
-                                        ? `#${line.mate}`
-                                        : typeof line.score === 'number'
-                                            ? `${line.score >= 0 ? '+' : ''}${(line.score / 100).toFixed(2)}`
+                                    const firstUci = pv.split(' ').filter(Boolean)[0] || null;
+                                    const scoreValRaw = typeof line.score === 'number' ? line.score : Number(line.score);
+                                    const scoreVal = Number.isFinite(scoreValRaw) ? scoreValRaw : null;
+                                    const scoreWhite = (line.scorePov === 'white' || topEntry.scorePov === 'white')
+                                        ? scoreVal
+                                        : (topEntry.turn === 'w' ? scoreVal : (scoreVal === null ? null : -scoreVal));
+                                    const mateValRaw = typeof line.mate === 'number' ? line.mate : null;
+                                    const mateWhite = (line.scorePov === 'white' || topEntry.scorePov === 'white')
+                                        ? mateValRaw
+                                        : (topEntry.turn === 'w' ? mateValRaw : (mateValRaw === null ? null : -mateValRaw));
+
+                                    const scoreText = typeof mateWhite === 'number'
+                                        ? `#${mateWhite}`
+                                        : typeof scoreWhite === 'number'
+                                            ? `${scoreWhite >= 0 ? '+' : ''}${(scoreWhite / 100).toFixed(2)}`
                                             : '-';
                                     const steps = pvToSanSteps(topEntry.fen, pv, 10);
                                     return (
-                                        <div key={line.multipv || pv} className="p-2 rounded bg-subtle/30 border border-white/5">
+                                        <div
+                                            key={line.multipv || pv}
+                                            className="p-2 rounded bg-subtle/30 border border-white/5"
+                                            onMouseEnter={() => onBestHover && onBestHover(firstUci, topEntry.fen)}
+                                            onMouseLeave={() => onBestHover && onBestHover(null, null)}
+                                        >
                                             <div className="flex items-center justify-between text-xs">
                                                 <div className="text-secondary">#{line.multipv || 1}</div>
                                                 <div className="font-mono text-primary">{scoreText}</div>

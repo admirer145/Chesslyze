@@ -301,7 +301,7 @@ export const processGame = async (gameId) => {
     let maxStreak = 0;
     let totalCpLoss = 0;
     let maxEvalSwing = 0;
-    let prevScore = 0;
+    let prevScoreWhite = 0;
 
     let bookMoves = [];
     let bookMoveByFen = null;
@@ -366,14 +366,31 @@ export const processGame = async (gameId) => {
             const evaluation = result.evaluation; // { score, mate, pv, multipv }
             let pvLines = Array.isArray(result.pvLines) ? result.pvLines : [];
             const bestLine = pvLines.find((l) => (l?.multipv || 1) === 1) || evaluation || {};
-            let scoreBefore = typeof bestLine.score === 'number' ? bestLine.score : 0;
+            // Stockfish "score" is from side-to-move POV; normalize to white POV for UI/graph stability.
+            let scoreBeforeStm = typeof bestLine.score === 'number' ? bestLine.score : 0;
+            let mateBeforeStm = typeof bestLine.mate === 'number' ? bestLine.mate : null;
+            const scoreBeforeWhite = sideToMove === 'w' ? scoreBeforeStm : -scoreBeforeStm;
+            const mateBeforeWhite = mateBeforeStm === null ? null : (sideToMove === 'w' ? mateBeforeStm : -mateBeforeStm);
+
+            const normalizeEvalLine = (line) => {
+                if (!line || typeof line !== 'object') return null;
+                const rawScore = typeof line.score === 'number' ? line.score : null;
+                const rawMate = typeof line.mate === 'number' ? line.mate : null;
+                return {
+                    ...line,
+                    score: rawScore === null ? null : (sideToMove === 'w' ? rawScore : -rawScore),
+                    mate: rawMate === null ? null : (sideToMove === 'w' ? rawMate : -rawMate),
+                    scorePov: 'white'
+                };
+            };
+            const pvLinesUi = pvLines.map(normalizeEvalLine).filter(Boolean);
 
             // 2. Identify User's Move
             const userMoveUCI = move.from + move.to + (move.promotion || '');
 
             let classification = 'book';
             let evalDiff = 0;
-            let myScoreAfter = scoreBefore;
+            let myScoreAfter = scoreBeforeStm;
             let materialDelta = 0;
 
             // 3. Evaluate after move (for all moves)
@@ -398,11 +415,11 @@ export const processGame = async (gameId) => {
 
             const phase = getGamePhase(ply, materialTotal(fenBefore));
 
-            // CP Loss: prefer MultiPV score difference if we can match the user's move to a PV line.
+            // CP Loss: computed from side-to-move POV (so it's about how much the mover "lost").
             const userMoveLower = userMoveUCI.toLowerCase();
             const userLine = pvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveLower);
             const userScoreFromLines = typeof userLine?.score === 'number' ? userLine.score : null;
-            evalDiff = Math.max(0, scoreBefore - (userScoreFromLines ?? myScoreAfter));
+            evalDiff = Math.max(0, scoreBeforeStm - (userScoreFromLines ?? myScoreAfter));
 
             const bookMovesForFen = getBookMovesForFen(fenBefore) || [];
             const isBookMove = phase === 'opening' && Array.isArray(bookMovesForFen) && bookMovesForFen.includes(userMoveUCI);
@@ -413,7 +430,7 @@ export const processGame = async (gameId) => {
                 evalDiff,
                 userMoveUCI,
                 bestMoveUCI,
-                scoreBefore,
+                scoreBefore: scoreBeforeStm,
                 myScoreAfter,
                 materialDelta,
                 phase,
@@ -432,7 +449,8 @@ export const processGame = async (gameId) => {
                     const deepPvLines = Array.isArray(deepResult.pvLines) ? deepResult.pvLines : [];
                     const deepBestMoveUCI = deepResult.bestMove || bestMoveUCI;
                     const deepBestLine = deepPvLines.find((l) => (l?.multipv || 1) === 1) || deepResult.evaluation || {};
-                    const deepScoreBefore = typeof deepBestLine.score === 'number' ? deepBestLine.score : scoreBefore;
+                    const deepScoreBefore = typeof deepBestLine.score === 'number' ? deepBestLine.score : scoreBeforeStm;
+                    const deepMateBefore = typeof deepBestLine.mate === 'number' ? deepBestLine.mate : mateBeforeStm;
 
                     const deepUserLine = deepPvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveLower);
                     const deepUserScoreFromLines = typeof deepUserLine?.score === 'number' ? deepUserLine.score : null;
@@ -458,7 +476,8 @@ export const processGame = async (gameId) => {
                     // If the deep pass disagrees, trust it (prevents reels from being polluted).
                     bestMoveUCI = deepBestMoveUCI;
                     pvLines = deepPvLines;
-                    scoreBefore = deepScoreBefore;
+                    scoreBeforeStm = deepScoreBefore;
+                    mateBeforeStm = deepMateBefore;
                     evalDiff = deepEvalDiff;
                     classification = deepClassification;
                 } catch (e) {
@@ -468,13 +487,13 @@ export const processGame = async (gameId) => {
             const motifs = detectMotifs({
                 chessAfter,
                 move,
-                scoreBefore,
+                scoreBefore: scoreBeforeStm,
                 myScoreAfter,
                 materialDelta
             });
 
-            const missedWin = scoreBefore >= WINNING_THRESHOLD && evalDiff > THRESHOLDS.INACCURACY;
-            const missedDefense = scoreBefore <= -WINNING_THRESHOLD && evalDiff > THRESHOLDS.INACCURACY;
+            const missedWin = scoreBeforeStm >= WINNING_THRESHOLD && evalDiff > THRESHOLDS.INACCURACY;
+            const missedDefense = scoreBeforeStm <= -WINNING_THRESHOLD && evalDiff > THRESHOLDS.INACCURACY;
 
             const explanation = generateExplanation(classification, evalDiff, userMoveUCI, bestMoveUCI);
             const planHint = generatePlanHint({ phase, motifs, classification });
@@ -497,16 +516,20 @@ export const processGame = async (gameId) => {
                 blackMoves++;
             }
 
-            maxEvalSwing = Math.max(maxEvalSwing, Math.abs(scoreBefore - prevScore));
-            prevScore = scoreBefore;
+            const scoreWhiteForStats = sideToMove === 'w' ? scoreBeforeStm : -scoreBeforeStm;
+            const mateWhiteForStats = mateBeforeStm === null ? null : (sideToMove === 'w' ? mateBeforeStm : -mateBeforeStm);
+            maxEvalSwing = Math.max(maxEvalSwing, Math.abs(scoreWhiteForStats - prevScoreWhite));
+            prevScoreWhite = scoreWhiteForStats;
 
             analysisLog.push({
                 ply,
                 fen: fenBefore,
                 move: userMoveUCI,
                 bestMove: bestMoveUCI,
-                pvLines: pvLines.slice(0, multiPv),
-                score: scoreBefore, // Evaluation *before* the move (graph point)
+                pvLines: pvLines.map(normalizeEvalLine).filter(Boolean).slice(0, multiPv),
+                score: scoreWhiteForStats, // Evaluation *before* the move (graph point), white POV
+                mate: mateWhiteForStats,
+                scorePov: 'white',
                 classification,
                 evalDiff,
                 turn: sideToMove,
@@ -550,7 +573,7 @@ export const processGame = async (gameId) => {
                     fen: fenBefore,
                     move: userMoveUCI,
                     bestMove: bestMoveUCI,
-                    score: scoreBefore,
+                    score: scoreWhiteForStats,
                     loss: evalDiff,
                     classification,
                     explanation,

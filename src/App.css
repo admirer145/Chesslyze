@@ -1023,6 +1023,124 @@ a {
   transform: translateZ(0);
 }
 
+.board-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.board-row .board-shell {
+  flex: 1;
+  min-width: 0;
+}
+
+.eval-rail {
+  position: relative;
+  width: 58px;
+  flex: 0 0 58px;
+  align-self: stretch;
+  pointer-events: none;
+}
+
+.eval-bar {
+  position: relative;
+  width: 26px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.06)),
+    rgba(2, 6, 23, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 12px 26px rgba(2, 6, 23, 0.45);
+}
+
+.eval-bar--outside {
+  height: 100%;
+  align-self: stretch;
+}
+
+.eval-bar::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 12px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(148, 163, 184, 0.22) 0px,
+    rgba(148, 163, 184, 0.22) 1px,
+    transparent 1px,
+    transparent 12px
+  );
+  opacity: 0.35;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  z-index: 3;
+}
+
+.eval-bar__black {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.92), rgba(15, 23, 42, 0.82));
+  transition: height 240ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  z-index: 1;
+}
+
+.eval-bar__white {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(180deg, #ffffff, #e2e8f0);
+  transition: height 240ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  z-index: 1;
+}
+
+.eval-bar__mid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgba(226, 232, 240, 0.18);
+  box-shadow: 0 1px 0 rgba(2, 6, 23, 0.35);
+  z-index: 4;
+}
+
+.eval-bar__marker {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(245, 200, 75, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(2, 6, 23, 0.55),
+    0 6px 14px rgba(245, 200, 75, 0.18);
+  transition: top 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  z-index: 5;
+}
+
+.eval-rail__value {
+  position: absolute;
+  left: 32px;
+  transform: translateY(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: 0 10px 20px rgba(2, 6, 23, 0.4);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(226, 232, 240, 0.96);
+  white-space: nowrap;
+  transition: top 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
 .import-page {
   width: 100%;
   height: 100%;

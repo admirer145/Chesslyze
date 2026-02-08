@@ -282,6 +282,17 @@ export const Dashboard = () => {
     const bottomPlayer = boardOrientation === 'white' ?
         { name: getMeta('White'), rating: getMeta('WhiteElo') || getMeta('whiteRating') } :
         { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating') };
+
+    const defaultArrow = useMemo(() => {
+        if (activeTab !== 'analysis') return null;
+        if (previewFen) return null;
+        if (!activeGame?.analysisLog || moveIndex < 0) return null;
+        const entry = activeGame.analysisLog[moveIndex];
+        const uci = entry?.bestMove;
+        if (!uci || typeof uci !== 'string' || uci.length < 4) return null;
+        return { from: uci.substring(0, 2), to: uci.substring(2, 4) };
+    }, [activeTab, previewFen, activeGame?.analysisLog, moveIndex]);
+
     const chessboardOptions = useMemo(() => ({
         id: "dashboard-board",
         position: previewFen || currentFen,
@@ -289,10 +300,71 @@ export const Dashboard = () => {
         boardOrientation: boardOrientation,
         arePiecesDraggable: false,
         animationDuration: 300,
-        customArrows: hoverArrow ? [[hoverArrow.from, hoverArrow.to, 'rgba(245, 200, 75, 0.95)']] : [],
+        customArrows: (hoverArrow || defaultArrow) ? [[(hoverArrow || defaultArrow).from, (hoverArrow || defaultArrow).to, 'rgba(245, 200, 75, 0.95)']] : [],
         customDarkSquareStyle: { backgroundColor: '#475569' },
         customLightSquareStyle: { backgroundColor: '#e2e8f0' }
-    }), [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow]);
+    }), [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow]);
+
+    const evalCp = useMemo(() => {
+        if (!activeGame?.analysisLog || activeGame.analysisLog.length === 0) return 0;
+        const fenKey = (fen) => (typeof fen === 'string' ? fen.split(' ').slice(0, 4).join(' ') : '');
+        const targetFen = previewFen || currentFen;
+        const key = fenKey(targetFen);
+        const matched = key ? activeGame.analysisLog.find((e) => fenKey(e?.fen) === key) : null;
+        const idx = matched ? activeGame.analysisLog.indexOf(matched) : Math.min(Math.max(0, moveIndex + 1), activeGame.analysisLog.length - 1);
+        const entry = activeGame.analysisLog[idx];
+        if (!entry) return 0;
+        const raw = typeof entry.score === 'number' ? entry.score : Number(entry.score);
+        const score = Number.isFinite(raw) ? raw : 0;
+        if (entry.scorePov === 'white') return score;
+        return entry.turn === 'w' ? score : -score;
+    }, [activeGame?.analysisLog, moveIndex, currentFen, previewFen]);
+
+    const evalMate = useMemo(() => {
+        if (!activeGame?.analysisLog || activeGame.analysisLog.length === 0) return null;
+        const fenKey = (fen) => (typeof fen === 'string' ? fen.split(' ').slice(0, 4).join(' ') : '');
+        const targetFen = previewFen || currentFen;
+        const key = fenKey(targetFen);
+        const entry = key ? activeGame.analysisLog.find((e) => fenKey(e?.fen) === key) : null;
+        const idx = entry ? activeGame.analysisLog.indexOf(entry) : Math.min(Math.max(0, moveIndex + 1), activeGame.analysisLog.length - 1);
+        const e = activeGame.analysisLog[idx];
+        if (!e) return null;
+
+        // Prefer the explicit mate stored on the log entry (newer analyses store mate as white POV).
+        if (typeof e.mate === 'number') return e.mate;
+
+        // Back-compat / PV-only mate: if the best line is a forced mate, reflect it in the bar.
+        const bestLine = Array.isArray(e.pvLines) && e.pvLines.length > 0 ? e.pvLines[0] : null;
+        const mateRaw = bestLine && typeof bestLine.mate === 'number' ? bestLine.mate : null;
+        if (typeof mateRaw !== 'number') return null;
+        if (bestLine.scorePov === 'white' || e.scorePov === 'white') return mateRaw;
+        // Older PV lines may be side-to-move POV.
+        return e.turn === 'w' ? mateRaw : -mateRaw;
+    }, [activeGame?.analysisLog, moveIndex, currentFen, previewFen]);
+
+    const evalText = useMemo(() => {
+        if (typeof evalMate === 'number') {
+            const abs = Math.abs(evalMate);
+            return `${evalMate < 0 ? '-' : ''}M${abs}`;
+        }
+        const pawns = (evalCp / 100).toFixed(2);
+        return `${evalCp >= 0 ? '+' : ''}${pawns}`;
+    }, [evalCp, evalMate]);
+
+    const evalPct = useMemo(() => {
+        if (typeof evalMate === 'number') return evalMate > 0 ? 1 : 0;
+        // Map centipawns to a 0..1 "white share" using an arctan curve.
+        // This avoids saturating the bar too quickly (e.g. +10.0 should not look "full mate").
+        const cp = Math.max(-10000, Math.min(10000, evalCp));
+        const scale = 600; // ~6 pawns -> ~75% bar fill
+        return 0.5 + Math.atan(cp / scale) / Math.PI;
+    }, [evalCp, evalMate]);
+
+    const evalMarkerTopPct = useMemo(() => {
+        const raw = (1 - evalPct) * 100;
+        // Keep the pill/marker comfortably inside the rail.
+        return Math.max(2, Math.min(98, raw));
+    }, [evalPct]);
 
     const classificationBadge = useMemo(() => {
         if (!activeGame?.analysisLog || moveIndex < 0) return null;
@@ -391,20 +463,33 @@ export const Dashboard = () => {
                                 <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'Black' : 'White'}</div>
                             </div>
 
-                            {/* BOARD CONTAINER */}
-                            <div
-                                ref={boardContainerRef}
-                                className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
-                            >
-                                <Chessboard options={chessboardOptions} />
-                                {badgeStyle && classificationBadge && (
-                                    <div
-                                        className={`board-badge badge-${classificationBadge.tone}`}
-                                        style={{ left: badgeStyle.left, top: badgeStyle.top }}
-                                    >
-                                        {classificationBadge.label}
+                            {/* BOARD + EVAL BAR */}
+                            <div className="board-row">
+                                <div
+                                    ref={boardContainerRef}
+                                    className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
+                                >
+                                    <Chessboard options={chessboardOptions} />
+                                    {badgeStyle && classificationBadge && (
+                                        <div
+                                            className={`board-badge badge-${classificationBadge.tone}`}
+                                            style={{ left: badgeStyle.left, top: badgeStyle.top }}
+                                        >
+                                            {classificationBadge.label}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="eval-rail" aria-hidden="true">
+                                    <div className="eval-bar eval-bar--outside">
+                                        <div className="eval-bar__black" style={{ height: `${Math.round((1 - evalPct) * 100)}%` }} />
+                                        <div className="eval-bar__white" style={{ height: `${Math.round(evalPct * 100)}%` }} />
+                                        <div className="eval-bar__mid" />
+                                        <div className="eval-bar__marker" style={{ top: `${evalMarkerTopPct}%` }} />
                                     </div>
-                                )}
+                                    <div className="eval-rail__value" style={{ top: `${evalMarkerTopPct}%` }}>
+                                        {evalText}
+                                    </div>
+                                </div>
                             </div>
 
                             {/* Bottom Player */}
