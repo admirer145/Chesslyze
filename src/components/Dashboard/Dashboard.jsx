@@ -176,14 +176,24 @@ export const Dashboard = () => {
                     const initFen = header['FEN'] || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
                     setStartFen(initFen);
 
-                    const moves = chess.history({ verbose: true });
-                    setHistory(moves);
-                    setMoveIndex(-1);
+	                    const moves = chess.history({ verbose: true });
+	                    setHistory(moves);
+	
+	                    // Support deep-linking from Smart Reels: jump to the puzzle start position.
+	                    let nextIndex = -1;
+	                    const jumpGameIdRaw = Number(localStorage.getItem('activeGameJumpGameId'));
+	                    const jumpMoveIndexRaw = Number(localStorage.getItem('activeGameJumpMoveIndex'));
+	                    if (Number.isFinite(jumpGameIdRaw) && jumpGameIdRaw === activeGame.id && Number.isFinite(jumpMoveIndexRaw)) {
+	                        nextIndex = Math.max(-1, Math.min(moves.length - 1, jumpMoveIndexRaw));
+	                        localStorage.removeItem('activeGameJumpGameId');
+	                        localStorage.removeItem('activeGameJumpMoveIndex');
+	                    }
+	                    setMoveIndex(nextIndex);
 
-                    loadedGameIdRef.current = activeGame.id;
-                } catch (e) {
-                    console.error("Invalid PGN in dashboard", e);
-                }
+	                    loadedGameIdRef.current = activeGame.id;
+	                } catch (e) {
+	                    console.error("Invalid PGN in dashboard", e);
+	                }
             }
         }
     }, [activeGame]);

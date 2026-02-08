@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo, useRef, useLayoutEffect } from 're
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { Chessboard } from 'react-chessboard';
-import { ArrowRight, Eye, CheckCircle, XCircle, HelpCircle, ChevronLeft, ChevronRight, FastForward, Rewind } from 'lucide-react';
+import { ArrowRight, Eye, CheckCircle, XCircle, Bookmark } from 'lucide-react';
 import { Chess } from 'chess.js';
+import { useNavigate } from 'react-router-dom';
 
 const MOVE_BADGE_MAP = {
     brilliant: { label: '!!', tone: 'brilliant' },
@@ -20,25 +21,16 @@ const getMoveBadge = (classification) => {
     return MOVE_BADGE_MAP[classification] || null;
 };
 
-const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
+const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLine }) => {
     const BADGE_SIZE = 26;
     const BADGE_INSET = 2;
     const PIECE_ANIMATION_MS = 300;
 
     const [showSolution, setShowSolution] = useState(false);
     const [game, setGame] = useState(null);
-    const [userMove, setUserMove] = useState(null); // Track user attempt if we want interactivity
     const [feedback, setFeedback] = useState(null);
     const boardRef = useRef(null);
     const [boardSize, setBoardSize] = useState(360);
-    const [exploreMode, setExploreMode] = useState(false);
-
-    // Navigation State
-    const [exploreHistory, setExploreHistory] = useState([]);
-    const [exploreIndex, setExploreIndex] = useState(-1); // Points to the current move in exploreHistory
-    const [exploreStartFen, setExploreStartFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
-
-    const exploreRef = useRef(null); // Keep for move validation if needed, but primary logic moves to computed state
     const [tempFen, setTempFen] = useState(null);
     const [lastAttempt, setLastAttempt] = useState(null);
     const [stage, setStage] = useState('puzzle'); // intro | puzzle | solved
@@ -50,17 +42,12 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
     const [badgesReady, setBadgesReady] = useState(true);
     const [blunderBadgeStyle, setBlunderBadgeStyle] = useState(null);
     const [solutionBadgeStyle, setSolutionBadgeStyle] = useState(null);
-    const [exploreBadgeStyle, setExploreBadgeStyle] = useState(null);
+    // (Explore mode removed) - continue lines open in Dashboard now.
 
     useEffect(() => {
         db.games.get(position.gameId).then(setGame);
         setShowSolution(false);
-        setUserMove(null);
         setFeedback(null);
-        setExploreMode(false);
-        setExploreHistory([]);
-        setExploreIndex(-1);
-        exploreRef.current = null;
         setTempFen(null);
         setLastAttempt(null);
         setStage('puzzle');
@@ -68,7 +55,6 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         setBadgesReady(false);
         setBlunderBadgeStyle(null);
         setSolutionBadgeStyle(null);
-        setExploreBadgeStyle(null);
         if (resetTimerRef.current) {
             clearTimeout(resetTimerRef.current);
             resetTimerRef.current = null;
@@ -249,6 +235,16 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         { name: getName(game?.white) || heroUser, rating: getRating(game?.white, game?.whiteRating) } :
         { name: getName(game?.black) || heroUser, rating: getRating(game?.black, game?.blackRating) };
 
+    const isReview = useMemo(() => {
+        return position?.nextReviewAt && new Date(position.nextReviewAt) <= new Date();
+    }, [position?.nextReviewAt]);
+
+    const toggleReview = async () => {
+        if (!position?.id) return;
+        const newReviewAt = isReview ? null : new Date().toISOString();
+        await db.positions.update(position.id, { nextReviewAt: newReviewAt });
+    };
+
     const blunderInfo = useMemo(() => {
         if (!game?.pgn || !position?.ply) return null;
         try {
@@ -268,6 +264,13 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
             return null;
         }
     }, [game?.pgn, position?.ply]);
+
+    const moveLabel = useMemo(() => {
+        if (!blunderInfo) return null;
+        const num = Math.ceil(blunderInfo.ply / 2);
+        const suffix = blunderInfo.ply % 2 === 0 ? '...' : '.';
+        return `${num}${suffix} ${blunderInfo.san}`;
+    }, [blunderInfo]);
 
     const classificationBadge = useMemo(() => getMoveBadge(position?.classification), [position?.classification]);
 
@@ -325,41 +328,16 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         return position.bestMove;
     }, [game?.analysisLog, position?.ply, heroMoved, position?.bestMove]);
 
-    // Derived State: Current FEN for Explore Mode
-    const exploreFen = useMemo(() => {
-        if (!exploreMode) return null;
-        try {
-            const chess = new Chess(exploreStartFen);
-            for (let i = 0; i <= exploreIndex; i++) {
-                const move = exploreHistory[i];
-                if (move) {
-                    chess.move({ from: move.from, to: move.to, promotion: move.promotion });
-                }
-            }
-            return chess.fen();
-        } catch (e) {
-            console.error("Explore FEN generation failed", e);
-            return exploreStartFen;
-        }
-    }, [exploreMode, exploreStartFen, exploreHistory, exploreIndex]);
-
     const displayFen = useMemo(() => {
         if (stage === 'intro') return blunderFen; // Always show the blunder being played/played
-        if (exploreMode) return exploreFen || puzzleFen;
         if (tempFen) return tempFen; // Shows user's attempt (correct or wrong)
         return puzzleFen; // Default start state for puzzle
-    }, [stage, blunderFen, exploreMode, exploreFen, tempFen, puzzleFen]);
+    }, [stage, blunderFen, tempFen, puzzleFen]);
 
     const solutionSquare = useMemo(() => {
         if (!targetMove || targetMove.length < 4) return null;
         return targetMove.substring(2, 4);
     }, [targetMove]);
-
-    const exploreBadge = useMemo(() => {
-        if (!exploreMode || exploreIndex < 0) return null;
-        const entry = game?.analysisLog?.[exploreIndex];
-        return getMoveBadge(entry?.classification);
-    }, [exploreMode, exploreIndex, game?.analysisLog]);
 
     useEffect(() => {
         if (!heroMoved) {
@@ -386,7 +364,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         return () => {
             if (badgeTimerRef.current) clearTimeout(badgeTimerRef.current);
         };
-    }, [displayFen, exploreMode, stage, tempFen, exploreIndex]);
+    }, [displayFen, stage, tempFen]);
 
     // Recompute badge positions after the board has rendered and the piece animation settles.
     useLayoutEffect(() => {
@@ -394,11 +372,9 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
 
         const wantBlunderSquare = (stage === 'intro' || !heroMoved) ? blunderInfo?.to : null;
         const wantSolutionSquare = showSolution ? solutionSquare : null;
-        const wantExploreSquare = (exploreMode && exploreIndex >= 0) ? exploreHistory?.[exploreIndex]?.to : null;
 
         setBlunderBadgeStyle(computeBadgeStyle(wantBlunderSquare));
         setSolutionBadgeStyle(computeBadgeStyle(wantSolutionSquare));
-        setExploreBadgeStyle(computeBadgeStyle(wantExploreSquare));
     }, [
         badgesReady,
         boardSize,
@@ -407,92 +383,8 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         heroMoved,
         blunderInfo?.to,
         showSolution,
-        solutionSquare,
-        exploreMode,
-        exploreIndex,
-        exploreHistory
+        solutionSquare
     ]);
-
-    const handleExploreReset = () => {
-        setExploreMode(false);
-        setExploreHistory([]);
-        setExploreIndex(-1);
-    };
-
-    // Initialize Explore Mode
-    useEffect(() => {
-        if (!exploreMode) return;
-
-        try {
-            const chess = new Chess();
-
-            // 1. Get Base Game
-            if (game?.pgn) {
-                chess.loadPgn(game.pgn);
-
-                // Get Start FEN
-                const header = chess.header();
-                const initFen = header['FEN'] || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-                setExploreStartFen(initFen);
-
-                const baseMoves = chess.history({ verbose: true });
-
-                // 2. Identify Branch Point
-                const initialHistory = baseMoves; // Load full game history
-
-                let startIndex = initialHistory.length - 1;
-
-                if (heroMoved) { // Hero Blunder
-                    // position.ply is 1-based index of the blunder move
-                    // We want to be BEFORE the blunder
-                    // e.g. ply = 1, we want index -1 (start)
-                    // e.g. ply = 2, we want index 0 (after 1st move)
-                    startIndex = position.ply - 2;
-                } else { // Opponent Blunder
-                    // We want to be AFTER the blunder (to punish it)
-                    // e.g. ply = 1, we want index 0 (after 1st move)
-                    startIndex = position.ply - 1;
-                }
-
-                // 3. User requested to NOT include their solution move - DISABLED
-                // We just rely on baseMoves. The user can interact to branch off.
-
-                setExploreHistory(initialHistory);
-                setExploreIndex(startIndex);
-            }
-        } catch (e) {
-            console.error("Explore init failed", e);
-        }
-    }, [exploreMode, game, position, heroMoved, lastAttempt]);
-
-    const onExploreDrop = (sourceSquare, targetSquare) => {
-        try {
-            const chess = new Chess(exploreFen);
-            const move = chess.move({
-                from: sourceSquare,
-                to: targetSquare,
-                promotion: 'q' // Simplification
-            });
-
-            if (move) {
-                // Branching: Truncate history if we went back
-                const newHistory = exploreHistory.slice(0, exploreIndex + 1);
-                newHistory.push(move);
-                setExploreHistory(newHistory);
-                setExploreIndex(newHistory.length - 1);
-                return true;
-            }
-        } catch (e) {
-            console.error("Explore move failed", e);
-        }
-        return false;
-    };
-
-    // Navigation Controls
-    const handleExploreStart = () => setExploreIndex(-1);
-    const handleExplorePrev = () => setExploreIndex(i => Math.max(-1, i - 1));
-    const handleExploreNext = () => setExploreIndex(i => Math.min(exploreHistory.length - 1, i + 1));
-    const handleExploreEnd = () => setExploreIndex(exploreHistory.length - 1);
 
     // When user reveals solution, show the best move on the board.
     useEffect(() => {
@@ -518,7 +410,12 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
     if (!game) return <div className="h-full flex items-center justify-center text-muted">Loading context...</div>;
 
     const promptText = () => {
-        if (!heroMoved) return 'Punish the blunder';
+        if (!heroMoved) {
+            const type = position.classification || 'move';
+            // Simple check for "an" vs "a"
+            const article = ['inaccuracy'].includes(type) ? 'an' : 'a';
+            return `Punish the ${type}`;
+        }
         if (mode === 'why_blunder') return 'Why is this a blunder?';
         if (mode === 'find_brilliant') return 'Find the brilliant idea';
         if (mode === 'find_defense') return 'Find the best defense';
@@ -526,33 +423,40 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         return 'Find the best move';
     };
 
+
+
     return (
         <div className="w-full h-full flex flex-col items-center justify-center relative p-6" style={{ scrollSnapAlign: 'start' }}>
 
             <div className="bg-panel border rounded-xl shadow-lg p-6 w-full relative" style={{ maxWidth: 600 }}>
 
                 {/* Top Meta: Classification + Game Info + Eval */}
-                <div className="flex justify-between items-start mb-4">
-                    <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${position.classification === 'blunder' ? 'bg-red-400' : 'bg-orange-400'}`} />
-                            <span className="text-sm font-medium uppercase tracking-wide text-secondary">{position.classification}</span>
+                <div className="reel-header mb-4">
+                    <div className="reel-header__center">
+                        <div className="reel-header__line1">
+                            <span className={`reel-quality__dot ${position.classification === 'blunder' ? 'reel-dot--red' : 'reel-dot--orange'}`} />
+                            <span className="reel-quality__text">{position.classification || 'position'}</span>
+                            {moveLabel && (
+                                <>
+                                    <span className="reel-header__sep">•</span>
+                                    <span className="reel-header__move">{moveLabel}</span>
+                                </>
+                            )}
                         </div>
-                        {blunderInfo && (
-                            <div className="text-xs text-muted">
-                                Move {Math.ceil(blunderInfo.ply / 2)}{blunderInfo.ply % 2 === 0 ? '...' : '.'} {blunderInfo.san}
-                            </div>
-                        )}
-                        <div className="flex items-center gap-2 text-xs text-muted">
-                            <span className="uppercase tracking-wider font-semibold">{game.perf || 'Standard'}</span>
-                            <span>•</span>
-                            <span>{new Date(game.date).toLocaleDateString()}</span>
+                        <div className="reel-header__line2">
+                            <span className="reel-meta__perf">{(game.perf || 'Standard').toLowerCase()}</span>
+                            <span className="reel-header__sep">•</span>
+                            <span className="reel-meta__date">
+                                {new Date(game.date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })}
+                            </span>
                         </div>
                     </div>
-                    <div className="text-right">
-                        <span className={`font-mono text-xl font-bold ${position.score.toString().startsWith('+') ? 'text-green-400' : position.score.toString().startsWith('-') ? 'text-red-400' : 'text-primary'}`}>
-                            {position.score}
-                        </span>
+                    <div
+                        className={`reel-eval-pill ${String(position.score || '').startsWith('+') ? 'reel-eval--good' : String(position.score || '').startsWith('-') ? 'reel-eval--bad' : ''}`}
+                        title="Engine evaluation for this position (White perspective)"
+                    >
+                        <span className="reel-eval-pill__k">Eval</span>
+                        <span className="reel-eval-pill__v">{position.score}</span>
                     </div>
                 </div>
 
@@ -572,15 +476,15 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
                             options={{
                                 position: displayFen,
                                 boardWidth: boardSize,
-                                arePiecesDraggable: exploreMode || (!showSolution && stage === 'puzzle'),
-                                onPieceDrop: exploreMode ? onExploreDrop : onDrop,
+                                arePiecesDraggable: !showSolution && stage === 'puzzle',
+                                onPieceDrop: onDrop,
                                 boardOrientation: isHeroWhite ? 'white' : 'black',
                                 animationDuration: PIECE_ANIMATION_MS,
                                 customDarkSquareStyle: { backgroundColor: '#71717a' },
                                 customLightSquareStyle: { backgroundColor: '#e4e4e7' }
                             }}
                         />
-                        {!exploreMode && badgesReady && classificationBadge && blunderBadgeStyle && (stage === 'intro' || !heroMoved) && (
+                        {badgesReady && classificationBadge && blunderBadgeStyle && (stage === 'intro' || !heroMoved) && (
                             <div
                                 className={`board-badge badge-${classificationBadge.tone}`}
                                 style={{ left: blunderBadgeStyle.left, top: blunderBadgeStyle.top }}
@@ -588,20 +492,12 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
                                 {classificationBadge.label}
                             </div>
                         )}
-                        {!exploreMode && badgesReady && showSolution && solutionBadge && solutionBadgeStyle && (
+                        {badgesReady && showSolution && solutionBadge && solutionBadgeStyle && (
                             <div
                                 className={`board-badge badge-${solutionBadge.tone}`}
                                 style={{ left: solutionBadgeStyle.left, top: solutionBadgeStyle.top }}
                             >
                                 {solutionBadge.label}
-                            </div>
-                        )}
-                        {exploreMode && badgesReady && exploreBadge && exploreBadgeStyle && (
-                            <div
-                                className={`board-badge badge-${exploreBadge.tone}`}
-                                style={{ left: exploreBadgeStyle.left, top: exploreBadgeStyle.top }}
-                            >
-                                {exploreBadge.label}
                             </div>
                         )}
                     </div>
@@ -619,12 +515,18 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
                     )}
                 </div>
 
-                {/* Hero (Bottom) */}
                 <div className="flex justify-between items-start px-1 mb-4">
                     <div className="flex items-baseline gap-2 text-primary">
                         <span className="font-bold text-lg">{bottomPlayer.name}</span>
                         <span className="text-sm font-light">({bottomPlayer.rating})</span>
                     </div>
+                    <button
+                        onClick={toggleReview}
+                        className={`p-2 rounded-full transition-colors ${isReview ? 'text-indigo-500 bg-indigo-500/10' : 'text-muted hover:text-secondary'}`}
+                        title={isReview ? "Remove from Review" : "Mark for Review"}
+                    >
+                        <Bookmark size={20} fill={isReview ? "currentColor" : "none"} />
+                    </button>
                 </div>
 
                 {/* Context / Feedback Area */}
@@ -667,8 +569,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
                     ) : (
                         <div className="flex flex-col items-center gap-1 animate-pulse">
                             <span className="text-primary font-medium text-sm">{promptText()}</span>
-                            <span className="text-xs text-muted">
-                                {position.turn === 'w' ? 'White to move' : 'Black to move'} • <strong>Your Turn</strong>
+                            <span className="text-xs text-muted"> <strong>Your Turn</strong>
                             </span>
                             {feedback === 'incorrect' && (
                                 <div className="text-xs text-red-400 mt-2">
@@ -688,28 +589,17 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
                         <Eye size={18} className="mr-2" />
                         {showSolution ? 'Hide' : 'Solution'}
                     </button>
-                    {showSolution && !exploreMode && (
+                    {showSolution && (
                         <button
-                            onClick={() => setExploreMode(true)}
+                            onClick={() => {
+                                const startIndex = heroMoved ? position.ply - 2 : position.ply - 1;
+                                const moveIndex = Math.max(-1, Number.isFinite(startIndex) ? startIndex : -1);
+                                onContinueLine && onContinueLine({ gameId: position.gameId, moveIndex });
+                            }}
                             className="flex-1 btn btn-secondary py-3 justify-center"
                         >
-                            Continue Line
+                            Continue in Dashboard
                         </button>
-                    )}
-                    {exploreMode && (
-                        <div className="flex-1 flex gap-2">
-                            <button onClick={handleExploreStart} className="p-3 bg-subtle hover:bg-subtle-hover rounded text-secondary" title="Start"><Rewind size={18} /></button>
-                            <button onClick={handleExplorePrev} className="p-3 bg-subtle hover:bg-subtle-hover rounded text-primary" title="Back"><ChevronLeft size={20} /></button>
-                            <button onClick={handleExploreNext} className="p-3 bg-subtle hover:bg-subtle-hover rounded text-primary" title="Forward"><ChevronRight size={20} /></button>
-                            <button onClick={handleExploreEnd} className="p-3 bg-subtle hover:bg-subtle-hover rounded text-secondary" title="End"><FastForward size={18} /></button>
-
-                            <button
-                                onClick={handleExploreReset}
-                                className="flex-1 btn btn-secondary py-3 justify-center ml-2"
-                            >
-                                Back to Puzzle
-                            </button>
-                        </div>
                     )}
                     <button
                         onClick={onNext}
@@ -727,6 +617,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
 
 export const ReelFeed = () => {
     const heroUser = localStorage.getItem('heroUser');
+    const navigate = useNavigate();
 
     // Complex query: Join positions with games to filter by Hero's turn
     const positions = useLiveQuery(async () => {
@@ -734,7 +625,7 @@ export const ReelFeed = () => {
 
         // 1. Get all critical positions
         const candidates = await db.positions
-            .where('classification').anyOf(['blunder', 'mistake', 'inaccuracy', 'brilliant', 'great'])
+            .where('classification').anyOf(['blunder', 'mistake', 'brilliant', 'great', 'miss', 'inaccuracy'])
             .limit(300)
             .toArray();
 
@@ -764,33 +655,38 @@ export const ReelFeed = () => {
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - 14);
 
-        const stale = [];
-        const recent = [];
-        const due = [];
+        const solved = [];
+        const unsolved = [];
+        const review = [];
 
         const now = new Date();
         validPositions.forEach((pos) => {
-            const analyzedAt = pos._game.analyzedAt ? new Date(pos._game.analyzedAt) : null;
-            if (!analyzedAt || analyzedAt < cutoff) stale.push(pos);
-            else recent.push(pos);
-
+            // Review: Based on nextReviewAt
             if (pos.nextReviewAt && new Date(pos.nextReviewAt) <= now) {
-                due.push(pos);
+                review.push(pos);
+            }
+
+            // Solved vs Unsolved
+            if (pos.solveStatus === 'correct') {
+                solved.push(pos);
+            } else {
+                unsolved.push(pos);
             }
         });
 
         const sortByGameDate = (a, b) => new Date(b._game.date || 0) - new Date(a._game.date || 0);
-        stale.sort(sortByGameDate);
-        recent.sort(sortByGameDate);
+        solved.sort(sortByGameDate);
+        unsolved.sort(sortByGameDate);
+        review.sort(sortByGameDate);
 
         return {
-            stale: stale.slice(0, 50),
-            recent: recent.slice(0, 50),
-            due: due.slice(0, 50)
+            solved: solved.slice(0, 50),
+            unsolved: unsolved.slice(0, 50),
+            review: review.slice(0, 50)
         };
     }, [heroUser]);
 
-    const [section, setSection] = useState('stale');
+    const [section, setSection] = useState('unsolved');
     const [mode, setMode] = useState('best_move');
     const [index, setIndex] = useState(0);
     const [quizActive, setQuizActive] = useState(false);
@@ -798,27 +694,12 @@ export const ReelFeed = () => {
     const [quizIndex, setQuizIndex] = useState(0);
     const [quizSet, setQuizSet] = useState([]);
 
-    useEffect(() => {
-        if (!positions) return;
-        if (section === 'stale' && positions.stale.length === 0 && positions.recent.length > 0) {
-            setSection('recent');
-            setIndex(0);
-        }
-        if (section === 'recent' && positions.recent.length === 0 && positions.stale.length > 0) {
-            setSection('stale');
-            setIndex(0);
-        }
-        if (section === 'due' && positions.due.length === 0) {
-            setSection('stale');
-            setIndex(0);
-        }
-    }, [positions, section]);
 
     useEffect(() => {
         if (!positions) return;
         if (!quizActive) return;
         if (quizSet.length === 0) {
-            const pool = [...positions.due, ...positions.stale, ...positions.recent];
+            const pool = [...positions.review, ...positions.unsolved, ...positions.solved];
             const unique = Array.from(new Set(pool.map((pos) => pos.id))).map(id => pool.find(p => p.id === id));
             setQuizSet(unique.slice(0, 5));
             setQuizIndex(0);
@@ -826,7 +707,7 @@ export const ReelFeed = () => {
         }
     }, [quizActive, positions, quizSet.length]);
 
-    if (!positions || (positions.stale.length === 0 && positions.recent.length === 0 && positions.due.length === 0)) return (
+    if (!positions || (positions.unsolved.length === 0 && positions.solved.length === 0 && positions.review.length === 0)) return (
         <div className="h-full flex flex-col items-center justify-center text-muted p-8 text-center">
             <div className="p-4 rounded-full bg-subtle mb-4">
                 <CheckCircle size={32} />
@@ -836,17 +717,17 @@ export const ReelFeed = () => {
         </div>
     );
 
-    const activePositions = section === 'stale' ? positions.stale : section === 'due' ? positions.due : positions.recent;
+    const activePositions = section === 'unsolved' ? positions.unsolved : section === 'review' ? positions.review : positions.solved;
     const filteredPositions = activePositions.filter((pos) => {
-        if (mode === 'best_move') return true;
-        if (mode === 'why_blunder') return ['blunder', 'mistake'].includes(pos.classification);
+        if (mode === 'best_move') return !['brilliant', 'great'].includes(pos.classification); // Focus on mistakes
+        if (mode === 'why_blunder') return ['blunder'].includes(pos.classification);
         if (mode === 'find_brilliant') return ['brilliant', 'great'].includes(pos.classification);
         if (mode === 'find_defense') return pos.missedDefense;
-        if (mode === 'convert_win') return pos.missedWin;
+        if (mode === 'convert_win') return pos.missedWin || pos.classification === 'miss';
         return true;
     });
 
-    const activeSet = filteredPositions.length ? filteredPositions : activePositions;
+    const activeSet = filteredPositions;
     const handleNext = () => setIndex(prev => (prev + 1) % activeSet.length);
 
     const scheduleReview = async (pos, correct) => {
@@ -867,65 +748,200 @@ export const ReelFeed = () => {
         if (correct) setQuizScore((s) => s + 1);
     };
 
+    const openInDashboard = ({ gameId, moveIndex }) => {
+        if (!gameId && gameId !== 0) return;
+        localStorage.setItem('activeGameId', String(gameId));
+        localStorage.setItem('activeGameJumpGameId', String(gameId));
+        localStorage.setItem('activeGameJumpMoveIndex', String(typeof moveIndex === 'number' ? moveIndex : -1));
+        window.dispatchEvent(new Event('activeGameChanged'));
+        navigate('/');
+    };
+
     return (
-        <div className="h-full w-full bg-app overflow-y-auto" style={{ scrollSnapType: 'y mandatory' }}>
-            <div className="flex items-center justify-center gap-3 py-4">
-                <button
-                    className={`btn ${section === 'stale' ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => { setSection('stale'); setIndex(0); }}
-                >
-                    Older Puzzles
-                </button>
-                <button
-                    className={`btn ${section === 'due' ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => { setSection('due'); setIndex(0); }}
-                >
-                    Review Due
-                </button>
-                <button
-                    className={`btn ${section === 'recent' ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => { setSection('recent'); setIndex(0); }}
-                >
-                    Recent Puzzles
-                </button>
-            </div>
-            <div className="flex items-center justify-center gap-2 pb-2">
-                <button className={`btn ${mode === 'best_move' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('best_move')}>Best Move</button>
-                <button className={`btn ${mode === 'why_blunder' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('why_blunder')}>Why Blunder</button>
-                <button className={`btn ${mode === 'find_brilliant' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('find_brilliant')}>Brilliant</button>
-                <button className={`btn ${mode === 'find_defense' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('find_defense')}>Defense</button>
-                <button className={`btn ${mode === 'convert_win' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('convert_win')}>Convert Win</button>
-                <button className={`btn ${quizActive ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setQuizActive((v) => !v)}>Quiz</button>
+        <div className="h-full w-full bg-app flex overflow-hidden">
+            {/* Main Content Area */}
+            <div className="flex-1 h-full relative flex flex-col items-center justify-center overflow-y-auto" style={{ scrollSnapType: 'y mandatory' }}>
+                {quizActive ? (
+                    quizSet.length > 0 ? (
+                        <div className="w-full h-full flex flex-col items-center justify-center relative p-6">
+                            <div className="text-xs text-muted mb-2">Quiz {quizIndex + 1} / {quizSet.length} • Score {quizScore}</div>
+                            <div className="w-full max-w-xl h-full flex flex-col justify-center">
+                                <ReelCard
+                                    position={quizSet[quizIndex]}
+                                    mode={quizSet[quizIndex]?.questionType || 'best_move'}
+                                    onNext={() => setQuizIndex((i) => Math.min(quizSet.length - 1, i + 1))}
+                                    onSolved={(correct) => {
+                                        handleQuizSolved(correct);
+                                        scheduleReview(quizSet[quizIndex], correct);
+                                    }}
+                                    onContinueLine={openInDashboard}
+                                />
+                            </div>
+                            {quizIndex === quizSet.length - 1 && (
+                                <div className="absolute bottom-10 bg-panel border p-4 rounded shadow-lg text-center z-20">
+                                    <div className="text-lg font-bold text-primary mb-1">Quiz Complete</div>
+                                    <div className="text-sm text-secondary">Score: {quizScore}/{quizSet.length}</div>
+                                    <button className="mt-2 btn btn-primary w-full" onClick={() => setQuizActive(false)}>Close</button>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="h-full flex flex-col items-center justify-center text-muted p-8 text-center">
+                            <p>No quiz questions available.</p>
+                            <button className="mt-4 btn btn-secondary" onClick={() => setQuizActive(false)}>Back</button>
+                        </div>
+                    )
+                ) : (
+                    activeSet.length > 0 ? (
+                        <ReelCard
+                            position={activeSet[index % activeSet.length]}
+                            onNext={handleNext}
+                            mode={mode}
+                            onSolved={(correct) => scheduleReview(activeSet[index % activeSet.length], correct)}
+                            onContinueLine={openInDashboard}
+                        />
+                    ) : (
+                        <div className="h-full flex flex-col items-center justify-center text-muted p-8 text-center">
+                            <div className="p-4 rounded-full bg-subtle mb-4">
+                                <CheckCircle size={32} />
+                            </div>
+
+                            {/* Category Empty States */}
+                            {activePositions.length === 0 && (
+                                <>
+                                    {section === 'unsolved' && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">Great job! You've cleared your inbox.</p>
+                                            <p className="text-sm">Import more games to find new mistakes.</p>
+                                        </>
+                                    )}
+                                    {section === 'solved' && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">No solved puzzles yet.</p>
+                                            <p className="text-sm">Solve puzzles in the "Recent" tab to see them here.</p>
+                                        </>
+                                    )}
+                                    {section === 'review' && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">No puzzles due for review.</p>
+                                            <p className="text-sm">Check back later or mark puzzles for review manually.</p>
+                                        </>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Training Mode Empty States (Category has items, but filter matches none) */}
+                            {activePositions.length > 0 && (
+                                <>
+                                    {mode === 'best_move' && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">No mistakes found here.</p>
+                                            <p className="text-sm">Try finding brilliant moves or missed wins instead.</p>
+                                        </>
+                                    )}
+                                    {mode === 'why_blunder' && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">No blunders found.</p>
+                                            <p className="text-sm">You played accurately in this batch!</p>
+                                        </>
+                                    )}
+                                    {mode === 'find_brilliant' && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">No brilliant moves found.</p>
+                                            <p className="text-sm">Keep playing boldly to create brilliant moments!</p>
+                                        </>
+                                    )}
+                                    {mode === 'find_defense' && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">No missed defenses.</p>
+                                            <p className="text-sm">You defended well in these games.</p>
+                                        </>
+                                    )}
+                                    {mode === 'convert_win' && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">No missed conversions.</p>
+                                            <p className="text-sm">You converted your advantages cleanly!</p>
+                                        </>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    )
+                )}
             </div>
 
-            {quizActive && quizSet.length > 0 ? (
-                <div className="flex flex-col items-center gap-3">
-                    <div className="text-xs text-muted">Quiz {quizIndex + 1} / {quizSet.length} • Score {quizScore}</div>
-                    <ReelCard
-                        position={quizSet[quizIndex]}
-                        mode={quizSet[quizIndex]?.questionType || 'best_move'}
-                        onNext={() => setQuizIndex((i) => Math.min(quizSet.length - 1, i + 1))}
-                        onSolved={(correct) => {
-                            handleQuizSolved(correct);
-                            scheduleReview(quizSet[quizIndex], correct);
-                        }}
-                    />
-                    {quizIndex === quizSet.length - 1 && (
-                        <div className="text-sm text-secondary">Quiz complete. Score {quizScore}/{quizSet.length}.</div>
-                    )}
+            {/* Right Sidebar - Filters */}
+            <div className="w-96 h-full border-l bg-panel p-6 hidden lg:flex flex-col overflow-y-auto">
+                <div className="mb-4">
+                    <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Feed Source</h3>
+                    <div className="flex flex-col gap-2">
+                        {[
+                            { id: 'unsolved', label: 'Recent Puzzles', count: positions?.unsolved?.length },
+                            { id: 'solved', label: 'Solved Puzzles', count: positions?.solved?.length },
+                            { id: 'review', label: 'Review Puzzles', count: positions?.review?.length }
+                        ].map(opt => (
+                            <button
+                                key={opt.id}
+                                onClick={() => { setSection(opt.id); setIndex(0); }}
+                                className={`flex items-center justify-between p-3 rounded-lg border transition-all ${section === opt.id
+                                    ? 'bg-primary/10 border-primary/50 text-primary'
+                                    : 'bg-subtle border-transparent hover:border-border text-secondary'}`}
+                            >
+                                <span className="font-medium text-sm">{opt.label}</span>
+                                {opt.count !== undefined && <span className="text-xs bg-black/10 px-2 py-0.5 rounded-full">{opt.count}</span>}
+                            </button>
+                        ))}
+                    </div>
                 </div>
-            ) : activeSet.length > 0 ? (
-                <ReelCard
-                    position={activeSet[index % activeSet.length]}
-                    onNext={handleNext}
-                    mode={mode}
-                    onSolved={(correct) => scheduleReview(activeSet[index % activeSet.length], correct)}
-                />
-            ) : (
-                <div className="h-full flex flex-col items-center justify-center text-muted p-8 text-center">
-                    No puzzles match this filter.
+
+
+
+                <div className="border-t border-gray-700/50 my-6"></div>
+
+                <div className="mb-4">
+                    <h3 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Training Mode</h3>
+                    <div className="flex flex-col gap-2">
+                        {[
+                            {
+                                id: 'best_move',
+                                label: 'Best Move',
+                                count: activePositions.filter(p => !['brilliant', 'great'].includes(p.classification)).length
+                            },
+                            {
+                                id: 'why_blunder',
+                                label: 'Why Blunder?',
+                                count: activePositions.filter(p => ['blunder'].includes(p.classification)).length
+                            },
+                            {
+                                id: 'find_brilliant',
+                                label: 'Brilliant Moves',
+                                count: activePositions.filter(p => ['brilliant', 'great'].includes(p.classification)).length
+                            },
+                            {
+                                id: 'find_defense',
+                                label: 'Best Defense',
+                                count: activePositions.filter(p => p.missedDefense).length
+                            },
+                            {
+                                id: 'convert_win',
+                                label: 'Convert Win',
+                                count: activePositions.filter(p => p.missedWin || p.classification === 'miss').length
+                            }
+                        ].map(opt => (
+                            <button
+                                key={opt.id}
+                                onClick={() => setMode(opt.id)}
+                                className={`flex items-center justify-between p-3 rounded-lg border transition-all ${mode === opt.id
+                                    ? 'bg-primary/10 border-primary/50 text-primary'
+                                    : 'bg-subtle border-transparent hover:border-border text-secondary'}`}
+                            >
+                                <span className="font-medium text-sm">{opt.label}</span>
+                                <span className="text-xs bg-black/10 px-2 py-0.5 rounded-full">{opt.count}</span>
+                            </button>
+                        ))}
+                    </div>
                 </div>
-            )}
-        </div>
+            </div>
+        </div >
     );
 };
