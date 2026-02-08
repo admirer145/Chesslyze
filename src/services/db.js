@@ -67,8 +67,50 @@ db.version(11).stores({
     openings: 'eco, name, winRate, frequency, masterMoves',
 });
 
+db.version(12).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+}).upgrade(tx => {
+    return tx.table('games').toCollection().modify(g => {
+        if (typeof g.priority === 'undefined') g.priority = 0;
+    });
+});
+
 export const addGames = async (games) => {
     return await db.games.bulkAdd(games);
+};
+
+export const bulkUpsertGames = async (games) => {
+    // We use lichessId as the unique key to check for duplicates
+    // Since we want to update if it exists or add if not, bulkPut is suitable if the PK is lichessId,
+    // but here ++id is the primary key. So we should probably check existence.
+    // However, if we trust lichessId to be unique enough, we can use it.
+    // Let's implement a manual upsert since lichessId is indexed but not the PK.
+    const gameIds = games.map(g => g.lichessId).filter(Boolean);
+    const existing = await db.games.where('lichessId').anyOf(gameIds).toArray();
+    const existingIdsMap = new Map(existing.map(g => [g.lichessId, g.id]));
+
+    const toPut = games.map(g => {
+        if (g.lichessId && existingIdsMap.has(g.lichessId)) {
+            return { ...g, id: existingIdsMap.get(g.lichessId) };
+        }
+        return g;
+    });
+
+    return await db.games.bulkPut(toPut);
+};
+
+export const getLatestGameTimestamp = async (username) => {
+    const latest = await db.games
+        .filter(g => {
+            const isHero = username && (g.white?.toLowerCase() === username.toLowerCase() || g.black?.toLowerCase() === username.toLowerCase());
+            return isHero;
+        })
+        .reverse()
+        .sortBy('timestamp');
+
+    return latest.length > 0 ? latest[0].timestamp : 0;
 };
 
 export const getGame = async (id) => {

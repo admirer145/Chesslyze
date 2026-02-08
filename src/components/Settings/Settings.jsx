@@ -48,21 +48,26 @@ export const Settings = () => {
         return { total: games.length, heroTotal, analyzed, pending, ignored };
     }, [games, heroUser]);
 
-    const handleReanalyzeAll = async () => {
+    const handleAnalyzeAll = async () => {
         if (!games) return;
-        setStatus({ type: 'loading', message: 'Queueing re-analysis for your games...' });
+        setStatus({ type: 'loading', message: 'Queueing analysis for unanalyzed games...' });
         try {
-            await db.games
-                .filter((g) => heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser))
+            // Only target games that are NOT analyzed OR have failed
+            const targetGames = await db.games
+                .filter((g) => {
+                    const isHero = heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser);
+                    const needsAnalysis = !g.analyzed || g.analysisStatus === 'failed';
+                    return isHero && needsAnalysis;
+                })
                 .modify({
-                    analyzed: false,
                     analysisStatus: 'pending',
-                    analyzedAt: null
+                    priority: 1 // Low priority for bulk analysis
                 });
-            setStatus({ type: 'success', message: 'Re-analysis queued. This may take a while.' });
+
+            setStatus({ type: 'success', message: `Queued ${targetGames} games for analysis.` });
         } catch (err) {
             console.error(err);
-            setStatus({ type: 'error', message: 'Failed to queue re-analysis.' });
+            setStatus({ type: 'error', message: 'Failed to queue analysis.' });
         }
     };
 
@@ -94,7 +99,7 @@ export const Settings = () => {
 
     const syncBookMoves = async () => {
         if (!games) return;
-        setBookStatus({ type: 'loading', message: 'Syncing book moves...' });
+        setBookStatus({ type: 'loading', message: 'Starting sync...' });
         try {
             const openings = {};
             games.forEach((game) => {
@@ -111,6 +116,13 @@ export const Settings = () => {
             const ecoList = Object.values(openings);
             for (let i = 0; i < ecoList.length; i++) {
                 const opening = ecoList[i];
+                setBookStatus({ type: 'loading', message: `Syncing ${opening.eco} (${i + 1}/${ecoList.length})...` });
+
+                // 1. Load existing cache
+                const cachedEntry = await db.openings.get(opening.eco);
+                const masterMoveByFen = cachedEntry?.masterMoveByFen || {};
+                const masterMovesAll = new Set(cachedEntry?.masterMoves || []);
+
                 const game = await db.games.get(opening.sampleGameId);
                 if (!game?.pgn) continue;
 
@@ -121,24 +133,36 @@ export const Settings = () => {
                 const moves = base.history({ verbose: true });
 
                 const walk = new Chess(initFen);
-                const masterMoveByFen = {};
-                const masterMovesAll = new Set();
                 const seenKeys = new Set();
+                let didFetch = false;
 
-                // Fetch book moves for early positions in the opening (pre-move positions).
+                // Fetch book moves for early positions
                 const plyTarget = Math.min(14, moves.length);
                 for (let j = 0; j <= plyTarget; j++) {
                     const fen = walk.fen();
                     const key = fenKey(fen);
+
                     if (key && !seenKeys.has(key)) {
-                        const data = await fetchMasterGames(fen);
-                        const masterMoves = (data.moves || [])
-                            .map((m) => (typeof m === 'string' ? m : m.uci))
-                            .filter(Boolean);
-                        masterMoveByFen[key] = masterMoves;
-                        masterMoves.forEach((m) => masterMovesAll.add(m));
+                        // Check if we already have this position cached
+                        if (!masterMoveByFen[key]) {
+                            try {
+                                const data = await fetchMasterGames(fen);
+                                const masterMoves = (data.moves || [])
+                                    .map((m) => (typeof m === 'string' ? m : m.uci))
+                                    .filter(Boolean);
+                                masterMoveByFen[key] = masterMoves;
+                                didFetch = true;
+                                await new Promise((r) => setTimeout(r, 1200)); // Rate limit 1.2s
+                            } catch (e) {
+                                console.warn(`Failed to fetch for ${opening.eco} position ${j}`, e);
+                            }
+                        }
+
+                        // Add found moves to the set
+                        if (masterMoveByFen[key]) {
+                            masterMoveByFen[key].forEach((m) => masterMovesAll.add(m));
+                        }
                         seenKeys.add(key);
-                        await new Promise((r) => setTimeout(r, 120));
                     }
 
                     const nextMove = moves[j];
@@ -146,17 +170,19 @@ export const Settings = () => {
                     walk.move({ from: nextMove.from, to: nextMove.to, promotion: nextMove.promotion });
                 }
 
-                const masterMoves = Array.from(masterMovesAll);
-                await db.openings.put({
-                    eco: opening.eco,
-                    name: opening.name,
-                    masterMoves,
-                    masterMoveByFen
-                });
-
+                if (didFetch || !cachedEntry) {
+                    await db.openings.put({
+                        ...cachedEntry,
+                        eco: opening.eco,
+                        name: opening.name,
+                        masterMoves: Array.from(masterMovesAll),
+                        masterMoveByFen,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
             }
 
-            setBookStatus({ type: 'success', message: 'Book moves synced for openings.' });
+            setBookStatus({ type: 'success', message: 'Book moves synced for all openings.' });
         } catch (err) {
             console.error(err);
             setBookStatus({ type: 'error', message: 'Failed to sync book moves.' });
@@ -225,13 +251,12 @@ export const Settings = () => {
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Re-analyze All Games</h3>
+                    <h3 className="text-sm font-semibold text-primary mb-3">Analyze All Games</h3>
                     <p className="text-sm text-secondary mb-4">
-                        Rebuild all analysis data using the latest engine logic. This will refresh motifs,
-                        phases, missed wins/defenses, and reels scheduling.
+                        Queue analysis for all games that haven't been analyzed yet. Already analyzed games will be skipped.
                     </p>
-                    <button className="btn btn-primary" onClick={handleReanalyzeAll}>
-                        Re-analyze All
+                    <button className="btn btn-primary" onClick={handleAnalyzeAll}>
+                        Analyze All (Unanalyzed)
                     </button>
 
                     {status && (

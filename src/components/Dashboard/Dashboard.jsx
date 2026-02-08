@@ -220,8 +220,8 @@ export const Dashboard = () => {
 
     const handleAnalyze = async () => {
         if (!activeGame) return;
-        // Reset to pending to trigger queue
-        await db.games.update(activeGame.id, { analyzed: false, analysisStatus: 'pending' });
+        // High priority for manual request
+        await db.games.update(activeGame.id, { analyzed: false, analysisStatus: 'pending', priority: 10 });
     };
 
     const handleJumpTo = (index) => {

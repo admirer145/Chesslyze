@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Import, Activity, BookOpen, Settings, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
+import { LayoutDashboard, Import, Activity, BookOpen, Settings, ChevronLeft, ChevronRight, Zap, User, LayoutList } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAnalysisQueue } from '../hooks/useAnalysisQueue';
 
@@ -11,8 +11,8 @@ const NavItem = ({ to, icon: Icon, label, collapsed }) => {
         <Link
             to={to}
             className={`nav-item flex items-center gap-3 p-2 mx-2 rounded-md transition-colors text-sm ${isActive
-                    ? 'nav-item-active text-primary font-medium'
-                    : 'nav-item-inactive text-secondary hover:bg-subtle hover:text-primary'
+                ? 'nav-item-active text-primary font-medium'
+                : 'nav-item-inactive text-secondary hover:bg-subtle hover:text-primary'
                 }`}
             title={collapsed ? label : ''}
         >
@@ -62,10 +62,12 @@ export const Layout = ({ children }) => {
                 >
                     <div className="flex-1 py-4 flex flex-col gap-1">
                         <NavItem to="/" icon={LayoutDashboard} label="Dashboard" collapsed={collapsed} />
-                        <NavItem to="/reels" icon={Activity} label="Smart Reels" collapsed={collapsed} />
+                        <NavItem to="/library" icon={LayoutList} label="Games Library" collapsed={collapsed} />
+                        <NavItem to="/reels" icon={Zap} label="Smart Reels" collapsed={collapsed} />
                         <NavItem to="/openings" icon={BookOpen} label="Opening Explorer" collapsed={collapsed} />
+                        <NavItem to="/profile" icon={User} label="Chess Journey" collapsed={collapsed} />
                         <div className="my-2 border-t mx-4" />
-                        <NavItem to="/import" icon={Import} label="Import Games" collapsed={collapsed} />
+                        <NavItem to="/import" icon={Import} label="Sync Games" collapsed={collapsed} />
                         <NavItem to="/settings" icon={Settings} label="Settings" collapsed={collapsed} />
                     </div>
 

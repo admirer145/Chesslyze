@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
-import { BookOpen, Trophy, XCircle, Minus, ChevronRight } from 'lucide-react';
+import { BookOpen, Trophy, XCircle, Minus, ChevronRight, Zap } from 'lucide-react';
 import { Chess } from 'chess.js';
 
 const fetchMasterGames = async (fen) => {
@@ -15,9 +15,15 @@ const OpeningDetail = ({ opening }) => {
     const [masterData, setMasterData] = useState(null);
     const [masterLoading, setMasterLoading] = useState(false);
     const [masterError, setMasterError] = useState(null);
+    const [bulkProgress, setBulkProgress] = useState(null); // { current, total, eco }
+
     const cachedBook = useLiveQuery(async () => {
         if (!opening?.eco) return null;
-        return await db.openings.get(opening.eco);
+        const entry = await db.openings.get(opening.eco);
+        if (entry?.masterData) {
+            setMasterData(entry.masterData); // Auto-load from cache if available
+        }
+        return entry;
     }, [opening?.eco]);
     if (!opening) return (
         <div className="h-full flex flex-col items-center justify-center text-muted text-center p-8">
@@ -56,6 +62,60 @@ const OpeningDetail = ({ opening }) => {
         } finally {
             setMasterLoading(false);
         }
+    };
+
+    const bulkLoadMasterGames = async (openingsList) => {
+        if (!openingsList || openingsList.length === 0) return;
+        setBulkProgress({ current: 0, total: openingsList.length, eco: 'Starting...' });
+
+        for (let i = 0; i < openingsList.length; i++) {
+            const op = openingsList[i];
+            setBulkProgress({ current: i + 1, total: openingsList.length, eco: op.eco });
+
+            try {
+                // 1. Check cache first
+                const cached = await db.openings.get(op.eco);
+                if (cached && cached.masterData) {
+                    // Already have data, skip
+                    continue;
+                }
+
+                // 2. Load game to get FEN
+                if (!op.sampleGameId) continue;
+                const game = await db.games.get(op.sampleGameId);
+                if (!game?.pgn) continue;
+
+                const chess = new Chess();
+                chess.loadPgn(game.pgn);
+                const moves = chess.history({ verbose: true });
+                chess.reset();
+                const plyTarget = Math.min(10, moves.length);
+                for (let k = 0; k < plyTarget; k++) {
+                    const m = moves[k];
+                    chess.move({ from: m.from, to: m.to, promotion: m.promotion });
+                }
+                const fen = chess.fen();
+
+                // 3. Fetch from API
+                const data = await fetchMasterGames(fen);
+
+                // 4. Save to DB
+                await db.openings.put({
+                    eco: op.eco,
+                    masterData: data,
+                    masterMoves: (data.moves || []).slice(0, 10).map(m => m.san || m.uci),
+                    updatedAt: new Date().toISOString()
+                });
+
+                // 5. Rate Limit
+                await new Promise(r => setTimeout(r, 1200)); // 1.2s delay to be safe
+
+            } catch (e) {
+                console.error(`Failed to load master games for ${op.eco}`, e);
+                // Continue to next opening even if one fails
+            }
+        }
+        setBulkProgress(null);
     };
 
     useEffect(() => {
@@ -172,9 +232,18 @@ const OpeningDetail = ({ opening }) => {
             <div className="p-6 rounded-lg border bg-panel mb-8">
                 <div className="flex items-center justify-between mb-3">
                     <h4 className="text-sm font-semibold text-primary">Master Games & Book Moves</h4>
-                    <button className="btn btn-secondary" onClick={loadMasterGames} disabled={masterLoading}>
-                        {masterLoading ? 'Loading...' : 'Load Master Games'}
-                    </button>
+                    <div className="flex gap-2">
+                        {bulkProgress ? (
+                            <div className="flex items-center gap-2 text-xs text-secondary bg-subtle px-3 py-1.5 rounded">
+                                <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                                <span>{bulkProgress.eco} ({bulkProgress.current}/{bulkProgress.total})</span>
+                            </div>
+                        ) : (
+                            <button className="btn btn-secondary text-xs" onClick={() => bulkLoadMasterGames([opening])} disabled={masterLoading}>
+                                Refresh
+                            </button>
+                        )}
+                    </div>
                 </div>
                 {masterError && <div className="text-sm text-red-400 mb-3">{masterError}</div>}
                 {masterData ? (
@@ -355,8 +424,15 @@ export const OpeningExplorer = () => {
         <div className="flex h-full bg-app overflow-hidden">
             {/* List Panel */}
             <div className="border-r bg-panel flex flex-col h-full" style={{ width: 300 }}>
-                <div className="p-4 border-b">
+                <div className="p-4 border-b flex justify-between items-center">
                     <h3 className="font-semibold text-xs uppercase tracking-wider text-muted">My Repertoire</h3>
+                    <button
+                        className="p-1 hover:bg-subtle rounded text-muted hover:text-primary transition-colors"
+                        title="Bulk Load Master Games (Slowly)"
+                        onClick={() => document.getElementById('bulk-load-trigger').click()}
+                    >
+                        <Zap size={14} />
+                    </button>
                 </div>
                 <div className="flex-1 overflow-y-auto">
                     {openings.map(op => {
@@ -389,8 +465,15 @@ export const OpeningExplorer = () => {
             </div>
 
             {/* Detail Panel */}
-            <div className="flex-1 bg-app overflow-hidden">
+            <div className="flex-1 bg-app overflow-hidden relative">
                 <OpeningDetail opening={selectedOpening} />
+                {/* Hidden trigger for bulk load to passthrough to Detail component which has the logic, 
+                    OR better, lift state up. For now, let's keep it simple and lift the logic up in next refactor if needed.
+                    Actually, OpeningDetail has the logic. We need to pass the full list to it or move logic here.
+                    Let's move logic to OpeningDetail and expose a trigger? No, OpeningDetail is for ONE opening.
+                    
+                    Refactor: Move bulkLoadMasterGames to parent (OpeningExplorer) so it can iterate all openings.
+                */}
             </div>
         </div>
     );

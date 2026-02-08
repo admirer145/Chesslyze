@@ -129,7 +129,7 @@ class EngineService {
             // Fallback timeout to prevent infinite hangs
             const timeoutMs = typeof timeoutMsOverride === 'number'
                 ? timeoutMsOverride
-                : Math.min(900000, Math.max(45000, 8000 + depth * 5000 + multiPv * 9000));
+                : Math.max(60000, 10000 * Math.pow(1.5, Math.max(0, depth - 10))); // Exponential timeout: d20 ~= 600s (10m)
             const t = setTimeout(() => {
                 if (this.jobs.has(jobId)) {
                     console.error(`[EngineService] Timeout for job ${jobId}`);

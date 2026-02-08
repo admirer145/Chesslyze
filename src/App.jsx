@@ -5,11 +5,13 @@ import './App.css';
 
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { ImportGames } from './components/Import/ImportGames';
+import { GamesLibrary } from './components/Library/GamesLibrary';
 // Removed placeholder Dashboard
 
 
 import { ReelFeed } from './components/Reel/ReelFeed';
 import { OpeningExplorer } from './components/Opening/OpeningExplorer';
+import { Profile } from './components/Profile/Profile';
 import { Settings } from './components/Settings/Settings';
 // Removed Openings placeholder
 
@@ -21,8 +23,10 @@ function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/import" element={<ImportGames />} />
+          <Route path="/library" element={<GamesLibrary />} />
           <Route path="/reels" element={<ReelFeed />} />
           <Route path="/openings" element={<OpeningExplorer />} />
+          <Route path="/profile" element={<Profile />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>

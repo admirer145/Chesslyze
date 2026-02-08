@@ -58,13 +58,19 @@ export const useAnalysisQueue = () => {
                 while (true) {
                     const nextGame = await db.games
                         .filter(g => g.analysisStatus === 'pending')
-                        .first();
+                        .reverse() // Dexie sort is ascending, so reverse needed for priority desc if we index it. 
+                        // However, compound index is tricky. Simple approach:
+                        // Just use sortBy('priority') and take the last (highest priority).
+                        // Or simply:
+                        .sortBy('priority');
 
-                    if (!nextGame) break;
+                    const target = nextGame[nextGame.length - 1]; // Highest priority
 
-                    setCurrentGameId(nextGame.id);
-                    // console.log(`[Queue] Processing game ${nextGame.id}...`);
-                    await processGame(nextGame.id);
+                    if (!target) break;
+
+                    setCurrentGameId(target.id);
+                    // console.log(`[Queue] Processing game ${target.id} (Priority: ${target.priority || 0})...`);
+                    await processGame(target.id);
 
                     // Small delay to allow UI updates and prevent CPU hogging
                     await new Promise(r => setTimeout(r, 50));

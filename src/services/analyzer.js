@@ -341,8 +341,11 @@ export const processGame = async (gameId) => {
                 } catch {
                     // ignore
                 }
+                // If we timeout, we should probably fail the analysis rather than saving partial data.
+                throw new Error('Analysis Timeout');
             }
-            return { bestMove: null, evaluation: { score: 0, mate: null, pv: '' }, pvLines: [], timedOut: true };
+            // For other errors, we might want to retry or fail.
+            throw e;
         }
     };
 
