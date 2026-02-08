@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { Chessboard } from 'react-chessboard';
-import { ArrowRight, Eye, CheckCircle, XCircle, HelpCircle } from 'lucide-react';
+import { ArrowRight, Eye, CheckCircle, XCircle, HelpCircle, ChevronLeft, ChevronRight, FastForward, Rewind } from 'lucide-react';
 import { Chess } from 'chess.js';
 
 const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
@@ -13,8 +13,13 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
     const boardRef = useRef(null);
     const [boardSize, setBoardSize] = useState(360);
     const [exploreMode, setExploreMode] = useState(false);
-    const [exploreFen, setExploreFen] = useState(null);
-    const exploreRef = useRef(null);
+
+    // Navigation State
+    const [exploreHistory, setExploreHistory] = useState([]);
+    const [exploreIndex, setExploreIndex] = useState(-1); // Points to the current move in exploreHistory
+    const [exploreStartFen, setExploreStartFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+
+    const exploreRef = useRef(null); // Keep for move validation if needed, but primary logic moves to computed state
     const [tempFen, setTempFen] = useState(null);
     const [lastAttempt, setLastAttempt] = useState(null);
     const [stage, setStage] = useState('puzzle'); // intro | puzzle | solved
@@ -29,7 +34,8 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         setUserMove(null);
         setFeedback(null);
         setExploreMode(false);
-        setExploreFen(null);
+        setExploreHistory([]);
+        setExploreIndex(-1);
         exploreRef.current = null;
         setTempFen(null);
         setLastAttempt(null);
@@ -258,6 +264,24 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         return position.bestMove;
     }, [game?.analysisLog, position?.ply, heroMoved, position?.bestMove]);
 
+    // Derived State: Current FEN for Explore Mode
+    const exploreFen = useMemo(() => {
+        if (!exploreMode) return null;
+        try {
+            const chess = new Chess(exploreStartFen);
+            for (let i = 0; i <= exploreIndex; i++) {
+                const move = exploreHistory[i];
+                if (move) {
+                    chess.move({ from: move.from, to: move.to, promotion: move.promotion });
+                }
+            }
+            return chess.fen();
+        } catch (e) {
+            console.error("Explore FEN generation failed", e);
+            return exploreStartFen;
+        }
+    }, [exploreMode, exploreStartFen, exploreHistory, exploreIndex]);
+
     const displayFen = useMemo(() => {
         if (stage === 'intro') return blunderFen; // Always show the blunder being played/played
         if (exploreMode) return exploreFen || puzzleFen;
@@ -305,48 +329,86 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
         };
     }, [heroMoved, position?.id]);
 
+    const handleExploreReset = () => {
+        setExploreMode(false);
+        setExploreHistory([]);
+        setExploreIndex(-1);
+    };
+
+    // Initialize Explore Mode
     useEffect(() => {
         if (!exploreMode) return;
+
         try {
             const chess = new Chess();
-            if (showSolution && displayFen) {
-                chess.load(displayFen);
-            } else if (game?.pgn && position?.ply) {
+
+            // 1. Get Base Game
+            if (game?.pgn) {
                 chess.loadPgn(game.pgn);
-                const moves = chess.history({ verbose: true });
-                chess.reset();
-                for (let i = 0; i < position.ply; i++) {
-                    const m = moves[i];
-                    if (!m) break;
-                    chess.move({ from: m.from, to: m.to, promotion: m.promotion });
+
+                // Get Start FEN
+                const header = chess.header();
+                const initFen = header['FEN'] || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+                setExploreStartFen(initFen);
+
+                const baseMoves = chess.history({ verbose: true });
+
+                // 2. Identify Branch Point
+                const initialHistory = baseMoves; // Load full game history
+
+                let startIndex = initialHistory.length - 1;
+
+                if (heroMoved) { // Hero Blunder
+                    // position.ply is 1-based index of the blunder move
+                    // We want to be BEFORE the blunder
+                    // e.g. ply = 1, we want index -1 (start)
+                    // e.g. ply = 2, we want index 0 (after 1st move)
+                    startIndex = position.ply - 2;
+                } else { // Opponent Blunder
+                    // We want to be AFTER the blunder (to punish it)
+                    // e.g. ply = 1, we want index 0 (after 1st move)
+                    startIndex = position.ply - 1;
                 }
+
+                // 3. User requested to NOT include their solution move - DISABLED
+                // We just rely on baseMoves. The user can interact to branch off.
+
+                setExploreHistory(initialHistory);
+                setExploreIndex(startIndex);
             }
-            exploreRef.current = chess;
-            setExploreFen(chess.fen());
         } catch (e) {
-            console.error("Explore mode init failed", e);
+            console.error("Explore init failed", e);
         }
-    }, [exploreMode, game?.pgn, position?.ply, showSolution, displayFen]);
+    }, [exploreMode, game, position, heroMoved, lastAttempt]);
 
     const onExploreDrop = (sourceSquare, targetSquare) => {
-        if (!exploreRef.current) return false;
-        const move = exploreRef.current.move({
-            from: sourceSquare,
-            to: targetSquare,
-            promotion: 'q'
-        });
-        if (move) {
-            setExploreFen(exploreRef.current.fen());
-            return true;
+        try {
+            const chess = new Chess(exploreFen);
+            const move = chess.move({
+                from: sourceSquare,
+                to: targetSquare,
+                promotion: 'q' // Simplification
+            });
+
+            if (move) {
+                // Branching: Truncate history if we went back
+                const newHistory = exploreHistory.slice(0, exploreIndex + 1);
+                newHistory.push(move);
+                setExploreHistory(newHistory);
+                setExploreIndex(newHistory.length - 1);
+                return true;
+            }
+        } catch (e) {
+            console.error("Explore move failed", e);
         }
         return false;
     };
 
-    const handleExploreReset = () => {
-        setExploreMode(false);
-        setExploreFen(null);
-        exploreRef.current = null;
-    };
+    // Navigation Controls
+    const handleExploreStart = () => setExploreIndex(-1);
+    const handleExplorePrev = () => setExploreIndex(i => Math.max(-1, i - 1));
+    const handleExploreNext = () => setExploreIndex(i => Math.min(exploreHistory.length - 1, i + 1));
+    const handleExploreEnd = () => setExploreIndex(exploreHistory.length - 1);
 
     if (!game) return <div className="h-full flex items-center justify-center text-muted">Loading context...</div>;
 
@@ -521,12 +583,19 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved }) => {
                         </button>
                     )}
                     {exploreMode && (
-                        <button
-                            onClick={handleExploreReset}
-                            className="flex-1 btn btn-secondary py-3 justify-center"
-                        >
-                            Back to Puzzle
-                        </button>
+                        <div className="flex-1 flex gap-2">
+                            <button onClick={handleExploreStart} className="p-3 bg-subtle hover:bg-subtle-hover rounded text-secondary" title="Start"><Rewind size={18} /></button>
+                            <button onClick={handleExplorePrev} className="p-3 bg-subtle hover:bg-subtle-hover rounded text-primary" title="Back"><ChevronLeft size={20} /></button>
+                            <button onClick={handleExploreNext} className="p-3 bg-subtle hover:bg-subtle-hover rounded text-primary" title="Forward"><ChevronRight size={20} /></button>
+                            <button onClick={handleExploreEnd} className="p-3 bg-subtle hover:bg-subtle-hover rounded text-secondary" title="End"><FastForward size={18} /></button>
+
+                            <button
+                                onClick={handleExploreReset}
+                                className="flex-1 btn btn-secondary py-3 justify-center ml-2"
+                            >
+                                Back to Puzzle
+                            </button>
+                        </div>
                     )}
                     <button
                         onClick={onNext}
