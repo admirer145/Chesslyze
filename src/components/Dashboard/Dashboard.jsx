@@ -6,6 +6,9 @@ import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, Play, F
 import { Link } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { AnalyticsPanel } from './AnalyticsPanel';
+import { AIAnalysisModal } from './AIAnalysisModal';
+import { AIInsightsView } from './AIInsightsView';
+import { Sparkles } from 'lucide-react';
 
 const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
     <div className="flex items-center gap-4 p-3 rounded-md hover:bg-subtle transition-colors cursor-default">
@@ -146,6 +149,21 @@ export const Dashboard = () => {
         if (activeTab !== 'analysis') setPreviewFen(null);
     }, [activeTab]);
 
+    // AI Analysis Data
+    const aiAnalysis = useLiveQuery(async () => {
+        if (!activeGame?.id) return null;
+        const record = await db.ai_analyses.where('gameId').equals(activeGame.id).first();
+        return record ? record.raw_json : null;
+    }, [activeGame?.id]);
+
+    const [showAIModal, setShowAIModal] = useState(false);
+
+    useEffect(() => {
+        if (activeGame && aiAnalysis) {
+            // If we have AI analysis, we can default to it, or just let user click.
+        }
+    }, [activeGame, aiAnalysis]);
+
     useEffect(() => {
         if (!boardContainerRef.current) return;
         const resizeObserver = new ResizeObserver((entries) => {
@@ -220,8 +238,7 @@ export const Dashboard = () => {
 
     const handleAnalyze = async () => {
         if (!activeGame) return;
-        // High priority for manual request
-        await db.games.update(activeGame.id, { analyzed: false, analysisStatus: 'pending', priority: 10 });
+        setShowAIModal(true);
     };
 
     const handleJumpTo = (index) => {
@@ -486,7 +503,7 @@ export const Dashboard = () => {
                             </div>
 
                             {/* BOARD + EVAL BAR */}
-                            <div className="board-row">
+                            <div className="board-row" style={{ position: 'relative', zIndex: 10 }}>
                                 <div
                                     ref={boardContainerRef}
                                     className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
@@ -544,22 +561,31 @@ export const Dashboard = () => {
                         {activeGame && (
                             <button
                                 onClick={handleAnalyze}
-                                disabled={activeGame.analysisStatus === 'analyzing'}
-                                className={`ml-4 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium transition-colors ${activeGame.analysisStatus === 'analyzing' ? 'bg-blue-500/10 text-blue-400 cursor-wait' :
-                                    activeGame.analysisStatus === 'failed' ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' :
-                                        activeGame.analyzed ? 'bg-subtle text-secondary hover:text-primary' :
-                                            'bg-primary text-black hover:opacity-90'
+                                className={`ml-4 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium transition-colors ${aiAnalysis ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-500/20' :
+                                    'bg-primary text-black hover:opacity-90'
                                     }`}
                             >
-                                <Zap size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
-                                {activeGame.analysisStatus === 'analyzing' ? 'Analyzing...' :
-                                    activeGame.analysisStatus === 'failed' ? 'Retry Analysis' :
-                                        activeGame.analyzed ? 'Re-analyze' : 'Analyze'}
+                                <Sparkles size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
+                                {aiAnalysis ? 'AI Insights' : 'Analyze with AI'}
                             </button>
                         )}
                     </div>
+
+                    {showAIModal && activeGame && (
+                        <div className="absolute inset-0 flex items-center justify-center p-4" style={{ zIndex: 9999 }}>
+                            <AIAnalysisModal
+                                game={activeGame}
+                                onClose={() => setShowAIModal(false)}
+                                onAnalysisComplete={() => {
+                                    setActiveTab('ai');
+                                }}
+                            />
+                        </div>
+                    )}
                 </div>
             </div>
+
+
 
             {/* RIGHT: Context Panel (Move List + Stats) */}
             <div className="dashboard-side bg-panel border-l flex flex-col shrink-0 overflow-hidden">
@@ -581,11 +607,45 @@ export const Dashboard = () => {
                         >
                             Analytics
                         </button>
+                        <button
+                            onClick={() => setActiveTab('ai')}
+                            disabled={!aiAnalysis}
+                            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'ai' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
+                        >
+                            <span className={!aiAnalysis ? 'opacity-50' : 'text-purple-400'}>AI Coach</span>
+                        </button>
                     </div>
 
                     {/* Scrollable Content Area */}
                     <div className="flex-1 overflow-y-auto min-h-0 bg-panel relative">
-                        {activeTab === 'analysis' ? (
+                        {activeTab === 'ai' ? (
+                            <AIInsightsView
+                                analysis={aiAnalysis}
+                                onJumpToMove={(moveIdx) => {
+                                    /* 
+                                      The prompt asks for move_number (1-based). 
+                                      However, the history array is 0-based ply.
+                                      Wait, history is 0-based *move objects*.
+                                      Let's assume onJumpToMove from View passes 0-based full-move index.
+                                      Actually, let's verify what `handleJumpTo` expects. 
+                                      handleJumpTo(index) sets moveIndex. 
+                                      history array length = ply count.
+                                      So if we click "White Move 1", that is ply 0.
+                                      If we click "Black Move 1", that is ply 1.
+                                      
+                                      The AIInsightsView implementation I wrote earlier: 
+                                      onClick={() => onJumpToMove && onJumpToMove(moment.move_number - 1)}
+                                      BUT wait, move_number 1 (White) is ply 0.
+                                      move_number 1 (Black) is ply 1.
+                                      The view needs to differentiate side.
+                                      Correct, my view implementation: 
+                                      onClick={() => onJumpToMove && onJumpToMove(move.side === 'white' ? (move.move_number - 1)*2 : (move.move_number - 1)*2 + 1)}
+                                      This seems correct for mapping to ply index.
+                                    */
+                                    handleJumpTo(moveIdx);
+                                }}
+                            />
+                        ) : activeTab === 'analysis' ? (
                             (activeGame?.analysisLog && activeGame.analysisLog.length > 0) ? (
                                 <AnalyticsPanel
                                     game={activeGame}
@@ -654,7 +714,7 @@ export const Dashboard = () => {
                 </div>
 
                 {/* 2. Stats (Bottom Half) - Only show in Moves view */}
-                {activeTab !== 'analysis' && (
+                {activeTab === 'moves' && (
                     <div className="dashboard-performance flex flex-col bg-panel/50 border-t shrink-0">
                         <div className="p-4 border-b sticky top-0 bg-panel z-10">
                             <h2 className="text-sm font-semibold text-primary">Performance</h2>

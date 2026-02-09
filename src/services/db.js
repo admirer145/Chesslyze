@@ -77,6 +77,33 @@ db.version(12).stores({
     });
 });
 
+db.version(13).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt'
+});
+
+export const saveAIAnalysis = async (gameId, analysisData, promptVersion = '1.0') => {
+    const existing = await db.ai_analyses.where('gameId').equals(gameId).first();
+    const record = {
+        gameId,
+        promptVersion,
+        raw_json: analysisData, // Store the full validated input as-is
+        createdAt: Date.now()
+    };
+
+    if (existing) {
+        return await db.ai_analyses.update(existing.id, record);
+    } else {
+        return await db.ai_analyses.add(record);
+    }
+};
+
+export const getAIAnalysis = async (gameId) => {
+    return await db.ai_analyses.where('gameId').equals(gameId).first();
+};
+
 export const addGames = async (games) => {
     return await db.games.bulkAdd(games);
 };
