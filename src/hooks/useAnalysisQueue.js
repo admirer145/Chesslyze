@@ -52,7 +52,13 @@ export const useAnalysisQueue = () => {
             try {
                 if (queueState.stale && queueState.stale.length > 0) {
                     const ids = queueState.stale.map(g => g.id);
-                    await db.games.where('id').anyOf(ids).modify({ analysisStatus: 'failed', analysisStartedAt: null, analysisHeartbeatAt: null });
+                    // Requeue stale games instead of failing them.
+                    // This handles cases where the engine died or browser slept.
+                    await db.games.where('id').anyOf(ids).modify({
+                        analysisStatus: 'pending',
+                        analysisStartedAt: null,
+                        analysisHeartbeatAt: null
+                    });
                 }
                 // Batch process until empty
                 while (true) {

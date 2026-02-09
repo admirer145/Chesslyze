@@ -597,6 +597,23 @@ export const processGame = async (gameId) => {
         }
     } catch (err) {
         console.error(`Analysis failed for game ${gameId}`, err);
+
+        // Check for timeout or engine-related errors that warrant a retry
+        const msg = String(err?.message || err || '').toLowerCase();
+        const isTimeout = msg.includes('timeout') || msg.includes('worker');
+
+        if (isTimeout) {
+            console.log(`[Analyzer] Requeuing game ${gameId} due to timeout/engine error...`);
+            // Reset to pending so queue picks it up again
+            await db.games.update(gameId, {
+                analyzed: false,
+                analysisStatus: 'pending',
+                analysisStartedAt: null,
+                analysisHeartbeatAt: null
+            });
+            return;
+        }
+
         // Save partial analysis if we have any, so Dashboard can still show openings and some lines.
         if (analysisLog.length > 0) {
             try {
