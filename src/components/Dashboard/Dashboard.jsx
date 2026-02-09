@@ -134,6 +134,13 @@ export const Dashboard = () => {
 
     const activeGame = selectedGame || latestGame;
 
+    // Separate query to observe analysisLog changes - useLiveQuery doesn't track nested changes well
+    const analysisLog = useLiveQuery(async () => {
+        if (!activeGame?.id) return null;
+        const game = await db.games.get(activeGame.id);
+        return game?.analysisLog || null;
+    }, [activeGame?.id]);
+
     useEffect(() => {
         if (activeGame?.analyzed) {
             setActiveTab('analysis');
@@ -334,50 +341,68 @@ export const Dashboard = () => {
         { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating') };
 
     const defaultArrow = useMemo(() => {
-        if (activeTab !== 'analysis') return null;
+        // Show best move arrow when analysis data is available, regardless of active tab
         if (previewFen) return null;
-        if (!activeGame?.analysisLog || moveIndex < 0) return null;
-        const entry = activeGame.analysisLog[moveIndex];
+        if (!analysisLog || analysisLog.length === 0) return null;
+
+        const fenKey = (fen) => (typeof fen === 'string' ? fen.split(' ').slice(0, 4).join(' ') : '');
+        const targetFen = currentFen;
+        const key = fenKey(targetFen);
+
+        // Prefer the analysis entry that matches the current board position.
+        let entry = key ? analysisLog.find((e) => fenKey(e?.fen) === key) : null;
+        if (!entry) {
+            // Fallback: for a board showing "after moveIndex", use the next entry's pre-move analysis when possible.
+            if (moveIndex >= 0) {
+                entry = analysisLog[moveIndex + 1] || analysisLog[moveIndex] || null;
+            } else {
+                entry = analysisLog[0] || null;
+            }
+        }
+
         const uci = entry?.bestMove;
         if (!uci || typeof uci !== 'string' || uci.length < 4) return null;
         return { from: uci.substring(0, 2), to: uci.substring(2, 4) };
-    }, [activeTab, previewFen, activeGame?.analysisLog, moveIndex]);
+    }, [previewFen, analysisLog, moveIndex, currentFen]);
 
-    const chessboardOptions = useMemo(() => ({
-        id: "dashboard-board",
-        position: previewFen || currentFen,
-        boardWidth: boardWidth || 500,
-        boardOrientation: boardOrientation,
-        arePiecesDraggable: false,
-        animationDuration: 300,
-        customArrows: (hoverArrow || defaultArrow) ? [[(hoverArrow || defaultArrow).from, (hoverArrow || defaultArrow).to, 'rgba(245, 200, 75, 0.95)']] : [],
-        customDarkSquareStyle: { backgroundColor: '#475569' },
-        customLightSquareStyle: { backgroundColor: '#e2e8f0' }
-    }), [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow]);
+    const chessboardOptions = useMemo(() => {
+        const arrow = hoverArrow || defaultArrow;
+        return {
+            id: "dashboard-board",
+            position: previewFen || currentFen,
+            boardWidth: boardWidth || 500,
+            boardOrientation: boardOrientation,
+            allowDragging: false,
+            animationDurationInMs: 300,
+            arrows: arrow ? [{ startSquare: arrow.from, endSquare: arrow.to, color: 'rgba(245, 200, 75, 0.95)' }] : [],
+            darkSquareStyle: { backgroundColor: '#475569' },
+            lightSquareStyle: { backgroundColor: '#e2e8f0' }
+        };
+    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow]);
 
     const evalCp = useMemo(() => {
-        if (!activeGame?.analysisLog || activeGame.analysisLog.length === 0) return 0;
+        if (!analysisLog || analysisLog.length === 0) return 0;
         const fenKey = (fen) => (typeof fen === 'string' ? fen.split(' ').slice(0, 4).join(' ') : '');
         const targetFen = previewFen || currentFen;
         const key = fenKey(targetFen);
-        const matched = key ? activeGame.analysisLog.find((e) => fenKey(e?.fen) === key) : null;
-        const idx = matched ? activeGame.analysisLog.indexOf(matched) : Math.min(Math.max(0, moveIndex + 1), activeGame.analysisLog.length - 1);
-        const entry = activeGame.analysisLog[idx];
+        const matched = key ? analysisLog.find((e) => fenKey(e?.fen) === key) : null;
+        const idx = matched ? analysisLog.indexOf(matched) : Math.min(Math.max(0, moveIndex + 1), analysisLog.length - 1);
+        const entry = analysisLog[idx];
         if (!entry) return 0;
         const raw = typeof entry.score === 'number' ? entry.score : Number(entry.score);
         const score = Number.isFinite(raw) ? raw : 0;
         if (entry.scorePov === 'white') return score;
         return entry.turn === 'w' ? score : -score;
-    }, [activeGame?.analysisLog, moveIndex, currentFen, previewFen]);
+    }, [analysisLog, moveIndex, currentFen, previewFen]);
 
     const evalMate = useMemo(() => {
-        if (!activeGame?.analysisLog || activeGame.analysisLog.length === 0) return null;
+        if (!analysisLog || analysisLog.length === 0) return null;
         const fenKey = (fen) => (typeof fen === 'string' ? fen.split(' ').slice(0, 4).join(' ') : '');
         const targetFen = previewFen || currentFen;
         const key = fenKey(targetFen);
-        const entry = key ? activeGame.analysisLog.find((e) => fenKey(e?.fen) === key) : null;
-        const idx = entry ? activeGame.analysisLog.indexOf(entry) : Math.min(Math.max(0, moveIndex + 1), activeGame.analysisLog.length - 1);
-        const e = activeGame.analysisLog[idx];
+        const entry = key ? analysisLog.find((e) => fenKey(e?.fen) === key) : null;
+        const idx = entry ? analysisLog.indexOf(entry) : Math.min(Math.max(0, moveIndex + 1), analysisLog.length - 1);
+        const e = analysisLog[idx];
         if (!e) return null;
 
         // Prefer the explicit mate stored on the log entry (newer analyses store mate as white POV).
@@ -390,7 +415,7 @@ export const Dashboard = () => {
         if (bestLine.scorePov === 'white' || e.scorePov === 'white') return mateRaw;
         // Older PV lines may be side-to-move POV.
         return e.turn === 'w' ? mateRaw : -mateRaw;
-    }, [activeGame?.analysisLog, moveIndex, currentFen, previewFen]);
+    }, [analysisLog, moveIndex, currentFen, previewFen]);
 
     const evalText = useMemo(() => {
         if (typeof evalMate === 'number') {
@@ -417,8 +442,8 @@ export const Dashboard = () => {
     }, [evalPct]);
 
     const classificationBadge = useMemo(() => {
-        if (!activeGame?.analysisLog || moveIndex < 0) return null;
-        const entry = activeGame.analysisLog[moveIndex];
+        if (!analysisLog || moveIndex < 0) return null;
+        const entry = analysisLog[moveIndex];
         if (!entry) return null;
 
         const map = {
@@ -435,7 +460,7 @@ export const Dashboard = () => {
         // Back-compat: show Book badge even if older analysis kept `classification` as best/good.
         if (entry.bookMove) return map.book;
         return map[entry.classification] || null;
-    }, [activeGame?.analysisLog, moveIndex]);
+    }, [analysisLog, moveIndex]);
 
     useLayoutEffect(() => {
         if (!classificationBadge || moveIndex < 0 || !history[moveIndex]?.to) {
@@ -629,7 +654,7 @@ export const Dashboard = () => {
                         </button>
                         <button
                             onClick={() => setActiveTab('analysis')}
-                            disabled={!(activeGame?.analysisLog && activeGame.analysisLog.length > 0)}
+                            disabled={!(analysisLog && analysisLog.length > 0)}
                             className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'analysis' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
                         >
                             Analytics
@@ -673,9 +698,9 @@ export const Dashboard = () => {
                                 }}
                             />
                         ) : activeTab === 'analysis' ? (
-                            (activeGame?.analysisLog && activeGame.analysisLog.length > 0) ? (
+                            (analysisLog && analysisLog.length > 0) ? (
                                 <AnalyticsPanel
-                                    game={activeGame}
+                                    game={{ ...activeGame, analysisLog }}
                                     onJumpToMove={handleJumpTo}
                                     activeIndex={moveIndex}
                                     onBestHover={(uci, fen) => {

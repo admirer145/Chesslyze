@@ -2,13 +2,14 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { db } from '../../services/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
-import { Filter, Search, RotateCcw, ChevronDown, Trophy, Clock, Brain, User, Calendar, X } from 'lucide-react';
+import { Filter, Search, RotateCcw, ChevronDown, Trophy, Brain, Calendar, X } from 'lucide-react';
 
 export const GamesLibrary = () => {
     const navigate = useNavigate();
     const [page, setPage] = useState(1);
-    const [showFilters, setShowFilters] = useState(true);
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const [activeFilterCount, setActiveFilterCount] = useState(0);
+    const [sortOrder, setSortOrder] = useState('desc');
     const [filters, setFilters] = useState({
         result: 'all',
         color: 'all',
@@ -21,6 +22,7 @@ export const GamesLibrary = () => {
     });
 
     const heroUser = useMemo(() => localStorage.getItem('heroUser') || '', []);
+    const heroLower = heroUser.toLowerCase();
 
     // Calculate active filter count
     useEffect(() => {
@@ -38,7 +40,7 @@ export const GamesLibrary = () => {
 
     useEffect(() => {
         setPage(1);
-    }, [filters]);
+    }, [filters, sortOrder]);
 
     const getHeroResult = (game) => {
         if (!heroUser) return null;
@@ -97,8 +99,10 @@ export const GamesLibrary = () => {
             return true;
         });
 
-        return filtered.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-    }, [filters, heroUser]);
+        const sorted = filtered.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+        if (sortOrder === 'asc') sorted.reverse();
+        return sorted;
+    }, [filters, heroUser, sortOrder]);
 
     const pageSize = 24;
     const totalPages = games ? Math.max(1, Math.ceil(games.length / pageSize)) : 1;
@@ -135,446 +139,360 @@ export const GamesLibrary = () => {
     };
 
     const getPerfColor = (perf) => {
-        const colors = {
-            bullet: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
-            blitz: 'text-orange-400 bg-orange-400/10 border-orange-400/20',
-            rapid: 'text-blue-400 bg-blue-400/10 border-blue-400/20',
-            classical: 'text-purple-400 bg-purple-400/10 border-purple-400/20',
-        };
-        return colors[perf?.toLowerCase()] || 'text-slate-400 bg-slate-400/10 border-slate-400/20';
+        const key = (perf || '').toLowerCase();
+        if (!key) return 'perf-tag';
+        return `perf-tag perf-${key}`;
     };
 
     return (
-        <div className="w-full h-full overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 relative">
+        <div className="library-page">
+            <div className="library-bg" />
 
-            {/* Animated Background */}
-            <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-                <div className="absolute top-[-30%] left-[-10%] w-[800px] h-[800px] bg-indigo-500/5 rounded-full blur-[150px] animate-pulse-slow" />
-                <div className="absolute bottom-[-20%] right-[-5%] w-[600px] h-[600px] bg-amber-500/5 rounded-full blur-[150px] animate-pulse-slow delay-1000" />
-                <div className="absolute top-[40%] left-[60%] w-[400px] h-[400px] bg-emerald-500/5 rounded-full blur-[120px] animate-pulse-slow delay-500" />
-            </div>
-
-            <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-8">
-
-                {/* Header Section */}
-                <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-8">
-                    <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                            <div className="p-2 bg-gradient-to-br from-amber-400/20 to-orange-500/20 rounded-xl border border-amber-400/30">
-                                <Trophy className="w-5 h-5 text-amber-400" />
-                            </div>
-                            <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">
-                                Games Library
-                            </h1>
+            <div className="library-shell">
+                <header className="library-header">
+                    <div className="library-title">
+                        <div className="library-title__badge">
+                            <Trophy className="w-4 h-4" />
+                            <span>Games</span>
                         </div>
-                        <p className="text-slate-400 text-sm sm:text-base max-w-2xl">
-                            Your personal chess archive. Analyze, review, and track your progress across{' '}
-                            <span className="text-white font-semibold">{games?.length || 0}</span> games.
+                        <h1 className="library-title__main">Games Library</h1>
+                        <p className="library-title__sub">
+                            A clean archive of your chess history, built for fast review.
                         </p>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="library-actions">
                         <button
-                            onClick={() => setShowFilters(!showFilters)}
-                            className={`group relative px-4 py-2.5 rounded-xl border transition-all duration-200 flex items-center gap-2 ${
-                                showFilters 
-                                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' 
-                                    : 'bg-slate-800/50 border-slate-700/50 text-slate-300 hover:bg-slate-800 hover:border-slate-600'
-                            }`}
+                            onClick={() => setFiltersOpen(true)}
+                            className="btn-chip"
                         >
-                            <Filter size={18} />
-                            <span className="hidden sm:inline font-medium">Filters</span>
+                            <Filter size={16} />
+                            Filters
                             {activeFilterCount > 0 && (
-                                <span className="absolute -top-2 -right-2 w-5 h-5 bg-amber-400 text-slate-900 text-xs font-bold rounded-full flex items-center justify-center">
-                                    {activeFilterCount}
-                                </span>
+                                <span className="chip-count">{activeFilterCount}</span>
                             )}
                         </button>
                         <button
                             onClick={() => navigate('/import')}
-                            className="group relative px-5 py-2.5 bg-gradient-to-r from-amber-400 to-orange-500 text-slate-900 font-semibold rounded-xl overflow-hidden transition-all hover:scale-105 hover:shadow-lg hover:shadow-amber-500/25"
+                            className="btn-primary"
                         >
-                            <span className="relative z-10 flex items-center gap-2">
-                                <span className="text-lg">+</span> Import
-                            </span>
+                            <span>+</span>
+                            Import Games
                         </button>
                     </div>
-                </div>
+                </header>
 
-                {/* Enhanced Filters Section */}
-                <div className={`transition-all duration-300 ease-in-out ${showFilters ? 'opacity-100 max-h-[500px] mb-8' : 'opacity-0 max-h-0 mb-0 overflow-hidden'}`}>
-                    <div className="bg-slate-900/60 backdrop-blur-2xl border border-slate-700/50 rounded-2xl p-5 sm:p-6 shadow-2xl">
-                        <div className="flex items-center justify-between mb-5">
-                            <h2 className="text-white font-semibold text-lg flex items-center gap-2">
-                                <div className="p-1.5 bg-indigo-500/20 rounded-lg">
-                                    <Filter size={18} className="text-indigo-400" />
-                                </div>
-                                Filter Games
-                            </h2>
-                            <button
-                                onClick={() => setFilters({
-                                    result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: ''
-                                })}
-                                className="text-sm text-slate-400 hover:text-white transition-colors flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-800/50"
-                            >
-                                <RotateCcw size={14} /> Clear All
+                <section className="library-search">
+                    <div className="search-field">
+                        <Search size={18} />
+                        <input
+                            value={filters.player}
+                            onChange={(e) => setFilters({ ...filters, player: e.target.value })}
+                            placeholder="Search opponents or players..."
+                        />
+                        {filters.player && (
+                            <button onClick={() => clearFilter('player')} aria-label="Clear search">
+                                <X size={16} />
                             </button>
-                        </div>
+                        )}
+                    </div>
 
-                        {/* Search Row */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                            <div className="relative group">
-                                <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors" size={20} />
-                                <div className="relative">
-                                    <input
-                                        className="w-full h-12 bg-slate-950/50 border border-slate-700/50 rounded-xl pl-12 pr-10 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                                        value={filters.player}
-                                        onChange={(e) => setFilters({ ...filters, player: e.target.value })}
-                                        placeholder="Search opponent..."
-                                    />
-                                    {filters.player && (
-                                        <button 
-                                            onClick={() => clearFilter('player')}
-                                            className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-                                        >
-                                            <X size={16} />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="relative group">
-                                <Brain className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors" size={20} />
-                                <div className="relative">
-                                    <input
-                                        className="w-full h-12 bg-slate-950/50 border border-slate-700/50 rounded-xl pl-12 pr-10 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                                        value={filters.opening}
-                                        onChange={(e) => setFilters({ ...filters, opening: e.target.value })}
-                                        placeholder="Search opening or ECO..."
-                                    />
-                                    {filters.opening && (
-                                        <button 
-                                            onClick={() => clearFilter('opening')}
-                                            className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-                                        >
-                                            <X size={16} />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Filter Dropdowns */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
+                    <div className="quick-filters">
+                        <div className="filter-group">
                             {[
-                                { value: filters.result, key: 'result', label: 'Result', icon: Trophy, options: [
-                                    { v: 'all', l: 'All Results' }, { v: 'win', l: 'Won' }, { v: 'loss', l: 'Lost' }, { v: 'draw', l: 'Draw' }
-                                ]},
-                                { value: filters.color, key: 'color', label: 'Color', icon: User, options: [
-                                    { v: 'all', l: 'Any Color' }, { v: 'white', l: 'White' }, { v: 'black', l: 'Black' }
-                                ]},
-                                { value: filters.perf, key: 'perf', label: 'Speed', icon: Clock, options: [
-                                    { v: 'all', l: 'Any Speed' }, { v: 'bullet', l: 'Bullet' }, { v: 'blitz', l: 'Blitz' }, { v: 'rapid', l: 'Rapid' }, { v: 'classical', l: 'Classical' }
-                                ]},
-                                { value: filters.analyzed, key: 'analyzed', label: 'Analysis', icon: Brain, options: [
-                                    { v: 'all', l: 'All Status' }, { v: 'yes', l: 'Analyzed' }, { v: 'no', l: 'Pending' }
-                                ]}
-                            ].map((f) => (
-                                <div key={f.key} className="relative">
-                                    <div className="flex items-center gap-1.5 mb-1.5">
-                                        <f.icon size={14} className="text-slate-500" />
-                                        <label className="text-xs text-slate-400 font-medium">{f.label}</label>
-                                    </div>
-                                    <div className="relative">
-                                        <select
-                                            className={`w-full h-11 appearance-none bg-slate-950/50 border rounded-lg px-3 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all cursor-pointer ${
-                                                f.value !== 'all' 
-                                                    ? 'border-indigo-500/50 text-white bg-indigo-500/10' 
-                                                    : 'border-slate-700/50 text-slate-300'
-                                            }`}
-                                            value={f.value}
-                                            onChange={(e) => setFilters({ ...filters, [f.key]: e.target.value })}
-                                        >
-                                            {f.options.map(o => (
-                                                <option key={o.v} value={o.v}>{o.l}</option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                                    </div>
-                                </div>
+                                { v: 'all', l: 'All' },
+                                { v: 'win', l: 'Wins' },
+                                { v: 'loss', l: 'Losses' },
+                                { v: 'draw', l: 'Draws' }
+                            ].map((o) => (
+                                <button
+                                    key={o.v}
+                                    className={`pill ${filters.result === o.v ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, result: o.v })}
+                                >
+                                    {o.l}
+                                </button>
                             ))}
+                        </div>
 
-                            {/* Date Range */}
-                            <div className="col-span-2 sm:col-span-1">
-                                <div className="flex items-center gap-1.5 mb-1.5">
-                                    <Calendar size={14} className="text-slate-500" />
-                                    <label className="text-xs text-slate-400 font-medium">From</label>
-                                </div>
-                                <div className="relative">
-                                    <input
-                                        type="date"
-                                        className="w-full h-11 bg-slate-950/50 border border-slate-700/50 rounded-lg px-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                                        value={filters.dateFrom}
-                                        onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                                    />
-                                    {filters.dateFrom && (
-                                        <button 
-                                            onClick={() => clearFilter('dateFrom')}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                            
-                            <div className="col-span-2 sm:col-span-1">
-                                <div className="flex items-center gap-1.5 mb-1.5">
-                                    <Calendar size={14} className="text-slate-500" />
-                                    <label className="text-xs text-slate-400 font-medium">To</label>
-                                </div>
-                                <div className="relative">
-                                    <input
-                                        type="date"
-                                        className="w-full h-11 bg-slate-950/50 border border-slate-700/50 rounded-lg px-3 text-sm text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                                        value={filters.dateTo}
-                                        onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                                    />
-                                    {filters.dateTo && (
-                                        <button 
-                                            onClick={() => clearFilter('dateTo')}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    )}
-                                </div>
+                        <div className="filter-group">
+                            {[
+                                { v: 'all', l: 'Any Color' },
+                                { v: 'white', l: 'White' },
+                                { v: 'black', l: 'Black' }
+                            ].map((o) => (
+                                <button
+                                    key={o.v}
+                                    className={`pill ${filters.color === o.v ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, color: o.v })}
+                                >
+                                    {o.l}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="filter-group">
+                            {[
+                                { v: 'all', l: 'Any Speed' },
+                                { v: 'bullet', l: 'Bullet' },
+                                { v: 'blitz', l: 'Blitz' },
+                                { v: 'rapid', l: 'Rapid' },
+                                { v: 'classical', l: 'Classical' }
+                            ].map((o) => (
+                                <button
+                                    key={o.v}
+                                    className={`pill ${filters.perf === o.v ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, perf: o.v })}
+                                >
+                                    {o.l}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="filter-group">
+                            {[
+                                { v: 'all', l: 'All Status' },
+                                { v: 'yes', l: 'Analyzed' },
+                                { v: 'no', l: 'Pending' }
+                            ].map((o) => (
+                                <button
+                                    key={o.v}
+                                    className={`pill ${filters.analyzed === o.v ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, analyzed: o.v })}
+                                >
+                                    {o.l}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </section>
+
+                <div className="library-meta">
+                    <div className="meta-left">
+                        {games ? (
+                            <>
+                                <span className="meta-count">{pageGames.length}</span>
+                                <span className="meta-text">of {games.length} games</span>
+                            </>
+                        ) : (
+                            <span className="meta-text">Loading games...</span>
+                        )}
+                    </div>
+                    <div className="meta-right">
+                        <div className="meta-sort">
+                            <label>Sort</label>
+                            <div className="select-wrap">
+                                <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
+                                    <option value="desc">Newest</option>
+                                    <option value="asc">Oldest</option>
+                                </select>
+                                <ChevronDown size={14} />
                             </div>
                         </div>
                     </div>
                 </div>
 
-                {/* Results Summary */}
+                {/* Games List */}
                 {games && games.length > 0 && (
-                    <div className="flex items-center gap-3 mb-6">
-                        <div className="h-px bg-slate-700/50 flex-1" />
-                        <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-900/50 rounded-full border border-slate-700/30">
-                            <span className="text-slate-400 text-sm">Showing</span>
-                            <span className="text-white font-semibold">{pageGames.length}</span>
-                            <span className="text-slate-400 text-sm">of</span>
-                            <span className="text-white font-semibold">{games.length}</span>
-                            <span className="text-slate-400 text-sm">games</span>
-                        </div>
-                        <div className="h-px bg-slate-700/50 flex-1" />
-                    </div>
-                )}
-
-                {/* Games Grid - Enhanced Cards */}
-                {games && games.length > 0 && (
-                    <div className="grid games-grid mb-10">
+                    <div className="games-list">
                         {pageGames.map((game) => {
                             const heroResult = getHeroResult(game) || 'result';
                             const isWin = heroResult === 'win';
                             const isLoss = heroResult === 'loss';
-                            const isDraw = heroResult === 'draw';
                             const opening = game.openingName || game.eco || 'Unknown Opening';
                             const status = game.analysisStatus || (game.analyzed ? 'completed' : 'idle');
-                            const perfColor = getPerfColor(game.perf);
                             const whiteName = typeof game.white === 'string' ? game.white : game.white?.name || 'White';
                             const blackName = typeof game.black === 'string' ? game.black : game.black?.name || 'Black';
-                            
-                            // Get player initials
-                            const getInitials = (name) => {
-                                if (!name) return '?';
-                                return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-                            };
+                            const isHeroWhite = heroLower && whiteName.toLowerCase() === heroLower;
+                            const isHeroBlack = heroLower && blackName.toLowerCase() === heroLower;
+                            const whiteRating = game.whiteElo || game.whiteRating || '';
+                            const blackRating = game.blackElo || game.blackRating || '';
 
                             return (
-                                <div key={game.id}
-                                    onClick={() => handleView(game.id)}
-                                    className="group relative bg-gradient-to-br from-slate-800/80 to-slate-900/80 hover:from-slate-800/60 hover:to-slate-900/60 border border-slate-700/40 hover:border-slate-600/50 rounded-2xl overflow-hidden transition-all duration-300 hover:scale-[1.02] hover:shadow-xl hover:shadow-black/20 cursor-pointer"
-                                >
-                                    {/* Result Accent Bar */}
-                                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${
-                                        isWin ? 'bg-emerald-500' : isLoss ? 'bg-rose-500' : 'bg-slate-500'
-                                    }`} />
-                                    
-                                    {/* Analysis Status Indicator */}
-                                    <div className={`absolute top-3 right-3 w-2.5 h-2.5 rounded-full border-2 border-slate-900 ${
-                                        status === 'completed' ? 'bg-emerald-400' : 'bg-amber-400'
-                                    }`} title={`Analysis: ${status}`} />
-
-                                    <div className="p-5 pl-7">
-                                        {/* Header Row */}
-                                        <div className="flex items-center justify-between mb-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className={`px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider border ${perfColor}`}>
-                                                    {game.perf || 'Rapid'}
-                                                </span>
-                                                <span className="text-slate-500 text-xs">•</span>
-                                                <span className="text-slate-400 text-xs flex items-center gap-1">
-                                                    <Calendar size={12} />
-                                                    {formatDate(game.date)}
-                                                </span>
-                                            </div>
-                                            <div className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wide ${
-                                                isWin ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' :
-                                                isLoss ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' :
-                                                    'bg-slate-600/30 text-slate-400 border border-slate-600/50'
-                                            }`}>
-                                                {isWin ? 'WIN' : isLoss ? 'LOSS' : 'DRAW'}
-                                            </div>
-                                        </div>
-
-                                        {/* Players Section */}
-                                        <div className="space-y-3 mb-4">
-                                            {/* White Player */}
-                                            <div className="flex items-center justify-between group/player">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${
-                                                        game.white === heroUser 
-                                                            ? 'bg-gradient-to-br from-white to-slate-200 text-slate-900' 
-                                                            : 'bg-slate-700/50 text-slate-300 border border-slate-600/30'
-                                                    }`}>
-                                                        {getInitials(whiteName)}
-                                                    </div>
-                                                    <div>
-                                                        <span className={`text-sm font-medium block ${game.white === heroUser ? 'text-white' : 'text-slate-300'}`}>
-                                                            {whiteName}
-                                                        </span>
-                                                        <span className="text-xs text-slate-500">White</span>
-                                                    </div>
+                                <button key={game.id} onClick={() => handleView(game.id)} className="game-card">
+                                    <div className={`game-card__accent ${isWin ? 'win' : isLoss ? 'loss' : 'draw'}`} />
+                                    <div className="game-card__main">
+                                        <div className="game-card__row game-card__row--top">
+                                            <div className="game-card__players">
+                                                <div className={`player ${isHeroWhite ? 'player--hero' : ''}`}>
+                                                    <span className="player__color">White</span>
+                                                    <span className="player__name">{whiteName}</span>
+                                                    {whiteRating && <span className="player__rating">{whiteRating}</span>}
                                                 </div>
-                                                <span className={`text-lg font-bold font-mono ${game.result === '1-0' ? 'text-emerald-400' : game.result === '0-1' ? 'text-rose-400' : 'text-slate-500'}`}>
-                                                    {game.result || '-'}
-                                                </span>
-                                            </div>
-
-                                            {/* Black Player */}
-                                            <div className="flex items-center justify-between group/player">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${
-                                                        game.black === heroUser 
-                                                            ? 'bg-gradient-to-br from-amber-400 to-amber-600 text-white' 
-                                                            : 'bg-slate-700/50 text-slate-300 border border-slate-600/30'
-                                                    }`}>
-                                                        {getInitials(blackName)}
-                                                    </div>
-                                                    <div>
-                                                        <span className={`text-sm font-medium block ${game.black === heroUser ? 'text-white' : 'text-slate-300'}`}>
-                                                            {blackName}
-                                                        </span>
-                                                        <span className="text-xs text-slate-500">Black</span>
-                                                    </div>
+                                                <div className={`player ${isHeroBlack ? 'player--hero' : ''}`}>
+                                                    <span className="player__color">Black</span>
+                                                    <span className="player__name">{blackName}</span>
+                                                    {blackRating && <span className="player__rating">{blackRating}</span>}
                                                 </div>
-                                                <span className={`text-lg font-bold font-mono ${game.result === '0-1' ? 'text-emerald-400' : game.result === '1-0' ? 'text-rose-400' : 'text-slate-500'}`}>
-                                                    {game.result || '-'}
+                                            </div>
+                                            <div className="game-card__result">
+                                                <span className={`result-pill ${isWin ? 'win' : isLoss ? 'loss' : 'draw'}`}>
+                                                    {isWin ? 'Win' : isLoss ? 'Loss' : 'Draw'}
                                                 </span>
+                                                <span className="result-score">{game.result || '-'}</span>
                                             </div>
                                         </div>
 
-                                        {/* Opening Info */}
-                                        <div className="pt-3 border-t border-slate-700/30">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <Brain size={14} className="text-slate-500" />
-                                                <span className="text-xs text-slate-500 uppercase tracking-wider">Opening</span>
-                                            </div>
-                                            <p className="text-sm text-slate-300 truncate font-mono bg-slate-800/50 rounded-lg px-3 py-2" title={opening}>
-                                                {opening}
-                                            </p>
+                                        <div className="game-card__row game-card__row--meta">
+                                            <span className={getPerfColor(game.perf)}>{game.perf || 'Rapid'}</span>
+                                            <span className="meta-sep">•</span>
+                                            <span className="meta-item">{formatDate(game.date)}</span>
+                                            <span className="meta-sep">•</span>
+                                            <span className={`status-pill ${status === 'completed' ? 'status-ok' : 'status-pending'}`}>
+                                                {status === 'completed' ? 'Analyzed' : 'Pending'}
+                                            </span>
                                         </div>
 
-                                        {/* Action Button */}
-                                        <button className="w-full mt-4 h-10 bg-gradient-to-r from-indigo-500/20 to-purple-500/20 hover:from-indigo-500/30 hover:to-purple-500/30 text-white text-sm font-medium rounded-xl border border-indigo-500/30 hover:border-indigo-400/50 transition-all flex items-center justify-center gap-2 group-hover:gap-3">
-                                            Review Game
-                                            <svg className="w-4 h-4 transition-transform group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                            </svg>
-                                        </button>
+                                        <div className="game-card__row game-card__row--opening">
+                                            <Brain size={14} />
+                                            <span className="opening-label">Opening</span>
+                                            <span className="opening-name" title={opening}>{opening}</span>
+                                        </div>
                                     </div>
-                                </div>
+                                    <div className="game-card__cta">
+                                        Review
+                                        <svg className="cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                        </svg>
+                                    </div>
+                                </button>
                             );
                         })}
                     </div>
                 )}
 
-                {/* Enhanced Empty State */}
+                {/* Empty State */}
                 {games && games.length === 0 && (
-                    <div className="flex flex-col items-center justify-center py-20 sm:py-32 text-center px-4">
-                        <div className="relative mb-8">
-                            <div className="w-24 h-24 bg-slate-800/50 rounded-2xl flex items-center justify-center border border-slate-700/50 shadow-2xl">
-                                <Search className="w-10 h-10 text-slate-500" />
-                            </div>
-                            <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-amber-500/20 rounded-xl flex items-center justify-center border border-amber-500/30">
-                                <Trophy className="w-4 h-4 text-amber-400" />
-                            </div>
+                    <div className="library-empty">
+                        <div className="empty-icon">
+                            <Search size={28} />
                         </div>
-                        <h3 className="text-2xl font-bold text-white mb-3">No games found</h3>
-                        <p className="text-slate-400 max-w-md mb-8">
-                            We couldn't find any games matching your filters. Try adjusting them or import new games to get started.
-                        </p>
-                        <div className="flex flex-col sm:flex-row gap-4">
+                        <h3>No games found</h3>
+                        <p>Try adjusting your filters or import new games to get started.</p>
+                        <div className="empty-actions">
                             <button
                                 onClick={() => setFilters({
                                     result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: ''
                                 })}
-                                className="px-6 py-3 bg-slate-800/50 text-white rounded-xl border border-slate-700/50 hover:bg-slate-800 hover:border-slate-600 transition-all flex items-center gap-2"
+                                className="btn-secondary"
                             >
-                                <RotateCcw size={18} /> Clear Filters
+                                <RotateCcw size={16} />
+                                Clear Filters
                             </button>
-                            <button
-                                onClick={() => navigate('/import')}
-                                className="px-6 py-3 bg-gradient-to-r from-amber-400 to-orange-500 text-slate-900 font-semibold rounded-xl hover:scale-105 transition-transform flex items-center gap-2"
-                            >
-                                <span>+</span> Import Games
+                            <button onClick={() => navigate('/import')} className="btn-primary">
+                                <span>+</span>
+                                Import Games
                             </button>
                         </div>
                     </div>
                 )}
 
-                {/* Enhanced Pagination */}
+                {/* Pagination */}
                 {totalPages > 1 && (
-                    <div className="flex justify-center items-center gap-4 pb-10">
+                    <div className="library-pagination">
                         <button
-                            className="w-12 h-12 flex items-center justify-center rounded-xl bg-slate-800/50 border border-slate-700/50 text-white hover:bg-slate-700/50 hover:border-slate-600 disabled:opacity-30 disabled:hover:bg-slate-800/50 disabled:hover:border-slate-700/50 transition-all"
+                            className="btn-square"
                             onClick={() => setPage((p) => Math.max(1, p - 1))}
                             disabled={page === 1}
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                             </svg>
                         </button>
-                        
-                        <div className="flex items-center gap-2 px-4 py-2 bg-slate-900/50 rounded-xl border border-slate-700/30">
-                            <span className="text-sm text-slate-400">Page</span>
-                            <span className="text-white font-bold text-lg px-2">{page}</span>
-                            <span className="text-slate-500">/</span>
-                            <span className="text-slate-400">{totalPages}</span>
+                        <div className="page-indicator">
+                            Page <strong>{page}</strong> of {totalPages}
                         </div>
-
                         <button
-                            className="w-12 h-12 flex items-center justify-center rounded-xl bg-slate-800/50 border border-slate-700/50 text-white hover:bg-slate-700/50 hover:border-slate-600 disabled:opacity-30 disabled:hover:bg-slate-800/50 disabled:hover:border-slate-700/50 transition-all"
+                            className="btn-square"
                             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                             disabled={page === totalPages}
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                             </svg>
                         </button>
                     </div>
                 )}
 
-                {/* Loading State */}
+                {/* Loading */}
                 {games === undefined && (
-                    <div className="flex items-center justify-center py-32">
-                        <div className="flex flex-col items-center gap-4">
-                            <div className="w-12 h-12 border-4 border-slate-700 border-t-amber-400 rounded-full animate-spin" />
-                            <span className="text-slate-400 text-sm">Loading your games...</span>
-                        </div>
+                    <div className="library-loading">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <div key={i} className="skeleton-card" />
+                        ))}
+                        <span>Loading your games...</span>
                     </div>
                 )}
+            </div>
+
+            <div className={`filter-drawer ${filtersOpen ? 'open' : ''}`} aria-hidden={!filtersOpen}>
+                <div className="filter-drawer__backdrop" onClick={() => setFiltersOpen(false)} />
+                <div className="filter-drawer__panel">
+                    <div className="drawer-header">
+                        <div>
+                            <h3>All Filters</h3>
+                            <p>Refine your library with precision.</p>
+                        </div>
+                        <button className="btn-icon" onClick={() => setFiltersOpen(false)}>
+                            <X size={18} />
+                        </button>
+                    </div>
+
+                    <div className="drawer-body">
+                        <div className="drawer-section">
+                            <label>Opening or ECO</label>
+                            <div className="drawer-input">
+                                <Brain size={16} />
+                                <input
+                                    value={filters.opening}
+                                    onChange={(e) => setFilters({ ...filters, opening: e.target.value })}
+                                    placeholder="Search opening or ECO..."
+                                />
+                                {filters.opening && (
+                                    <button onClick={() => clearFilter('opening')}>
+                                        <X size={14} />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="drawer-section">
+                            <label>Date Range</label>
+                            <div className="drawer-grid">
+                                <div className="drawer-input">
+                                    <Calendar size={16} />
+                                    <input
+                                        type="date"
+                                        value={filters.dateFrom}
+                                        onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
+                                    />
+                                </div>
+                                <div className="drawer-input">
+                                    <Calendar size={16} />
+                                    <input
+                                        type="date"
+                                        value={filters.dateTo}
+                                        onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="drawer-section">
+                            <label>Quick Reset</label>
+                            <button
+                                onClick={() => setFilters({
+                                    result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: ''
+                                })}
+                                className="btn-secondary w-full"
+                            >
+                                <RotateCcw size={16} />
+                                Clear All Filters
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     );
 };
-
