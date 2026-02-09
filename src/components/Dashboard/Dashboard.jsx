@@ -2,7 +2,7 @@ import React, { useLayoutEffect, useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { Chessboard } from 'react-chessboard';
-import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, Play, FastForward, Rewind, AlertCircle, BookOpen, Search } from 'lucide-react';
+import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, FastForward, Rewind, ChevronDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { processGame } from '../../services/analyzer';
@@ -123,6 +123,12 @@ export const Dashboard = () => {
     const [hoverArrow, setHoverArrow] = useState(null); // { from, to }
     const [previewFen, setPreviewFen] = useState(null);
     const [badgeStyle, setBadgeStyle] = useState(null); // { left, top }
+    const [rightPanelOpen, setRightPanelOpen] = useState(() => {
+        if (typeof window === 'undefined') return true;
+        return window.innerWidth >= 1100;
+    });
+    const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false);
+    const [lastAnalyzeMode, setLastAnalyzeMode] = useState(() => localStorage.getItem('dashboardAnalyzeMode') || 'stockfish');
 
     // Auto-switch to analysis tab when analysis completes
     useEffect(() => {
@@ -244,19 +250,34 @@ export const Dashboard = () => {
         setMoveIndex(history.length - 1);
     };
 
-    const handleAnalyze = async () => {
-        if (!activeGame) return;
-        if (aiAnalysis) {
-            setActiveTab('ai');
-        } else {
-            setShowAIModal(true);
-        }
-    };
-
     const handleStockfishAnalyze = async () => {
         if (!activeGame) return;
         // Reset to pending to trigger queue
         await db.games.update(activeGame.id, { analyzed: false, analysisStatus: 'pending' });
+    };
+
+    const handleAnalyzePrimary = async () => {
+        if (!activeGame) return;
+        if (lastAnalyzeMode === 'ai') {
+            if (aiAnalysis) {
+                setActiveTab('ai');
+                return;
+            }
+            setShowAIModal(true);
+            return;
+        }
+        await handleStockfishAnalyze();
+    };
+
+    const handleAnalyzeSelect = async (mode) => {
+        setLastAnalyzeMode(mode);
+        localStorage.setItem('dashboardAnalyzeMode', mode);
+        setAnalysisMenuOpen(false);
+        if (mode === 'ai') {
+            setShowAIModal(true);
+            return;
+        }
+        await handleStockfishAnalyze();
     };
 
     const handleJumpTo = (index) => {
@@ -441,6 +462,32 @@ export const Dashboard = () => {
         return Math.max(2, Math.min(98, raw));
     }, [evalPct]);
 
+    const uciToSan = (fen, uci) => {
+        if (!fen || !uci || uci.length < 4) return uci || '-';
+        try {
+            const chess = new Chess(fen);
+            const from = uci.substring(0, 2);
+            const to = uci.substring(2, 4);
+            const promotion = uci.length > 4 ? uci.substring(4, 5) : undefined;
+            const res = chess.move({ from, to, promotion });
+            return res?.san || uci;
+        } catch {
+            return uci;
+        }
+    };
+
+    const moveInsight = useMemo(() => {
+        if (!analysisLog || analysisLog.length === 0) return null;
+        const fenKey = (fen) => (typeof fen === 'string' ? fen.split(' ').slice(0, 4).join(' ') : '');
+        const key = fenKey(currentFen);
+        let entry = key ? analysisLog.find((e) => fenKey(e?.fen) === key) : null;
+        if (!entry) {
+            if (moveIndex >= 0) entry = analysisLog[moveIndex] || null;
+            else entry = analysisLog[0] || null;
+        }
+        return entry;
+    }, [analysisLog, currentFen, moveIndex]);
+
     const classificationBadge = useMemo(() => {
         if (!analysisLog || moveIndex < 0) return null;
         const entry = analysisLog[moveIndex];
@@ -505,25 +552,89 @@ export const Dashboard = () => {
         });
     }, [classificationBadge, history, moveIndex, boardWidth, boardOrientation, previewFen]);
 
+    // Close menu only via toggle or selection (avoid click-outside issues on small screens).
+
     if (!stats) return <div className="p-8 text-secondary">Loading dashboard...</div>;
 
     return (
-        <div className="dashboard-shell bg-app">
+        <div className={`dashboard-shell bg-app ${rightPanelOpen ? '' : 'dashboard-shell--collapsed'}`}>
 
             {/* LEFT / CENTER: Chessboard Area */}
-            <div className="dashboard-center flex flex-col min-w-0 overflow-y-auto relative">
+            <div className="dashboard-center flex flex-col min-w-0 relative">
                 {/* Added w-full to ensure this container takes width */}
                 {/* Main Board Area */}
-                <div className="flex-1 flex flex-col items-center justify-center min-h-0 w-full p-4">
+                <div className="dashboard-board-area flex-1 flex flex-col items-center justify-start min-h-0 w-full p-4">
 
-                    {/* Game Header (Date/Result) */}
                     {activeGame && (
-                        <div className="text-xs text-secondary flex items-center justify-center gap-3 mb-2 shrink-0">
-                            <span className="uppercase tracking-wider font-semibold">{getMeta('perf')}</span>
-                            <span>•</span>
-                            <span>{new Date(activeGame.date).toLocaleDateString()}</span>
-                            <span>•</span>
-                            <span>{activeGame.result}</span>
+                        <div className="board-header">
+                            <div className="board-header__left">
+                                <div className="board-header__meta">
+                                    <span className="board-meta-pill">{getMeta('perf')}</span>
+                                    <span className="board-meta-sep">•</span>
+                                    <span>{new Date(activeGame.date).toLocaleDateString()}</span>
+                                    <span className="board-meta-sep">•</span>
+                                    <span>{activeGame.result}</span>
+                                </div>
+                                <div className="board-header__opening">
+                                    <span className="opening-name">{activeGame.openingName || activeGame.eco || 'Unknown Opening'}</span>
+                                    {activeGame.eco && <span className="opening-eco">{activeGame.eco}</span>}
+                                </div>
+                            </div>
+                            <div className="board-header__actions">
+                                {activeGame && (
+                                    <div className="split-button">
+                                        <button
+                                            onClick={handleAnalyzePrimary}
+                                            disabled={activeGame.analysisStatus === 'analyzing'}
+                                            className={`split-button__main ${activeGame.analysisStatus === 'analyzing' ? 'is-loading' : ''}`}
+                                        >
+                                            <Zap size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
+                                            {lastAnalyzeMode === 'ai'
+                                                ? (aiAnalysis ? 'Open AI Coach' : 'Analyze (AI)')
+                                                : (activeGame.analysisStatus === 'analyzing'
+                                                    ? 'Analyzing...'
+                                                    : (activeGame.analyzed ? 'Re-analyze (Stockfish)' : 'Analyze (Stockfish)'))}
+                                        </button>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setAnalysisMenuOpen((v) => !v);
+                                            }}
+                                            className="split-button__toggle"
+                                            aria-label="Choose analysis mode"
+                                        >
+                                            <ChevronDown size={14} />
+                                        </button>
+                                        {analysisMenuOpen && (
+                                            <div className="split-button__menu" onClick={(e) => e.stopPropagation()}>
+                                                <button onClick={() => handleAnalyzeSelect('stockfish')}>
+                                                    {activeGame.analyzed ? 'Re-analyze (Stockfish)' : 'Stockfish Analysis'}
+                                                </button>
+                                                <button onClick={() => handleAnalyzeSelect('ai')}>
+                                                    {aiAnalysis ? 'Re-run AI Analysis' : 'AI Analysis'}
+                                                </button>
+                                                {aiAnalysis && (
+                                                    <button onClick={() => {
+                                                        setLastAnalyzeMode('ai');
+                                                        localStorage.setItem('dashboardAnalyzeMode', 'ai');
+                                                        setAnalysisMenuOpen(false);
+                                                        setActiveTab('ai');
+                                                    }}>
+                                                        Open AI Coach
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                <button
+                                    onClick={() => setRightPanelOpen((v) => !v)}
+                                    className="panel-toggle"
+                                >
+                                    {rightPanelOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+                                    {rightPanelOpen ? 'Hide Panel' : 'Show Panel'}
+                                </button>
+                            </div>
                         </div>
                     )}
 
@@ -539,7 +650,7 @@ export const Dashboard = () => {
                             </div>
 
                             {/* BOARD + EVAL BAR */}
-                            <div className="board-row" style={{ position: 'relative', zIndex: 10 }}>
+                            <div className="board-row" style={{ position: 'relative', zIndex: 2 }}>
                                 <div
                                     ref={boardContainerRef}
                                     className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
@@ -554,7 +665,7 @@ export const Dashboard = () => {
                                         </div>
                                     )}
                                 </div>
-                                <div className="eval-rail" aria-hidden="true">
+                                <div className="eval-rail eval-rail--interactive" title={`Evaluation: ${evalText}`} aria-hidden="true">
                                     <div className="eval-bar eval-bar--outside">
                                         <div className="eval-bar__black" style={{ height: `${Math.round((1 - evalPct) * 100)}%` }} />
                                         <div className="eval-bar__white" style={{ height: `${Math.round(evalPct * 100)}%` }} />
@@ -589,39 +700,18 @@ export const Dashboard = () => {
 
                     {/* Controls */}
                     <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
-                        {activeGame && (
-                            <button
-                                onClick={handleStockfishAnalyze}
-                                disabled={activeGame.analysisStatus === 'analyzing'}
-                                className={`mr-4 flex items-left gap-4 px-4 py-2 rounded-full text-xs font-medium transition-colors ${activeGame.analysisStatus === 'analyzing' ? 'bg-blue-500/10 text-blue-400 cursor-wait' :
-                                    activeGame.analysisStatus === 'failed' ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' :
-                                        activeGame.analyzed ? 'bg-subtle text-secondary hover:text-primary' :
-                                            'bg-primary text-black hover:opacity-90'
-                                    }`}
-                            >
-                                <Zap size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
-                                {activeGame.analysisStatus === 'analyzing' ? 'Analyzing...' :
-                                    activeGame.analysisStatus === 'failed' ? 'Retry Analysis' :
-                                        activeGame.analyzed ? 'Re-analyze' : 'Analyze'}
-                            </button>
-                        )}
                         <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
                         <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
                         <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
                         <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
-
-                        {activeGame && (
-                            <button
-                                onClick={handleAnalyze}
-                                className={`ml-4 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium transition-colors ${aiAnalysis ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-500/20' :
-                                    'bg-primary text-black hover:opacity-90'
-                                    }`}
-                            >
-                                <Sparkles size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
-                                {aiAnalysis ? 'AI Insights' : 'Analyze with AI'}
-                            </button>
-                        )}
                     </div>
+
+                    {!rightPanelOpen && (
+                        <button className="panel-toggle panel-toggle--floating" onClick={() => setRightPanelOpen(true)}>
+                            <ChevronLeft size={16} />
+                            Show Panel
+                        </button>
+                    )}
 
                     {showAIModal && activeGame && (
                         <div className="absolute inset-0 flex items-center justify-center p-4" style={{ zIndex: 9999 }}>
@@ -769,41 +859,22 @@ export const Dashboard = () => {
                 {activeTab === 'moves' && (
                     <div className="dashboard-performance flex flex-col bg-panel/50 border-t shrink-0">
                         <div className="p-4 border-b sticky top-0 bg-panel z-10">
-                            <h2 className="text-sm font-semibold text-primary">Performance</h2>
+                            <h2 className="text-sm font-semibold text-primary">Move Insights</h2>
                         </div>
 
                         <div className="performance-scroll p-4 flex flex-col gap-2">
-                            <StatRow label="Games" value={stats.total} subtext="Total analyzed" icon={Activity} color="blue" />
-                            <StatRow label="Win Rate" value={`${stats.winRate}%`} subtext="Recent trend" icon={ArrowUpRight} color="green" />
-                            <StatRow label="Accuracy" value={stats.accuracy ? `${stats.accuracy}%` : '-'} subtext="Avg CP Loss" icon={Target} color="orange" />
-                            <StatRow label="Avg CP Loss" value={stats.avgCpLoss ? `${stats.avgCpLoss}` : '-'} subtext="Lower is better" icon={Target} color="yellow" />
-                            <StatRow label="Accuracy Streak" value={stats.maxStreak || '-'} subtext="Best streak (>=90%)" icon={Zap} color="green" />
-                            <StatRow label="Max Swing" value={stats.maxSwing || '-'} subtext="Largest eval swing" icon={Activity} color="red" />
-                            <StatRow label="Book Moves" value={stats.bookTotal ? `${Math.round((stats.bookMoves / stats.bookTotal) * 100)}%` : '-'} subtext="Opening moves in book" icon={BookOpen} color="blue" />
-                            {queueCount > 0 && (
-                                <StatRow label="Queue" value={queueCount} subtext="Pending analysis" icon={Zap} color="yellow" />
-                            )}
-                            {failedCount > 0 && (
-                                <StatRow label="Failed" value={failedCount} subtext="Analysis errors" icon={AlertCircle} color="red" />
+                            {moveInsight ? (
+                                <>
+                                    <StatRow label="Classification" value={moveInsight.classification || '-'} subtext="Move quality" icon={Target} color="blue" />
+                                    <StatRow label="Eval Swing" value={typeof moveInsight.evalDiff === 'number' ? `${Math.round(moveInsight.evalDiff)}cp` : '-'} subtext="Centipawn loss" icon={Activity} color="orange" />
+                                    <StatRow label="Best Move" value={uciToSan(moveInsight.fen, moveInsight.bestMove) || '-'} subtext="Engine recommendation" icon={Zap} color="yellow" />
+                                    <StatRow label="Your Move" value={uciToSan(moveInsight.fen, moveInsight.move) || '-'} subtext="Played move" icon={ArrowUpRight} color="green" />
+                                </>
+                            ) : (
+                                <div className="text-sm text-muted">Move analysis not available yet.</div>
                             )}
                         </div>
 
-                        <div className="p-4 mt-auto">
-                            <div className="p-3 rounded-md bg-subtle border">
-                                <div className="flex items-start gap-3">
-                                    <Zap size={16} className="text-orange-400 mt-1 shrink-0" />
-                                    <div>
-                                        <h4 className="text-sm font-medium text-primary">Opening</h4>
-                                        <p className="text-xs text-secondary mt-1 leading-relaxed">
-                                            {activeGame?.openingName || activeGame?.eco || 'Unknown'}
-                                        </p>
-                                        <Link to="/openings" className="inline-flex items-center gap-1 text-xs text-blue-400 mt-3 font-medium hover:text-white">
-                                            View Stats <ArrowUpRight size={12} />
-                                        </Link>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                     </div>
                 )}
             </div>

@@ -26,9 +26,9 @@ export const AIInsightsView = ({ analysis, onJumpToMove }) => {
     const { game_summary, player_insights, moves, key_moments } = analysis;
 
     return (
-        <div className="flex flex-col gap-6 p-4 pb-20">
+        <div className="ai-insights flex flex-col gap-6 p-5 pb-20">
             {/* 1. Game Summary */}
-            <div className="space-y-4">
+            <div className="ai-section space-y-4">
                 <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-5">
                     <div className="flex items-center gap-2 mb-2">
                         <Brain size={18} className="text-purple-400" />
@@ -59,8 +59,8 @@ export const AIInsightsView = ({ analysis, onJumpToMove }) => {
             </div>
 
             {/* 2. Key Moments */}
-            <div>
-                <h3 className="text-sm font-bold text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+            <div className="ai-section">
+                <h3 className="ai-section__title flex items-center gap-2">
                     <Flag size={14} /> Key Moments
                 </h3>
                 <div className="space-y-3">
@@ -81,8 +81,8 @@ export const AIInsightsView = ({ analysis, onJumpToMove }) => {
             </div>
 
             {/* 3. Player Insights */}
-            <div>
-                <h3 className="text-sm font-bold text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+            <div className="ai-section">
+                <h3 className="ai-section__title flex items-center gap-2">
                     <Target size={14} /> Player Insights
                 </h3>
                 <div className="grid grid-cols-1 gap-4">
@@ -108,8 +108,8 @@ export const AIInsightsView = ({ analysis, onJumpToMove }) => {
             </div>
 
             {/* 4. Annotated Moves List */}
-            <div>
-                <h3 className="text-sm font-bold text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+            <div className="ai-section">
+                <h3 className="ai-section__title flex items-center gap-2">
                     <Lightbulb size={14} /> Annotated Moves
                 </h3>
                 <div className="space-y-4">
