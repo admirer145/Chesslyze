@@ -100,13 +100,28 @@ export const Settings = () => {
     };
 
     const handleStopAnalysis = async () => {
-        setStatus({ type: 'loading', message: 'Stopping analysis and clearing queue...' });
+        setStatus({ type: 'loading', message: 'Stopping analysis...' });
         try {
             engine.stop();
             engine.terminate();
-            // We do NOT reset pending games to idle anymore, they remain pending to be picked up next time.
-            await db.games.where('analysisStatus').equals('analyzing').modify({ analysisStatus: 'pending', analysisStartedAt: null, analysisHeartbeatAt: null });
-            setStatus({ type: 'success', message: 'Analysis stopped. Analyzing games reset to pending.' });
+
+            // 1. Valid pending games in the queue revert to IDLE (so they can be re-queued later)
+            // We strip the analysisStatus entirely to make them "idle"
+            await db.games.where('analysisStatus').equals('pending').modify({
+                analysisStatus: null, // This makes them 'idle' based on our filters
+                analysisStartedAt: null,
+                analysisHeartbeatAt: null
+            });
+
+            // 2. The game currently being analyzed is marked as FAILED (interrupted)
+            await db.games.where('analysisStatus').equals('analyzing').modify({
+                analysisStatus: 'failed',
+                analyzed: true, // It did run, but failed.
+                analysisStartedAt: null,
+                analysisHeartbeatAt: null
+            });
+
+            setStatus({ type: 'success', message: 'Analysis stopped. Current game failed, queue reset to idle.' });
         } catch (err) {
             console.error(err);
             setStatus({ type: 'error', message: 'Failed to stop analysis.' });
