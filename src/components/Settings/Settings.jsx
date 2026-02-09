@@ -20,6 +20,12 @@ export const Settings = () => {
         const v = parseInt(localStorage.getItem('engineDeepDepth') || '0', 10);
         return Number.isNaN(v) ? 0 : v;
     });
+    const [hash, setHash] = useState(() => parseInt(localStorage.getItem('engineHash') || '32', 10)); // Default 32MB
+    const [threads, setThreads] = useState(() => parseInt(localStorage.getItem('engineThreads') || '1', 10));
+    const [useNNUE, setUseNNUE] = useState(() => {
+        const stored = localStorage.getItem('engineUseNNUE');
+        return stored === null ? true : stored === 'true';
+    });
 
     const games = useLiveQuery(async () => {
         return await db.games.toArray();
@@ -28,6 +34,7 @@ export const Settings = () => {
     useEffect(() => {
         // Ensure worker initialized so we can read id name / caps.
         engine.init().then(() => setEngineInfo(engine.getInfo())).catch(() => { });
+
         const t = setTimeout(() => setEngineInfo(engine.getInfo()), 400);
 
         // Auto-migrate idle to pending per user request - REMOVED to allow distinction
@@ -35,6 +42,15 @@ export const Settings = () => {
 
         return () => clearTimeout(t);
     }, []);
+
+    // Sync options
+    useEffect(() => {
+        engine.setOptions([
+            { name: 'Hash', value: hash },
+            { name: 'Threads', value: threads },
+            { name: 'Use NNUE', value: useNNUE },
+        ]);
+    }, [hash, threads, useNNUE]);
 
     const stats = useMemo(() => {
         if (!games) return { total: 0, heroTotal: 0, analyzed: 0, pending: 0, ignored: 0 };
@@ -251,6 +267,23 @@ export const Settings = () => {
         localStorage.setItem('engineDeepDepth', String(value));
     };
 
+    const handleHashChange = (value) => {
+        setHash(value);
+        localStorage.setItem('engineHash', String(value));
+        // Force restart maybe? Or just setOption. Stockfish handles dynamic hash usually, but clear hash is good.
+    };
+
+    const handleThreadsChange = (value) => {
+        const v = Math.max(1, Math.min(16, value));
+        setThreads(v);
+        localStorage.setItem('engineThreads', String(v));
+    };
+
+    const handleNNUEChange = (enabled) => {
+        setUseNNUE(enabled);
+        localStorage.setItem('engineUseNNUE', String(enabled));
+    };
+
     const handlePresetChange = (value) => {
         setPreset(value);
         localStorage.setItem('enginePreset', value);
@@ -360,6 +393,63 @@ export const Settings = () => {
                         <div className="text-xs text-muted">Applies to new analysis runs.</div>
                     </div>
                 </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Performance Tuning</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Optimize engine performance for your device.
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <label className="text-sm font-medium text-primary">Hash Size (MB)</label>
+                                <span className="text-xs text-muted">{hash} MB</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="16"
+                                max="512"
+                                step="16"
+                                value={hash}
+                                onChange={(e) => handleHashChange(parseInt(e.target.value, 10))}
+                                className="w-full"
+                            />
+                            <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Recommended: 64-128MB for desktop.</p>
+                        </div>
+
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <label className="text-sm font-medium text-primary">Threads</label>
+                                <span className="text-xs text-muted">{threads} Core{threads !== 1 ? 's' : ''}</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="1"
+                                max="8" // Cap at 8 for safety, user can edit localstorage if they want more
+                                step="1"
+                                value={threads}
+                                onChange={(e) => handleThreadsChange(parseInt(e.target.value, 10))}
+                                className="w-full"
+                            />
+                            <p className="text-xs text-muted mt-1">More threads = faster analysis. Don't exceed your CPU core count.</p>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="checkbox"
+                                id="nnue-toggle"
+                                checked={useNNUE}
+                                onChange={(e) => handleNNUEChange(e.target.checked)}
+                                className="w-4 h-4"
+                            />
+                            <label htmlFor="nnue-toggle" className="text-sm font-medium text-primary cursor-pointer select-none">
+                                Enable NNUE (Neural Net)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
 
                 <div className="p-6 rounded-lg border bg-panel">
                     <h3 className="text-sm font-semibold text-primary mb-3">Engine Depth</h3>

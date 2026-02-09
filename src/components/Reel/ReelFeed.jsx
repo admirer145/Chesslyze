@@ -224,16 +224,28 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         if (player && typeof player === 'object' && player.rating) return player.rating;
         return '?';
     };
+    const getTitleTag = (tag) => {
+        if (!game?.pgn || !tag) return '';
+        const match = game.pgn.match(new RegExp(`\\[${tag} "([^"]*)"\\]`));
+        const value = match ? match[1] : '';
+        if (!value || value === '?' || value === '-') return '';
+        return value.trim();
+    };
+    const getTitle = (color) => {
+        const direct = color === 'white' ? game?.whiteTitle : game?.blackTitle;
+        if (direct && direct !== '?' && direct !== '-') return direct;
+        return getTitleTag(color === 'white' ? 'WhiteTitle' : 'BlackTitle');
+    };
     const isHeroWhite = game ? getName(game.white).toLowerCase() === heroUser.toLowerCase() : true;
 
     // Determine Top (Opponent) vs Bottom (Hero)
     const topPlayer = isHeroWhite ?
-        { name: getName(game?.black) || 'Opponent', rating: getRating(game?.black, game?.blackRating) } :
-        { name: getName(game?.white) || 'Opponent', rating: getRating(game?.white, game?.whiteRating) };
+        { name: getName(game?.black) || 'Opponent', rating: getRating(game?.black, game?.blackRating), title: getTitle('black') } :
+        { name: getName(game?.white) || 'Opponent', rating: getRating(game?.white, game?.whiteRating), title: getTitle('white') };
 
     const bottomPlayer = isHeroWhite ?
-        { name: getName(game?.white) || heroUser, rating: getRating(game?.white, game?.whiteRating) } :
-        { name: getName(game?.black) || heroUser, rating: getRating(game?.black, game?.blackRating) };
+        { name: getName(game?.white) || heroUser, rating: getRating(game?.white, game?.whiteRating), title: getTitle('white') } :
+        { name: getName(game?.black) || heroUser, rating: getRating(game?.black, game?.blackRating), title: getTitle('black') };
 
     const isReview = useMemo(() => {
         return position?.nextReviewAt && new Date(position.nextReviewAt) <= new Date();
@@ -463,6 +475,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
                 {/* Opponent (Top) */}
                 <div className="flex justify-between items-end px-1 mb-1">
                     <div className="flex items-baseline gap-2 text-secondary">
+                        {topPlayer.title && <span className="title-badge">{topPlayer.title}</span>}
                         <span className="font-semibold">{topPlayer.name}</span>
                         <span className="text-sm font-light">({topPlayer.rating})</span>
                     </div>
@@ -517,6 +530,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
 
                 <div className="flex justify-between items-start px-1 mb-4">
                     <div className="flex items-baseline gap-2 text-primary">
+                        {bottomPlayer.title && <span className="title-badge">{bottomPlayer.title}</span>}
                         <span className="font-bold text-lg">{bottomPlayer.name}</span>
                         <span className="text-sm font-light">({bottomPlayer.rating})</span>
                     </div>

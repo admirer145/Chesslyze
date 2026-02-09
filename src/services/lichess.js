@@ -31,6 +31,8 @@ const mapLichessGame = (game) => {
         date: new Date(game.createdAt).toISOString(),
         white: game.players?.white?.user?.name || game.players?.white?.name || 'Anonymous',
         black: game.players?.black?.user?.name || game.players?.black?.name || 'Anonymous',
+        whiteTitle: game.players?.white?.user?.title || '',
+        blackTitle: game.players?.black?.user?.title || '',
         whiteRating: game.players?.white?.rating,
         blackRating: game.players?.black?.rating,
         perf: speed,

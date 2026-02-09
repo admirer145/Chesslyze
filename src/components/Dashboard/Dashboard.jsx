@@ -353,14 +353,25 @@ export const Dashboard = () => {
         return match ? match[1] : '?';
     };
 
+    const getTitleTag = (tag) => {
+        if (!activeGame?.pgn) return '';
+        const match = activeGame.pgn.match(new RegExp(`\\[${tag} "([^"]*)"\\]`));
+        const value = match ? match[1] : '';
+        if (!value || value === '?' || value === '-') return '';
+        return value.trim();
+    };
+
+    const whiteTitle = (activeGame?.whiteTitle || getTitleTag('WhiteTitle')) || '';
+    const blackTitle = (activeGame?.blackTitle || getTitleTag('BlackTitle')) || '';
+
     // Derived metadata for Top (Opponent) vs Bottom (Hero)
     const topPlayer = boardOrientation === 'white' ?
-        { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating') } :
-        { name: getMeta('White'), rating: getMeta('WhiteElo') || getMeta('whiteRating') };
+        { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating'), title: blackTitle } :
+        { name: getMeta('White'), rating: getMeta('WhiteElo') || getMeta('whiteRating'), title: whiteTitle };
 
     const bottomPlayer = boardOrientation === 'white' ?
-        { name: getMeta('White'), rating: getMeta('WhiteElo') || getMeta('whiteRating') } :
-        { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating') };
+        { name: getMeta('White'), rating: getMeta('WhiteElo') || getMeta('whiteRating'), title: whiteTitle } :
+        { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating'), title: blackTitle };
 
     const defaultArrow = useMemo(() => {
         // Show best move arrow when analysis data is available, regardless of active tab
@@ -646,6 +657,7 @@ export const Dashboard = () => {
                             {/* Top Player */}
                             <div className="flex justify-between items-end px-1">
                                 <div className="flex items-baseline gap-2 text-secondary">
+                                    {topPlayer.title && <span className="title-badge">{topPlayer.title}</span>}
                                     <span className="font-semibold">{topPlayer.name}</span>
                                     <span className="text-sm font-light">({topPlayer.rating})</span>
                                 </div>
@@ -684,6 +696,7 @@ export const Dashboard = () => {
                             {/* Bottom Player */}
                             <div className="flex justify-between items-start px-1">
                                 <div className="flex items-baseline gap-2 text-primary">
+                                    {bottomPlayer.title && <span className="title-badge">{bottomPlayer.title}</span>}
                                     <span className="font-bold text-lg">{bottomPlayer.name}</span>
                                     <span className="text-sm font-light">({bottomPlayer.rating})</span>
                                 </div>

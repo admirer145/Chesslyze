@@ -96,6 +96,18 @@ db.version(14).stores({
     });
 });
 
+db.version(15).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority, rated, variant, whiteTitle, blackTitle',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt'
+}).upgrade((tx) => {
+    return tx.table('games').toCollection().modify((g) => {
+        if (!g.whiteTitle) g.whiteTitle = '';
+        if (!g.blackTitle) g.blackTitle = '';
+    });
+});
+
 export const saveAIAnalysis = async (gameId, analysisData, promptVersion = '1.0') => {
     const existing = await db.ai_analyses.where('gameId').equals(gameId).first();
     const record = {
@@ -118,6 +130,39 @@ export const getAIAnalysis = async (gameId) => {
 
 export const addGames = async (games) => {
     return await db.games.bulkAdd(games);
+};
+
+const extractPgnTag = (pgn, tag) => {
+    if (!pgn || !tag) return '';
+    const match = pgn.match(new RegExp(`\\[${tag} "([^"]*)"\\]`));
+    const value = match ? match[1] : '';
+    if (!value || value === '?' || value === '-') return '';
+    return value.trim();
+};
+
+const isMissingTitle = (value) => !value || value === '?' || value === '-';
+
+export const backfillTitlesFromPgn = async () => {
+    try {
+        await db.transaction('rw', db.games, async () => {
+            await db.games.toCollection().modify((g) => {
+                if (!g?.pgn) return;
+                const needsWhite = isMissingTitle(g.whiteTitle);
+                const needsBlack = isMissingTitle(g.blackTitle);
+                if (!needsWhite && !needsBlack) return;
+                if (needsWhite) {
+                    const whiteTitle = extractPgnTag(g.pgn, 'WhiteTitle');
+                    if (whiteTitle) g.whiteTitle = whiteTitle;
+                }
+                if (needsBlack) {
+                    const blackTitle = extractPgnTag(g.pgn, 'BlackTitle');
+                    if (blackTitle) g.blackTitle = blackTitle;
+                }
+            });
+        });
+    } catch (error) {
+        console.warn('Backfill titles failed:', error);
+    }
 };
 
 export const bulkUpsertGames = async (games) => {

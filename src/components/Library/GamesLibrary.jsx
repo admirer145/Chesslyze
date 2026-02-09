@@ -18,8 +18,15 @@ export const GamesLibrary = () => {
         perf: 'all',
         dateFrom: '',
         dateTo: '',
-        player: ''
+        player: '',
+        myRatingOp: 'any',
+        myRatingVal: '',
+        oppRatingOp: 'any',
+        oppRatingVal: '',
+        titledOnly: false,
+        botOnly: false
     });
+    const [sortBy, setSortBy] = useState('date');
 
     const heroUser = useMemo(() => localStorage.getItem('heroUser') || '', []);
     const heroLower = heroUser.toLowerCase();
@@ -35,12 +42,16 @@ export const GamesLibrary = () => {
         if (filters.dateFrom !== '') count++;
         if (filters.dateTo !== '') count++;
         if (filters.player !== '') count++;
+        if (filters.myRatingOp !== 'any' && filters.myRatingVal !== '') count++;
+        if (filters.oppRatingOp !== 'any' && filters.oppRatingVal !== '') count++;
+        if (filters.titledOnly) count++;
+        if (filters.botOnly) count++;
         setActiveFilterCount(count);
     }, [filters]);
 
     useEffect(() => {
         setPage(1);
-    }, [filters, sortOrder]);
+    }, [filters, sortOrder, sortBy]);
 
     const getHeroResult = (game) => {
         if (!heroUser) return null;
@@ -56,6 +67,27 @@ export const GamesLibrary = () => {
     };
 
     const games = useLiveQuery(async () => {
+        const normalizeTitle = (title) => (title || '').trim().toUpperCase();
+        const isBotTitle = (title) => normalizeTitle(title) === 'BOT';
+        const getMyRating = (game) => {
+            if (!heroUser) return null;
+            const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
+            return isWhite ? (game.whiteRating ?? game.whiteElo) : (game.blackRating ?? game.blackElo);
+        };
+        const getOppRating = (game) => {
+            if (!heroUser) return null;
+            const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
+            return isWhite ? (game.blackRating ?? game.blackElo) : (game.whiteRating ?? game.whiteElo);
+        };
+        const getOppTitle = (game) => {
+            if (!heroUser) {
+                return normalizeTitle(game.blackTitle || game.whiteTitle || '');
+            }
+            const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
+            const title = isWhite ? (game.blackTitle || '') : (game.whiteTitle || '');
+            return normalizeTitle(title);
+        };
+
         const all = await db.games.toArray();
         const filtered = all.filter((game) => {
             if (filters.result !== 'all') {
@@ -91,7 +123,7 @@ export const GamesLibrary = () => {
             }
 
             if (filters.player) {
-                const playerTarget = `${game.white || ''} ${game.black || ''}`.toLowerCase();
+                const playerTarget = `${game.whiteTitle || ''} ${game.white || ''} ${game.blackTitle || ''} ${game.black || ''}`.toLowerCase();
                 if (!playerTarget.includes(filters.player.toLowerCase())) return false;
             }
 
@@ -100,6 +132,33 @@ export const GamesLibrary = () => {
                 const isBlack = game.black?.toLowerCase() === heroUser.toLowerCase();
                 if (filters.color === 'white' && !isWhite) return false;
                 if (filters.color === 'black' && !isBlack) return false;
+            }
+
+            if (filters.myRatingOp !== 'any' && filters.myRatingVal !== '') {
+                const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
+                const myRating = isWhite ? (game.whiteRating ?? game.whiteElo) : (game.blackRating ?? game.blackElo);
+                const target = Number(filters.myRatingVal);
+                if (!Number.isFinite(target) || typeof myRating !== 'number') return false;
+                if (filters.myRatingOp === 'eq' && myRating !== target) return false;
+                if (filters.myRatingOp === 'gte' && myRating < target) return false;
+                if (filters.myRatingOp === 'lte' && myRating > target) return false;
+            }
+
+            if (filters.oppRatingOp !== 'any' && filters.oppRatingVal !== '') {
+                const oppRating = getOppRating(game);
+                const target = Number(filters.oppRatingVal);
+                if (!Number.isFinite(target) || typeof oppRating !== 'number') return false;
+                if (filters.oppRatingOp === 'eq' && oppRating !== target) return false;
+                if (filters.oppRatingOp === 'gte' && oppRating < target) return false;
+                if (filters.oppRatingOp === 'lte' && oppRating > target) return false;
+            }
+
+            if (filters.botOnly) {
+                const oppTitle = getOppTitle(game);
+                if (!isBotTitle(oppTitle)) return false;
+            } else if (filters.titledOnly) {
+                const oppTitle = getOppTitle(game);
+                if (!oppTitle || isBotTitle(oppTitle)) return false;
             }
 
             const gameDate = new Date(game.date || game.timestamp || 0);
@@ -116,10 +175,44 @@ export const GamesLibrary = () => {
             return true;
         });
 
-        const sorted = filtered.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-        if (sortOrder === 'asc') sorted.reverse();
+        const titleRank = (title) => {
+            const map = {
+                GM: 1,
+                IM: 2,
+                WGM: 3,
+                FM: 4,
+                WIM: 5,
+                CM: 6,
+                WFM: 7,
+                WCM: 8,
+                NM: 9,
+                WNM: 10,
+                BOT: 99
+            };
+            return map[normalizeTitle(title)] || 100;
+        };
+
+        const getSortValue = (game) => {
+            if (sortBy === 'myRating') return getMyRating(game);
+            if (sortBy === 'oppRating') return getOppRating(game);
+            if (sortBy === 'oppTitle') return titleRank(getOppTitle(game));
+            return new Date(game.date || 0).getTime();
+        };
+
+        const sorted = filtered.sort((a, b) => {
+            const aVal = getSortValue(a);
+            const bVal = getSortValue(b);
+            if (aVal == null && bVal == null) return 0;
+            if (aVal == null) return 1;
+            if (bVal == null) return -1;
+            if (aVal < bVal) return -1;
+            if (aVal > bVal) return 1;
+            return 0;
+        });
+
+        if (sortOrder === 'desc') sorted.reverse();
         return sorted;
-    }, [filters, heroUser, sortOrder]);
+    }, [filters, heroUser, sortOrder, sortBy]);
 
     const pageSize = 24;
     const totalPages = games ? Math.max(1, Math.ceil(games.length / pageSize)) : 1;
@@ -140,7 +233,13 @@ export const GamesLibrary = () => {
             perf: 'all',
             dateFrom: '',
             dateTo: '',
-            player: ''
+            player: '',
+            myRatingOp: 'any',
+            myRatingVal: '',
+            oppRatingOp: 'any',
+            oppRatingVal: '',
+            titledOnly: false,
+            botOnly: false
         };
         setFilters({ ...filters, [key]: defaults[key] });
     };
@@ -205,7 +304,7 @@ export const GamesLibrary = () => {
                         <input
                             value={filters.player}
                             onChange={(e) => setFilters({ ...filters, player: e.target.value })}
-                            placeholder="Search opponents or players..."
+                            placeholder="Search opponents, titles..."
                         />
                         {filters.player && (
                             <button onClick={() => clearFilter('player')} aria-label="Clear search">
@@ -284,6 +383,21 @@ export const GamesLibrary = () => {
                                 </button>
                             ))}
                         </div>
+
+                        <div className="filter-group">
+                            <button
+                                className={`pill ${filters.titledOnly ? 'pill--active' : ''}`}
+                                onClick={() => setFilters({ ...filters, titledOnly: !filters.titledOnly })}
+                            >
+                                Titled Only
+                            </button>
+                            <button
+                                className={`pill pill--bot ${filters.botOnly ? 'pill--active' : ''}`}
+                                onClick={() => setFilters({ ...filters, botOnly: !filters.botOnly })}
+                            >
+                                Bots
+                            </button>
+                        </div>
                     </div>
                 </section>
 
@@ -300,11 +414,20 @@ export const GamesLibrary = () => {
                     </div>
                     <div className="meta-right">
                         <div className="meta-sort">
-                            <label>Sort</label>
+                            <label>Sort By</label>
+                            <div className="select-wrap">
+                                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                                    <option value="date">Date</option>
+                                    <option value="myRating">My Rating</option>
+                                    <option value="oppRating">Opponent Rating</option>
+                                    <option value="oppTitle">Opponent Title</option>
+                                </select>
+                                <ChevronDown size={14} />
+                            </div>
                             <div className="select-wrap">
                                 <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
-                                    <option value="desc">Newest</option>
-                                    <option value="asc">Oldest</option>
+                                    <option value="desc">High to Low</option>
+                                    <option value="asc">Low to High</option>
                                 </select>
                                 <ChevronDown size={14} />
                             </div>
@@ -323,6 +446,19 @@ export const GamesLibrary = () => {
                             const status = game.analysisStatus || (game.analyzed ? 'completed' : 'idle');
                             const whiteName = typeof game.white === 'string' ? game.white : game.white?.name || 'White';
                             const blackName = typeof game.black === 'string' ? game.black : game.black?.name || 'Black';
+                            const whiteTitle = (game.whiteTitle || '').trim();
+                            const blackTitle = (game.blackTitle || '').trim();
+                            const renderName = (title, name) => {
+                                const badge = title?.toUpperCase() === 'BOT'
+                                    ? <span className="title-badge title-badge--bot">BOT</span>
+                                    : (title ? <span className="title-badge">{title}</span> : null);
+                                return (
+                                    <span className="player__identity">
+                                        {badge}
+                                        <span className="player__name-text">{name}</span>
+                                    </span>
+                                );
+                            };
                             const isHeroWhite = heroLower && whiteName.toLowerCase() === heroLower;
                             const isHeroBlack = heroLower && blackName.toLowerCase() === heroLower;
                             const whiteRating = game.whiteElo || game.whiteRating || '';
@@ -336,12 +472,12 @@ export const GamesLibrary = () => {
                                             <div className="game-card__players">
                                                 <div className={`player ${isHeroWhite ? 'player--hero' : ''}`}>
                                                     <span className="player__color">White</span>
-                                                    <span className="player__name">{whiteName}</span>
+                                                    {renderName(whiteTitle, whiteName)}
                                                     {whiteRating && <span className="player__rating">{whiteRating}</span>}
                                                 </div>
                                                 <div className={`player ${isHeroBlack ? 'player--hero' : ''}`}>
                                                     <span className="player__color">Black</span>
-                                                    <span className="player__name">{blackName}</span>
+                                                    {renderName(blackTitle, blackName)}
                                                     {blackRating && <span className="player__rating">{blackRating}</span>}
                                                 </div>
                                             </div>
@@ -392,7 +528,8 @@ export const GamesLibrary = () => {
                         <div className="empty-actions">
                             <button
                                 onClick={() => setFilters({
-                                    result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: ''
+                                    result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: '',
+                                    myRatingOp: 'any', myRatingVal: '', oppRatingOp: 'any', oppRatingVal: '', titledOnly: false, botOnly: false
                                 })}
                                 className="btn-secondary"
                             >
@@ -499,10 +636,87 @@ export const GamesLibrary = () => {
                         </div>
 
                         <div className="drawer-section">
+                            <label>My Rating</label>
+                            <div className="drawer-grid">
+                                <div className="drawer-input">
+                                    <select
+                                        value={filters.myRatingOp}
+                                        onChange={(e) => setFilters({ ...filters, myRatingOp: e.target.value })}
+                                    >
+                                        <option value="any">Any</option>
+                                        <option value="eq">Equal</option>
+                                        <option value="gte">Greater or equal</option>
+                                        <option value="lte">Less or equal</option>
+                                    </select>
+                                </div>
+                                <div className="drawer-input">
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        placeholder="Rating"
+                                        value={filters.myRatingVal}
+                                        onChange={(e) => setFilters({ ...filters, myRatingVal: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="drawer-section">
+                            <label>Opponent Rating</label>
+                            <div className="drawer-grid">
+                                <div className="drawer-input">
+                                    <select
+                                        value={filters.oppRatingOp}
+                                        onChange={(e) => setFilters({ ...filters, oppRatingOp: e.target.value })}
+                                    >
+                                        <option value="any">Any</option>
+                                        <option value="eq">Equal</option>
+                                        <option value="gte">Greater or equal</option>
+                                        <option value="lte">Less or equal</option>
+                                    </select>
+                                </div>
+                                <div className="drawer-input">
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        placeholder="Rating"
+                                        value={filters.oppRatingVal}
+                                        onChange={(e) => setFilters({ ...filters, oppRatingVal: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="drawer-section">
+                            <label>Titled Opponents</label>
+                            <div className="drawer-input drawer-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={filters.titledOnly}
+                                    onChange={(e) => setFilters({ ...filters, titledOnly: e.target.checked })}
+                                />
+                                <span>Only games vs titled players (GM/IM/FM/WGM etc.)</span>
+                            </div>
+                        </div>
+
+                        <div className="drawer-section">
+                            <label>Bot Opponents</label>
+                            <div className="drawer-input drawer-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={filters.botOnly}
+                                    onChange={(e) => setFilters({ ...filters, botOnly: e.target.checked })}
+                                />
+                                <span>Only games vs bots (BOT)</span>
+                            </div>
+                        </div>
+
+                        <div className="drawer-section">
                             <label>Quick Reset</label>
                             <button
                                 onClick={() => setFilters({
-                                    result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: ''
+                                    result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: '',
+                                    myRatingOp: 'any', myRatingVal: '', oppRatingOp: 'any', oppRatingVal: '', titledOnly: false, botOnly: false
                                 })}
                                 className="btn-secondary w-full"
                             >

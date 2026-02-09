@@ -330,6 +330,18 @@ export const processGame = async (gameId) => {
     const deepDepthRaw = Number.isNaN(deepDepthSetting) ? 0 : deepDepthSetting;
     const deepDepth = Math.max(0, Math.min(60, deepDepthRaw));
 
+    // Performance Settings
+    const hash = parseInt(localStorage.getItem('engineHash') || '32', 10);
+    const threads = parseInt(localStorage.getItem('engineThreads') || '1', 10);
+    const useNNUE = localStorage.getItem('engineUseNNUE') !== 'false'; // Default to true
+
+    // Ensure engine options are up to date
+    engine.setOptions([
+        { name: 'Hash', value: hash },
+        { name: 'Threads', value: threads },
+        { name: 'Use NNUE', value: useNNUE }
+    ]);
+
     const safeAnalyze = async (fen, opts) => {
         try {
             return await engine.analyze(fen, opts);
@@ -351,12 +363,7 @@ export const processGame = async (gameId) => {
 
     try {
         for (let i = 0; i < history.length; i++) {
-            if (i % 2 === 0) {
-                await db.games.update(gameId, {
-                    analysisHeartbeatAt: new Date().toISOString(),
-                    analysisProgress: Math.round((i / Math.max(1, history.length)) * 100)
-                });
-            }
+
             const move = history[i];
             const fenBefore = chess.fen();
             const sideToMove = chess.turn(); // 'w' or 'b'
@@ -544,13 +551,12 @@ export const processGame = async (gameId) => {
                 bookMove: isBookMove
             });
 
-            if (i % 10 === 0) {
-                await db.games.update(gameId, {
-                    analysisHeartbeatAt: new Date().toISOString(),
-                    analysisLog,
-                    analyzed: true
-                });
-            }
+            // Save progress every move so UI updates in real-time
+            await db.games.update(gameId, {
+                analysisHeartbeatAt: new Date().toISOString(),
+                analysisLog,
+                analysisProgress: Math.round(((i + 1) / Math.max(1, history.length)) * 100)
+            });
 
             const tags = [
                 classification,

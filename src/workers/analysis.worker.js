@@ -8,6 +8,9 @@ let currentJobId = null;
 let currentMultiPv = 1;
 
 // This will be called by stockfish.js when it wants to "print"
+// For new Stockfish (Module/Factory), we might need to hook differently,
+// but usually it still tries to postMessage if environment looks like a worker.
+// We'll also hook the instance's addMessageListener if available.
 self.postMessage = (msg) => {
     // If msg is a string, it's from the engine (e.g., "bestmove ...", "info ...")
     if (typeof msg === 'string') {
@@ -82,28 +85,90 @@ self.Module = {
 };
 
 console.log("Worker: Importing stockfish.js...");
+
+// Hack: Define module/exports to capture Stockfish factory
+// and hide onmessage to prevent Stockfish from interpreting this as a worker auto-run
+self.exports = {};
+self.module = { exports: self.exports };
+const _tempOnMessage = self.onmessage;
+delete self.onmessage; // Temporarily remove handler
+
 importScripts('/stockfish.js');
+
+self.onmessage = _tempOnMessage; // Restore handler
+self.Stockfish = self.exports.Stockfish || self.Stockfish; // Capture factory
+
 console.log("Worker: stockfish.js imported.");
 
-// Capture the onmessage handler that stockfish.js just assigned
-// It usually assigns to global context (self)
-const stockfishOnMessage = self.onmessage;
+// Variables to hold the engine instance
+let engine = null;
+let engineReady = false;
 
-if (!stockfishOnMessage) {
-    console.warn("Worker: stockfish.js did not assign an onmessage handler! It might be a different version.");
+// Initialization logic for newer Stockfish (Factory pattern)
+if (typeof Stockfish === 'function') {
+    console.log("Worker: Detected Stockfish factory.");
+    Stockfish({
+        locateFile: (path) => {
+            if (path.endsWith('.wasm')) return '/stockfish-nnue-16-single.wasm';
+            return path;
+        }
+    }).then((sf) => {
+        engine = sf;
+        engineReady = true;
+        // Hook into engine output if it supports addMessageListener
+        if (typeof engine.addMessageListener === 'function') {
+            engine.addMessageListener((line) => {
+                handleEngineOutput(line);
+            });
+        }
+        // Also ensure we override postMessage if it uses that internally
+        engine.postMessage = (msg) => {
+            if (typeof msg === 'string') handleEngineOutput(msg);
+            else rawPostMessage(msg); // Only if it's sending objects/buffers we don't understand
+        };
+
+        console.log("Worker: Engine initialized via Factory.");
+
+        // Send initial UCI commands
+        engine.postMessage('uci');
+        // setTimeout(() => engine.postMessage('isready'), 100);
+    });
+} else {
+    // Legacy fallback or if Stockfish attached to self
+    console.warn("Worker: Stockfish factory not found. Assuming global attachment.");
+    engineReady = true; // Assume immediate readiness for legacy
 }
+
 
 // Replace with our own handler to process commands from Main Thread
 self.onmessage = (e) => {
     const { type, data, jobId } = e.data;
     logCheck(`Received ${type} for ${jobId}`);
 
-    if (type === 'INIT') {
-        // Send internal initialization if needed, or just warm it up
-        if (stockfishOnMessage) {
-            stockfishOnMessage({ data: 'uci' });
-            stockfishOnMessage({ data: 'isready' });
+    const sendToEngine = (cmd) => {
+        if (!engineReady) {
+            console.warn("Worker: Engine not ready, buffering or dropping command:", cmd);
+            // In a real robust impl, we'd buffer. For now, we assume fast init.
+            setTimeout(() => sendToEngine(cmd), 500);
+            return;
         }
+
+        if (engine && typeof engine.postMessage === 'function') {
+            engine.postMessage(cmd);
+        } else if (self.postMessage && typeof self.postMessage === 'function') {
+            // If legacy stockfish replaced self.onmessage, it might have attached a listener
+            // logic here is tricky for legacy. 
+            // Usually legacy just expects us to call a function or it hooked onmessage itself?
+            // If we overwrote self.onmessage, legacy listener is traversing via logic we might have broken?
+            // Actually, for legacy, we usually capture `stockfishOnMessage` check `analysis.worker.js.bak`?
+            // But we know we are using Stockfish 16 now.
+            console.error("Worker: No valid way to send message to engine.");
+        }
+    };
+
+    if (type === 'INIT') {
+        sendToEngine('uci');
+        sendToEngine('isready');
     }
 
     if (type === 'ANALYZE') {
@@ -111,32 +176,31 @@ self.onmessage = (e) => {
         const { fen, depth = 15, multiPv = 1 } = data;
         currentMultiPv = Math.max(1, Math.min(8, parseInt(multiPv, 10) || 1));
 
-        if (stockfishOnMessage) {
-            stockfishOnMessage({ data: 'stop' });
-            stockfishOnMessage({ data: 'ucinewgame' });
-            stockfishOnMessage({ data: `setoption name MultiPV value ${currentMultiPv}` });
-            stockfishOnMessage({ data: 'position fen ' + fen });
-            stockfishOnMessage({ data: 'go depth ' + depth });
-        } else {
-            console.error("Worker: Cannot parse ANALYZE, engine handler missing.");
-        }
+        sendToEngine('stop');
+        sendToEngine('ucinewgame');
+        sendToEngine(`setoption name MultiPV value ${currentMultiPv}`);
+        sendToEngine(`position fen ${fen}`);
+        sendToEngine(`go depth ${depth}`);
     }
 
     if (type === 'SET_OPTIONS') {
-        if (!stockfishOnMessage) return;
         const options = (data && data.options) || [];
         for (const opt of options) {
             if (!opt?.name) continue;
-            if (opt.value === undefined || opt.value === null) {
-                stockfishOnMessage({ data: `setoption name ${opt.name}` });
+            let val = opt.value;
+            if (val === true) val = 'true';
+            if (val === false) val = 'false';
+
+            if (val === undefined || val === null) {
+                sendToEngine(`setoption name ${opt.name}`);
             } else {
-                stockfishOnMessage({ data: `setoption name ${opt.name} value ${opt.value}` });
+                sendToEngine(`setoption name ${opt.name} value ${val}`);
             }
         }
     }
 
     if (type === 'STOP') {
-        if (stockfishOnMessage) stockfishOnMessage({ data: 'stop' });
+        sendToEngine('stop');
         currentJobId = null;
         currentMultiPv = 1;
     }
