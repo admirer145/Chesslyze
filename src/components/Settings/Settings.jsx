@@ -29,6 +29,10 @@ export const Settings = () => {
         // Ensure worker initialized so we can read id name / caps.
         engine.init().then(() => setEngineInfo(engine.getInfo())).catch(() => { });
         const t = setTimeout(() => setEngineInfo(engine.getInfo()), 400);
+
+        // Auto-migrate idle to pending per user request - REMOVED to allow distinction
+        // db.games.where('analysisStatus').equals('idle').modify({ analysisStatus: 'pending' }).catch(() => {});
+
         return () => clearTimeout(t);
     }, []);
 
@@ -38,14 +42,38 @@ export const Settings = () => {
         let analyzed = 0;
         let pending = 0;
         let ignored = 0;
+        let analyzing = 0;
+        let failed = 0;
         games.forEach((g) => {
             const isHero = heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser);
             if (isHero) heroTotal += 1;
-            if (g.analysisStatus === 'pending') pending += 1;
-            if (g.analysisStatus === 'ignored') ignored += 1;
-            if (g.analyzed) analyzed += 1;
+
+            if (g.analysisStatus === 'analyzing') {
+                analyzing += 1;
+            } else if (g.analysisStatus === 'failed') {
+                failed += 1;
+            } else if (g.analysisStatus === 'ignored') {
+                ignored += 1;
+            } else if (g.analysisStatus === 'completed' || (g.analyzed && g.analysisStatus !== 'failed')) {
+                // Completed or Legacy Analyzed (excluding failed)
+                analyzed += 1;
+            } else if (g.analysisStatus === 'pending') {
+                // Explicitly pending
+                pending += 1;
+            } else {
+                // No status = Idle
+                // We track this as part of "pending" in the summary object if we want generic "unanalyzed", 
+                // but let's separate them if we want to show distinct stats.
+                // For now, let's keep the return object simple or add 'idle'.
+                // The user wants to differentiate.
+            }
         });
-        return { total: games.length, heroTotal, analyzed, pending, ignored };
+
+        // Recalculate generic "idle" as total - (analyzed + pending + analyzing + failed + ignored)
+        // Or just count them explicitly:
+        const idle = games.length - (analyzed + pending + analyzing + failed + ignored);
+
+        return { total: games.length, heroTotal, analyzed, pending, ignored, analyzing, failed, idle };
     }, [games, heroUser]);
 
     const handleAnalyzeAll = async () => {
@@ -76,9 +104,9 @@ export const Settings = () => {
         try {
             engine.stop();
             engine.terminate();
-            await db.games.where('analysisStatus').equals('pending').modify({ analysisStatus: 'idle' });
-            await db.games.where('analysisStatus').equals('analyzing').modify({ analysisStatus: 'failed', analysisStartedAt: null, analysisHeartbeatAt: null });
-            setStatus({ type: 'success', message: 'Analysis stopped. Pending queue cleared and analyzing games reset.' });
+            // We do NOT reset pending games to idle anymore, they remain pending to be picked up next time.
+            await db.games.where('analysisStatus').equals('analyzing').modify({ analysisStatus: 'pending', analysisStartedAt: null, analysisHeartbeatAt: null });
+            setStatus({ type: 'success', message: 'Analysis stopped. Analyzing games reset to pending.' });
         } catch (err) {
             console.error(err);
             setStatus({ type: 'error', message: 'Failed to stop analysis.' });
@@ -235,7 +263,7 @@ export const Settings = () => {
                     <div className="text-xs text-muted">Hero: {heroUser || 'Not set'}</div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="p-4 rounded-lg border bg-panel text-center">
                         <div className="text-xs text-muted uppercase tracking-wider mb-1">Total Games</div>
                         <div className="text-2xl font-bold text-primary">{stats.total}</div>
@@ -245,8 +273,24 @@ export const Settings = () => {
                         <div className="text-2xl font-bold text-primary">{stats.heroTotal}</div>
                     </div>
                     <div className="p-4 rounded-lg border bg-panel text-center">
+                        <div className="text-xs text-muted uppercase tracking-wider mb-1">Analyzed</div>
+                        <div className="text-2xl font-bold text-green-400">{stats.analyzed}</div>
+                    </div>
+                    <div className="p-4 rounded-lg border bg-panel text-center">
                         <div className="text-xs text-muted uppercase tracking-wider mb-1">Pending</div>
-                        <div className="text-2xl font-bold text-primary">{stats.pending}</div>
+                        <div className="text-2xl font-bold text-orange-400">{stats.pending}</div>
+                    </div>
+                    <div className="p-4 rounded-lg border bg-panel text-center">
+                        <div className="text-xs text-muted uppercase tracking-wider mb-1">Idle</div>
+                        <div className="text-2xl font-bold text-secondary">{stats.idle}</div>
+                    </div>
+                    <div className="p-4 rounded-lg border bg-panel text-center">
+                        <div className="text-xs text-muted uppercase tracking-wider mb-1">Analyzing</div>
+                        <div className="text-2xl font-bold text-blue-400">{stats.analyzing}</div>
+                    </div>
+                    <div className="p-4 rounded-lg border bg-panel text-center">
+                        <div className="text-xs text-muted uppercase tracking-wider mb-1">Failed</div>
+                        <div className="text-2xl font-bold text-rose-400">{stats.failed}</div>
                     </div>
                 </div>
 

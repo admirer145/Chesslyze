@@ -63,9 +63,26 @@ export const GamesLibrary = () => {
                 if (!heroResult || heroResult !== filters.result) return false;
             }
             if (filters.analyzed !== 'all') {
-                const analyzed = game.analysisStatus === 'completed' || !!game.analyzed;
-                if (filters.analyzed === 'yes' && !analyzed) return false;
-                if (filters.analyzed === 'no' && analyzed) return false;
+                const status = game.analysisStatus;
+
+                // Precedence: Analyzing > Failed > Completed > Pending > Idle
+                const isAnalyzing = status === 'analyzing';
+                const isFailed = status === 'failed';
+
+                // Completed only if not analyzing/failed AND (explicitly completed OR legacy analyzed flag)
+                const isCompleted = !isAnalyzing && !isFailed && (status === 'completed' || !!game.analyzed);
+
+                // Pending = Explicitly pending (in queue)
+                const isPending = !isAnalyzing && !isFailed && !isCompleted && status === 'pending';
+
+                // Idle = No status and not analyzed (or explicitly idle)
+                const isIdle = !isAnalyzing && !isFailed && !isCompleted && !isPending;
+
+                if (filters.analyzed === 'yes' && !isCompleted) return false;
+                if (filters.analyzed === 'no' && !isPending) return false;
+                if (filters.analyzed === 'idle' && !isIdle) return false;
+                if (filters.analyzed === 'analyzing' && !isAnalyzing) return false;
+                if (filters.analyzed === 'failed' && !isFailed) return false;
             }
             if (filters.perf !== 'all' && (game.perf || '').toLowerCase() !== filters.perf) return false;
             if (filters.opening) {
@@ -131,10 +148,10 @@ export const GamesLibrary = () => {
     const formatDate = (dateStr) => {
         if (!dateStr) return 'Unknown';
         const date = new Date(dateStr);
-        return date.toLocaleDateString('en-US', { 
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric' 
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
         });
     };
 
@@ -253,7 +270,10 @@ export const GamesLibrary = () => {
                             {[
                                 { v: 'all', l: 'All Status' },
                                 { v: 'yes', l: 'Analyzed' },
-                                { v: 'no', l: 'Pending' }
+                                { v: 'no', l: 'Pending' },
+                                { v: 'idle', l: 'Idle' },
+                                { v: 'analyzing', l: 'Analyzing' },
+                                { v: 'failed', l: 'Failed' }
                             ].map((o) => (
                                 <button
                                     key={o.v}
@@ -338,8 +358,8 @@ export const GamesLibrary = () => {
                                             <span className="meta-sep">•</span>
                                             <span className="meta-item">{formatDate(game.date)}</span>
                                             <span className="meta-sep">•</span>
-                                            <span className={`status-pill ${status === 'completed' ? 'status-ok' : 'status-pending'}`}>
-                                                {status === 'completed' ? 'Analyzed' : 'Pending'}
+                                            <span className={`status-pill status-${status === 'completed' ? 'ok' : status}`}>
+                                                {status.charAt(0).toUpperCase() + status.slice(1)}
                                             </span>
                                         </div>
 

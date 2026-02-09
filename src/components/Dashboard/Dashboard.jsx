@@ -105,7 +105,7 @@ export const Dashboard = () => {
         };
     });
 
-    const queueCount = useLiveQuery(() => db.games.filter(g => g.analysisStatus === 'pending' || (!g.analyzed && !g.analysisStatus)).count());
+    const queueCount = useLiveQuery(() => db.games.filter(g => g.analysisStatus === 'pending' || g.analysisStatus === 'idle' || (!g.analyzed && !g.analysisStatus)).count());
     const failedCount = useLiveQuery(() => db.games.filter(g => g.analysisStatus === 'failed').count());
 
     const [moveIndex, setMoveIndex] = useState(-1); // -1 = start
@@ -127,7 +127,7 @@ export const Dashboard = () => {
         if (typeof window === 'undefined') return true;
         return window.innerWidth >= 1100;
     });
-    
+
     const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false);
     const [lastAnalyzeMode, setLastAnalyzeMode] = useState(() => localStorage.getItem('dashboardAnalyzeMode') || 'stockfish');
 
@@ -594,7 +594,9 @@ export const Dashboard = () => {
                                                 ? (aiAnalysis ? 'Open AI Coach' : 'Analyze (AI)')
                                                 : (activeGame.analysisStatus === 'analyzing'
                                                     ? 'Analyzing...'
-                                                    : (activeGame.analyzed ? 'Re-analyze (Stockfish)' : 'Analyze (Stockfish)'))}
+                                                    : (activeGame.analysisStatus === 'failed'
+                                                        ? 'Retry Analysis (Stockfish)'
+                                                        : (activeGame.analyzed ? 'Re-analyze (Stockfish)' : 'Analyze (Stockfish)')))}
                                         </button>
                                         <button
                                             onClick={(e) => {
