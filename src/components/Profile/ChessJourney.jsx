@@ -2,6 +2,7 @@ import React from 'react';
 import { useJourneyData } from '../../hooks/useJourneyData';
 import { Trophy, Zap, Shield, Flame, Activity, Filter, Share2, Settings, Download, Search } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid, LineChart, Line } from 'recharts';
+import { useNavigate } from 'react-router-dom';
 
 const SummaryCard = ({ label, value, trend }) => (
     <div className="journey-card">
@@ -31,6 +32,7 @@ export const ChessJourney = () => {
         summary,
         ratingHistory,
         perfCounts,
+        perfStats,
         accuracySeries,
         accuracyByPerf,
         openings,
@@ -40,6 +42,48 @@ export const ChessJourney = () => {
     } = useJourneyData();
 
     const heroInitial = summary?.heroUser ? summary.heroUser.charAt(0).toUpperCase() : '?';
+    const navigate = useNavigate();
+
+    const handleShare = async () => {
+        const shareData = {
+            title: 'Chess Journey',
+            text: 'Check out my Chess Journey stats on ReelChess.',
+            url: window.location.href
+        };
+        try {
+            if (navigator.share) {
+                await navigator.share(shareData);
+            } else if (navigator.clipboard) {
+                await navigator.clipboard.writeText(shareData.url);
+                alert('Link copied to clipboard.');
+            }
+        } catch {
+            // ignore
+        }
+    };
+
+    const handleExport = () => {
+        const payload = {
+            generatedAt: new Date().toISOString(),
+            filters,
+            summary,
+            ratingHistory,
+            perfCounts,
+            accuracySeries,
+            accuracyByPerf,
+            openings,
+            openingEvolution,
+            topVictories,
+            favoriteGames
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'chess-journey-export.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    };
 
     if (!summary) {
         return (
@@ -64,15 +108,15 @@ export const ChessJourney = () => {
                     <p>Track progress across variants, openings, and accuracy with live analysis updates.</p>
                 </div>
                 <div className="journey-header__actions">
-                    <button className="btn-chip">
+                    <button className="btn-chip" onClick={handleShare}>
                         <Share2 size={16} />
                         Share
                     </button>
-                    <button className="btn-chip">
+                    <button className="btn-chip" onClick={handleExport}>
                         <Download size={16} />
                         Export
                     </button>
-                    <button className="btn-chip">
+                    <button className="btn-chip" onClick={() => navigate('/settings')}>
                         <Settings size={16} />
                         Settings
                     </button>
@@ -174,6 +218,46 @@ export const ChessJourney = () => {
                                 />
                             </AreaChart>
                         </ResponsiveContainer>
+                    )}
+                </div>
+            </section>
+
+            <section className="journey-variants">
+                <div className="section-header">
+                    <div>
+                        <h2>Variant Performance</h2>
+                        <p>Peak and current ratings by format.</p>
+                    </div>
+                </div>
+                <div className="variant-grid">
+                    {perfStats.length === 0 ? (
+                        <div className="list-empty">No games found for variant stats.</div>
+                    ) : (
+                        perfStats.map((row) => (
+                            <div key={row.perf} className="variant-card">
+                                <div className="variant-card__title">{row.perf}</div>
+                                <div className="variant-card__row">
+                                    <span>Games</span>
+                                    <strong>{row.total}</strong>
+                                </div>
+                                <div className="variant-card__row">
+                                    <span>Win Rate</span>
+                                    <strong>{row.winRate}%</strong>
+                                </div>
+                                <div className="variant-card__row">
+                                    <span>Peak</span>
+                                    <strong>{row.peak || '-'}</strong>
+                                </div>
+                                <div className="variant-card__row">
+                                    <span>Current</span>
+                                    <strong>{row.current || '-'}</strong>
+                                </div>
+                                <div className="variant-card__row">
+                                    <span>Avg Accuracy</span>
+                                    <strong>{row.avgAccuracy ? `${row.avgAccuracy}%` : '-'}</strong>
+                                </div>
+                            </div>
+                        ))
                     )}
                 </div>
             </section>

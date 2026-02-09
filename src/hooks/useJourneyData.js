@@ -203,6 +203,45 @@ export const useJourneyData = () => {
         return Object.values(map).sort((a, b) => b.count - a.count).slice(0, 8);
     }, [filteredGames]);
 
+    const perfStats = useMemo(() => {
+        const map = {};
+        filteredNoPerf.forEach((g) => {
+            if (!map[g.perf]) {
+                map[g.perf] = {
+                    perf: g.perf,
+                    total: 0,
+                    wins: 0,
+                    losses: 0,
+                    draws: 0,
+                    peak: 0,
+                    current: null,
+                    accuracyValues: []
+                };
+            }
+            const entry = map[g.perf];
+            entry.total += 1;
+            if (g.result === 'win') entry.wins += 1;
+            if (g.result === 'loss') entry.losses += 1;
+            if (g.result === 'draw') entry.draws += 1;
+            if (typeof g.heroRating === 'number') {
+                entry.peak = Math.max(entry.peak, g.heroRating);
+                entry.current = g.heroRating;
+            }
+            if (typeof g.accuracy === 'number') entry.accuracyValues.push(g.accuracy);
+        });
+
+        return Object.values(map)
+            .map((entry) => ({
+                perf: entry.perf,
+                total: entry.total,
+                winRate: entry.total ? Math.round((entry.wins / entry.total) * 100) : 0,
+                peak: entry.peak || null,
+                current: entry.current,
+                avgAccuracy: average(entry.accuracyValues)
+            }))
+            .sort((a, b) => b.total - a.total);
+    }, [filteredNoPerf]);
+
     const openingEvolution = useMemo(() => {
         const topNames = openings.map((o) => o.name);
         const buckets = {};
@@ -273,6 +312,7 @@ export const useJourneyData = () => {
         summary,
         ratingHistory,
         perfCounts,
+        perfStats,
         accuracySeries,
         accuracyByPerf,
         openings,

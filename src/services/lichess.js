@@ -42,6 +42,7 @@ const mapLichessGame = (game) => {
         pgn: pgn,
         timestamp: game.createdAt,
         variant: game.variant || 'standard',
+        rated: typeof game.rated === 'boolean' ? game.rated : null,
         tournament: game.tournament || '',
         analyzed: false,
         analysisStatus: 'idle'

@@ -84,6 +84,18 @@ db.version(13).stores({
     ai_analyses: '++id, gameId, promptVersion, createdAt'
 });
 
+db.version(14).stores({
+    games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority, rated, variant',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt'
+}).upgrade((tx) => {
+    return tx.table('games').toCollection().modify((g) => {
+        if (typeof g.rated === 'undefined') g.rated = null;
+        if (!g.variant) g.variant = 'standard';
+    });
+});
+
 export const saveAIAnalysis = async (gameId, analysisData, promptVersion = '1.0') => {
     const existing = await db.ai_analyses.where('gameId').equals(gameId).first();
     const record = {
