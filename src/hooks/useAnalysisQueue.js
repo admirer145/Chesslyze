@@ -10,7 +10,16 @@ export const useAnalysisQueue = () => {
     const [tick, setTick] = useState(0);
 
     useEffect(() => {
-        const id = setInterval(() => setTick((t) => (t + 1) % 1000000), 15000);
+        const id = setInterval(() => setTick((t) => (t + 1) % 1000000), 10000); // Check every 10s
+
+        // On mount, reset any games stuck in 'analyzing' state (e.g. from refresh/crash)
+        // so they can be picked up by the queue again.
+        db.games.filter(g => g.analysisStatus === 'analyzing').modify({
+            analysisStatus: 'pending',
+            analysisStartedAt: null,
+            analysisHeartbeatAt: null
+        }).catch(err => console.error("Failed to reset analyzing games:", err));
+
         return () => clearInterval(id);
     }, []);
 

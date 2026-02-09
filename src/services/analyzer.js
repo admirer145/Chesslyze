@@ -339,7 +339,8 @@ export const processGame = async (gameId) => {
     engine.setOptions([
         { name: 'Hash', value: hash },
         { name: 'Threads', value: threads },
-        { name: 'Use NNUE', value: useNNUE }
+        { name: 'Use NNUE', value: useNNUE },
+        { name: 'EvalFile', value: 'nn-5af11540bbfe.nnue' }
     ]);
 
     const safeAnalyze = async (fen, opts) => {
@@ -396,24 +397,41 @@ export const processGame = async (gameId) => {
             const pvLinesUi = pvLines.map(normalizeEvalLine).filter(Boolean);
 
             // 2. Identify User's Move
-            const userMoveUCI = move.from + move.to + (move.promotion || '');
+            const userMoveUCI = (move.from + move.to + (move.promotion || '')).toLowerCase();
 
             let classification = 'book';
             let evalDiff = 0;
             let myScoreAfter = scoreBeforeStm;
             let materialDelta = 0;
 
-            // 3. Evaluate after move (for all moves)
+            // Check if user's move was already analyzed in the main search (PV lines)
+            // `pvLines` contains raw engine output (Side-to-Move POV)
+            const userLine = pvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveUCI);
+            const userScoreFromLines = typeof userLine?.score === 'number' ? userLine.score : null;
+
+            // 3. Evaluate after move
             chess.move(move);
             const fenAfter = chess.fen();
-            await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
-            const resultAfter = await safeAnalyze(fenAfter, { depth: shallowDepth, multiPv: 1 });
+
+            // OPTIMIZATION: If we found the move in the main search (depth N), 
+            // use that score instead of re-analyzing at shallow depth (depth N-4).
+            // This skips a redundant engine call for good/decent moves.
+            if (userScoreFromLines !== null) {
+                myScoreAfter = userScoreFromLines;
+                // Still update heartbeat to prevent timeouts during long processing loops
+                await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
+            } else {
+                // Not found in top lines (likely a mistake/blunder or MultiPV was low).
+                // We must analyze the resulting position to know how bad it is.
+                await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
+                const resultAfter = await safeAnalyze(fenAfter, { depth: shallowDepth, multiPv: 1 });
+                const scoreAfter = resultAfter.evaluation.score || 0;
+                // After the move, side-to-move flips, so negate to keep perspective of the player who just moved.
+                myScoreAfter = -scoreAfter;
+            }
+
             const chessAfter = new Chess(fenAfter);
             chess.undo();
-
-            const scoreAfter = resultAfter.evaluation.score || 0;
-            // After the move, side-to-move flips, so negate to keep perspective consistent with scoreBefore.
-            myScoreAfter = -scoreAfter;
 
             const beforeMaterial = materialScore(fenBefore);
             const afterMaterial = materialScore(fenAfter);
@@ -425,16 +443,14 @@ export const processGame = async (gameId) => {
 
             const phase = getGamePhase(ply, materialTotal(fenBefore));
 
-            // CP Loss: computed from side-to-move POV (so it's about how much the mover "lost").
-            const userMoveLower = userMoveUCI.toLowerCase();
-            const userLine = pvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveLower);
-            const userScoreFromLines = typeof userLine?.score === 'number' ? userLine.score : null;
-            evalDiff = Math.max(0, scoreBeforeStm - (userScoreFromLines ?? myScoreAfter));
+            // CP Loss
+            // If userScoreFromLines existed, it EQUALS myScoreAfter, so evalDiff = scoreBefore - myScoreAfter
+            evalDiff = Math.max(0, scoreBeforeStm - myScoreAfter);
 
             const bookMovesForFen = getBookMovesForFen(fenBefore) || [];
-            const isBookMove = phase === 'opening' && Array.isArray(bookMovesForFen) && bookMovesForFen.includes(userMoveUCI);
+            const isBookMove = phase === 'opening' && Array.isArray(bookMovesForFen) && bookMovesForFen.map(m => m.toLowerCase()).includes(userMoveUCI);
             const topLineMoves = pvLines.slice(0, Math.max(1, Math.min(3, multiPv))).map((l) => (typeof l?.pv === 'string' ? l.pv.split(' ')[0] : null)).filter(Boolean);
-            const isInTopLines = topLineMoves.some((m) => m.toLowerCase() === userMoveLower);
+            const isInTopLines = topLineMoves.some((m) => m.toLowerCase() === userMoveUCI);
 
             classification = getClassification({
                 evalDiff,
@@ -609,14 +625,26 @@ export const processGame = async (gameId) => {
         const isTimeout = msg.includes('timeout') || msg.includes('worker');
 
         if (isTimeout) {
-            console.log(`[Analyzer] Requeuing game ${gameId} due to timeout/engine error...`);
-            // Reset to pending so queue picks it up again
-            await db.games.update(gameId, {
-                analyzed: false,
-                analysisStatus: 'pending',
-                analysisStartedAt: null,
-                analysisHeartbeatAt: null
-            });
+            const retryCount = (game.analysisRetryCount || 0) + 1;
+            if (retryCount <= 3) {
+                console.log(`[Analyzer] Requeuing game ${gameId} due to timeout (Attempt ${retryCount}/3)...`);
+                // Reset to pending so queue picks it up again
+                await db.games.update(gameId, {
+                    analyzed: false,
+                    analysisStatus: 'pending',
+                    analysisStartedAt: null,
+                    analysisHeartbeatAt: null,
+                    analysisRetryCount: retryCount
+                });
+            } else {
+                console.error(`[Analyzer] Game ${gameId} failed after ${retryCount - 1} retries.`);
+                await db.games.update(gameId, {
+                    analyzed: true,
+                    analysisStatus: 'failed',
+                    analysisRetryCount: retryCount,
+                    analysisLog // Keep whatever log we have
+                });
+            }
             return;
         }
 

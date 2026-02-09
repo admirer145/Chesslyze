@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { LayoutDashboard, Import, Activity, BookOpen, Settings, ChevronLeft, ChevronRight, Zap, User, LayoutList } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAnalysisQueue } from '../hooks/useAnalysisQueue';
+import { db } from '../services/db';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 const NavItem = ({ to, icon: Icon, label, collapsed }) => {
     const location = useLocation();
@@ -23,7 +25,13 @@ const NavItem = ({ to, icon: Icon, label, collapsed }) => {
 };
 
 export const Layout = ({ children }) => {
-    const { isProcessing } = useAnalysisQueue();
+    // Ensure queue processor is running
+    useAnalysisQueue();
+
+    // Direct query for real-time UI status
+    const analyzingCount = useLiveQuery(() => db.games.filter(g => g.analysisStatus === 'analyzing').count()) || 0;
+    const isAnalyzing = analyzingCount > 0;
+
     const [collapsed, setCollapsed] = useState(false);
 
     return (
@@ -47,9 +55,9 @@ export const Layout = ({ children }) => {
 
                 <div className="flex items-center gap-4">
                     {/* Engine Status */}
-                    <div className={`flex items-center gap-2 text-xs px-2 py-1 rounded transition-colors ${isProcessing ? 'text-blue-400' : 'text-muted'}`} style={{ backgroundColor: isProcessing ? 'rgba(96, 165, 250, 0.1)' : 'transparent' }}>
-                        <Zap size={14} className={isProcessing ? 'fill-current' : ''} />
-                        <span>{isProcessing ? 'Engine Analyzing' : 'Engine Idle'}</span>
+                    <div className={`flex items-center gap-2 text-xs px-2 py-1 rounded transition-colors ${isAnalyzing ? 'text-blue-400' : 'text-muted'}`} style={{ backgroundColor: isAnalyzing ? 'rgba(96, 165, 250, 0.1)' : 'transparent' }}>
+                        <Zap size={14} className={isAnalyzing ? 'fill-current' : ''} />
+                        <span>{isAnalyzing ? `Analyzing (${analyzingCount})` : 'Engine Idle'}</span>
                     </div>
                 </div>
             </header>

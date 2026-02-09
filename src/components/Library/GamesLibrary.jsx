@@ -176,20 +176,21 @@ export const GamesLibrary = () => {
         });
 
         const titleRank = (title) => {
+            // Higher number = higher title. This keeps "Low to High" intuitive.
             const map = {
-                GM: 1,
-                IM: 2,
-                WGM: 3,
-                FM: 4,
-                WIM: 5,
-                CM: 6,
-                WFM: 7,
-                WCM: 8,
-                NM: 9,
-                WNM: 10,
-                BOT: 99
+                BOT: 0,
+                WCM: 1,
+                WFM: 2,
+                CM: 3,
+                WIM: 4,
+                WNM: 5,
+                NM: 6,
+                FM: 7,
+                WGM: 8,
+                IM: 9,
+                GM: 10
             };
-            return map[normalizeTitle(title)] || 100;
+            return map[normalizeTitle(title)] || -1;
         };
 
         const getSortValue = (game) => {

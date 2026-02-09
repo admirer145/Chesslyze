@@ -29,7 +29,7 @@ const logCheck = (msg) => {
 
 // Handler for parsing raw UCI output into structured messages
 const handleEngineOutput = (line) => {
-    logCheck("Engine Output: " + line);
+    // logCheck("Engine Output: " + line);
 
     if (line.startsWith('id name')) {
         const name = line.substring('id name'.length).trim();
@@ -72,6 +72,12 @@ const handleEngineOutput = (line) => {
             jobId: currentJobId,
             evaluation: { depth, score, mate, pv, multipv }
         });
+    } else if (line === 'uciok' || line === 'readyok') {
+        // Just log for now
+        // logCheck("Engine confirmed ready: " + line);
+    } else {
+        // Unknown or less important message
+        // logCheck("Ignored: " + line);
     }
 };
 
@@ -84,7 +90,7 @@ self.Module = {
     }
 };
 
-console.log("Worker: Importing stockfish.js...");
+// console.log("Worker: Importing stockfish.js...");
 
 // Hack: Define module/exports to capture Stockfish factory
 // and hide onmessage to prevent Stockfish from interpreting this as a worker auto-run
@@ -96,9 +102,20 @@ delete self.onmessage; // Temporarily remove handler
 importScripts('/stockfish.js');
 
 self.onmessage = _tempOnMessage; // Restore handler
-self.Stockfish = self.exports.Stockfish || self.Stockfish; // Capture factory
 
-console.log("Worker: stockfish.js imported.");
+// Capture factory checking multiple locations
+const exported = self.module.exports;
+// If module.exports is the function itself (common in some builds)
+if (typeof exported === 'function') {
+    self.Stockfish = exported;
+} else if (exported && typeof exported.Stockfish === 'function') {
+    self.Stockfish = exported.Stockfish;
+} else {
+    // Fallback to global or self.exports
+    self.Stockfish = self.exports.Stockfish || self.Stockfish;
+}
+
+// console.log("Worker: stockfish.js imported. Typeof Stockfish:", typeof self.Stockfish);
 
 // Variables to hold the engine instance
 let engine = null;
@@ -106,32 +123,59 @@ let engineReady = false;
 
 // Initialization logic for newer Stockfish (Factory pattern)
 if (typeof Stockfish === 'function') {
-    console.log("Worker: Detected Stockfish factory.");
+    // console.log("Worker: Detected Stockfish factory.");
     Stockfish({
         locateFile: (path) => {
             if (path.endsWith('.wasm')) return '/stockfish-nnue-16-single.wasm';
+            if (path.endsWith('.nnue')) return '/nn-5af11540bbfe.nnue';
             return path;
+        },
+        print: (text) => {
+            // console.log("SF STDOUT:", text);
+            handleEngineOutput(text);
+        },
+        printErr: (text) => {
+            // console.error("SF STDERR:", text);
+            rawPostMessage({ type: 'LOG', message: "SF STDERR: " + text });
         }
     }).then((sf) => {
         engine = sf;
         engineReady = true;
+
+        // console.log("Worker: Engine Object Keys:", Object.keys(engine));
+        // console.log("Worker: Engine postMessage type:", typeof engine.postMessage);
+        // console.log("Worker: Engine addMessageListener type:", typeof engine.addMessageListener);
+
         // Hook into engine output if it supports addMessageListener
         if (typeof engine.addMessageListener === 'function') {
+            // console.log("Worker: Adding message listener via API");
             engine.addMessageListener((line) => {
                 handleEngineOutput(line);
             });
         }
-        // Also ensure we override postMessage if it uses that internally
-        engine.postMessage = (msg) => {
-            if (typeof msg === 'string') handleEngineOutput(msg);
-            else rawPostMessage(msg); // Only if it's sending objects/buffers we don't understand
-        };
 
-        console.log("Worker: Engine initialized via Factory.");
+        // console.log("Worker: Engine initialized via Factory.");
+
+        // Ensure queue is running
+        if (typeof engine.unpauseQueue === 'function') {
+            console.log("Worker: Unpausing queue...");
+            engine.unpauseQueue();
+        }
 
         // Send initial UCI commands
-        engine.postMessage('uci');
-        // setTimeout(() => engine.postMessage('isready'), 100);
+        const sendParams = (cmd) => {
+            // console.log(`Worker: Sending '${cmd.trim()}'...`);
+            if (typeof engine.onCustomMessage === 'function') {
+                engine.onCustomMessage(cmd + '\n');
+            } else {
+                engine.postMessage(cmd + '\n');
+            }
+        };
+
+        sendParams('uci');
+    }).catch(err => {
+        console.error("Worker: Stockfish Factory Initialization Failed:", err);
+        rawPostMessage({ type: 'ERROR', error: "Engine Init Failed: " + err });
     });
 } else {
     // Legacy fallback or if Stockfish attached to self
@@ -140,28 +184,30 @@ if (typeof Stockfish === 'function') {
 }
 
 
-// Replace with our own handler to process commands from Main Thread
-self.onmessage = (e) => {
+// Debug: Check if something stole onmessage
+// console.log("Worker: onmessage status before hook:", self.onmessage);
+
+// Replace with addEventListener to avoid conflicts
+self.addEventListener('message', (e) => {
     const { type, data, jobId } = e.data;
-    logCheck(`Received ${type} for ${jobId}`);
+    // console.log(`Worker: Received Message ${type} (Job: ${jobId})`);
+    // logCheck(`Received ${type} for ${jobId}`);
 
     const sendToEngine = (cmd) => {
         if (!engineReady) {
             console.warn("Worker: Engine not ready, buffering or dropping command:", cmd);
-            // In a real robust impl, we'd buffer. For now, we assume fast init.
             setTimeout(() => sendToEngine(cmd), 500);
             return;
         }
 
-        if (engine && typeof engine.postMessage === 'function') {
-            engine.postMessage(cmd);
+        const msg = cmd + '\n';
+        if (engine && typeof engine.onCustomMessage === 'function') {
+            engine.onCustomMessage(msg);
+        } else if (engine && typeof engine.postMessage === 'function') {
+            engine.postMessage(msg);
         } else if (self.postMessage && typeof self.postMessage === 'function') {
-            // If legacy stockfish replaced self.onmessage, it might have attached a listener
-            // logic here is tricky for legacy. 
-            // Usually legacy just expects us to call a function or it hooked onmessage itself?
-            // If we overwrote self.onmessage, legacy listener is traversing via logic we might have broken?
-            // Actually, for legacy, we usually capture `stockfishOnMessage` check `analysis.worker.js.bak`?
-            // But we know we are using Stockfish 16 now.
+            // Fallback for some legacy environments
+            // But usually the above covering engine object is enough
             console.error("Worker: No valid way to send message to engine.");
         }
     };
@@ -204,4 +250,4 @@ self.onmessage = (e) => {
         currentJobId = null;
         currentMultiPv = 1;
     }
-};
+});

@@ -24,7 +24,7 @@ class EngineService {
                 const { type, jobId, evaluation, move, error, name, caps } = e.data;
 
                 // Debug log for worker messages (optional, ensure not too spammy)
-                // console.log("[EngineService] Message from worker:", type, jobId);
+                // console.log("[EngineService] Message from worker:", type, jobId, e.data);
 
                 if (type === 'ENGINE_ID') {
                     this.engineName = name || null;
