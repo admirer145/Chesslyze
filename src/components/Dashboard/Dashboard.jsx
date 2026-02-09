@@ -127,6 +127,7 @@ export const Dashboard = () => {
         if (typeof window === 'undefined') return true;
         return window.innerWidth >= 1100;
     });
+    
     const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false);
     const [lastAnalyzeMode, setLastAnalyzeMode] = useState(() => localStorage.getItem('dashboardAnalyzeMode') || 'stockfish');
 
