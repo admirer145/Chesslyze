@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Download, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import { syncUserGames, fetchLichessUser } from '../../services/lichess';
+import { Download, CheckCircle, AlertCircle, Loader2, ArrowLeftRight, RefreshCw } from 'lucide-react';
+import { syncUserGames, fetchLichessUser, fetchLichessGames } from '../../services/lichess';
 import { getLatestGameTimestamp } from '../../services/db';
 import { useNavigate } from 'react-router-dom';
 
@@ -12,30 +12,111 @@ export const ImportGames = () => {
     const [progress, setProgress] = useState(null);
     const [userStats, setUserStats] = useState(null);
     const [lastSyncDate, setLastSyncDate] = useState(null);
+    const [hasNewGames, setHasNewGames] = useState(null);
+    const [checkingNew, setCheckingNew] = useState(false);
+    const [lastCheckedAt, setLastCheckedAt] = useState(null);
 
-    const handleFetchStats = async (e) => {
+    const USER_STATS_TTL_MS = 24 * 60 * 60 * 1000;
+    const NEW_GAMES_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
+
+    const statsCacheKey = (user) => `heroUserStats:${user.toLowerCase()}`;
+    const statsCacheAtKey = (user) => `heroUserStatsAt:${user.toLowerCase()}`;
+    const newCheckAtKey = (user) => `heroNewCheckAt:${user.toLowerCase()}`;
+    const newCheckHasKey = (user) => `heroNewCheckHas:${user.toLowerCase()}`;
+
+    const readCachedStats = (user) => {
+        try {
+            const raw = localStorage.getItem(statsCacheKey(user));
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch {
+            return null;
+        }
+    };
+
+    const writeCachedStats = (user, stats) => {
+        localStorage.setItem(statsCacheKey(user), JSON.stringify(stats));
+        localStorage.setItem(statsCacheAtKey(user), String(Date.now()));
+    };
+
+    const refreshLastSyncDate = async (user) => {
+        const lastSync = await getLatestGameTimestamp(user);
+        setLastSyncDate(lastSync);
+        return lastSync;
+    };
+
+    const maybeCheckForNewGames = async (user, lastSync) => {
+        if (!user || !lastSync) {
+            setHasNewGames(null);
+            return;
+        }
+        const lastChecked = parseInt(localStorage.getItem(newCheckAtKey(user)) || '0', 10);
+        const cachedHas = localStorage.getItem(newCheckHasKey(user));
+
+        if (lastChecked && Date.now() - lastChecked < NEW_GAMES_CHECK_TTL_MS) {
+            if (cachedHas !== null) setHasNewGames(cachedHas === 'true');
+            setLastCheckedAt(lastChecked);
+            return;
+        }
+
+        setCheckingNew(true);
+        try {
+            const games = await fetchLichessGames(user, 1, { since: lastSync + 1, until: Date.now() });
+            const hasNew = games.length > 0;
+            setHasNewGames(hasNew);
+            const now = Date.now();
+            setLastCheckedAt(now);
+            localStorage.setItem(newCheckAtKey(user), String(now));
+            localStorage.setItem(newCheckHasKey(user), String(hasNew));
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setCheckingNew(false);
+        }
+    };
+
+    const handleFetchStats = async (e, options = {}) => {
         if (e && e.preventDefault) e.preventDefault();
         const userToFetch = typeof e === 'string' ? e : username;
         if (!userToFetch) return;
 
-        setStatus('loading');
-        setMessage('Fetching user profile...');
+        const { useCache = false, silent = false } = options;
+        if (useCache) {
+            const cachedAt = parseInt(localStorage.getItem(statsCacheAtKey(userToFetch)) || '0', 10);
+            const cached = readCachedStats(userToFetch);
+            if (cached && cachedAt && Date.now() - cachedAt < USER_STATS_TTL_MS) {
+                setUserStats(cached);
+                const lastSync = await refreshLastSyncDate(userToFetch);
+                await maybeCheckForNewGames(userToFetch, lastSync);
+                return;
+            }
+        }
+
+        if (!silent) {
+            setStatus('loading');
+            setMessage('Fetching user profile...');
+        }
         try {
             const stats = await fetchLichessUser(userToFetch);
             setUserStats(stats);
+            writeCachedStats(userToFetch, stats);
 
             // Fetch last sync date
-            const lastSync = await getLatestGameTimestamp(userToFetch);
-            setLastSyncDate(lastSync);
+            const lastSync = await refreshLastSyncDate(userToFetch);
+            await maybeCheckForNewGames(userToFetch, lastSync);
 
             localStorage.setItem('heroUser', userToFetch);
             if (typeof e === 'string') setUsername(userToFetch);
-            setStatus('idle');
-            setMessage('');
+            if (!silent) {
+                setStatus('idle');
+                setMessage('');
+            }
         } catch (err) {
             console.error(err);
-            setStatus('error');
-            setMessage(err.message);
+            if (!silent) {
+                setStatus('error');
+                setMessage(err.message);
+            }
         }
     };
 
@@ -43,12 +124,12 @@ export const ImportGames = () => {
         const lastUser = localStorage.getItem('heroUser');
         if (lastUser) {
             setUsername(lastUser);
-            // Wait for state to settle
-            setTimeout(() => handleFetchStats(lastUser), 0);
+            // Load from cache if fresh to avoid unnecessary API calls
+            setTimeout(() => handleFetchStats(lastUser, { useCache: true, silent: true }), 0);
         }
     }, []);
 
-    const handleSync = async (fullSync = false) => {
+    const handleSync = async () => {
         if (!username) return;
 
         setStatus('loading');
@@ -60,10 +141,15 @@ export const ImportGames = () => {
                 setProgress(p);
                 if (p.message) setMessage(p.message);
             }, {
-                fullSync,
+                fullSync: false,
                 startTime: userStats?.createdAt
             });
             setStatus('success');
+            setHasNewGames(false);
+            const now = Date.now();
+            setLastCheckedAt(now);
+            localStorage.setItem(newCheckAtKey(username), String(now));
+            localStorage.setItem(newCheckHasKey(username), 'false');
             // Navigate to library after successful sync
             setTimeout(() => {
                 navigate('/library');
@@ -125,9 +211,23 @@ export const ImportGames = () => {
                                 <span className="text-lg font-bold text-primary">{userStats.username}</span>
                                 <span className="text-xs text-secondary">Joined {new Date(userStats.createdAt).toLocaleDateString()}</span>
                             </div>
-                            <div className="ml-auto text-right">
-                                <div className="text-2xl font-bold text-accent-primary">{userStats.count?.all || 0}</div>
-                                <div className="text-xs text-muted">Total Games</div>
+                            <div className="ml-auto flex items-center gap-4">
+                                <div className="text-right">
+                                    <div className="text-2xl font-bold text-accent-primary">{userStats.count?.all || 0}</div>
+                                    <div className="text-xs text-muted">Total Games</div>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        setUserStats(null);
+                                        setLastSyncDate(null);
+                                        setHasNewGames(null);
+                                        setLastCheckedAt(null);
+                                    }}
+                                    className="btn btn-secondary px-3 py-2 text-xs"
+                                >
+                                    <ArrowLeftRight size={14} className="mr-2" />
+                                    Change User
+                                </button>
                             </div>
                         </div>
 
@@ -173,32 +273,39 @@ export const ImportGames = () => {
                             ) : (
                                 <>
                                     <button
-                                        onClick={() => handleSync(false)}
+                                        onClick={() => handleSync()}
                                         disabled={status === 'loading'}
                                         className="btn btn-primary w-full py-4 text-base font-medium shadow-lg shadow-blue-500/20"
                                     >
                                         <Download size={18} className="mr-2" />
                                         {lastSyncDate ? 'Sync Latest Games' : 'Start Import'}
                                     </button>
-                                    <button
-                                        onClick={() => handleSync(true)}
-                                        disabled={status === 'loading'}
-                                        className="btn btn-secondary w-full py-2 text-xs opacity-70 hover:opacity-100"
-                                    >
-                                        Resync All History (Slower)
-                                    </button>
+                                    <div className="flex items-center justify-between text-xs text-muted px-1">
+                                        <div className="flex items-center gap-2">
+                                            {checkingNew ? (
+                                                <>
+                                                    <Loader2 size={12} className="animate-spin text-accent-primary" />
+                                                    <span>Checking for new games…</span>
+                                                </>
+                                            ) : hasNewGames === true ? (
+                                                <>
+                                                    <RefreshCw size={12} className="text-emerald-400" />
+                                                    <span className="text-emerald-400">New games available</span>
+                                                </>
+                                            ) : hasNewGames === false ? (
+                                                <span>Up to date</span>
+                                            ) : (
+                                                <span>New games check pending</span>
+                                            )}
+                                        </div>
+                                        {lastCheckedAt && (
+                                            <span>Checked {new Date(lastCheckedAt).toLocaleDateString()}</span>
+                                        )}
+                                    </div>
                                 </>
                             )}
                         </div>
 
-                        {status !== 'loading' && (
-                            <button
-                                onClick={() => setUserStats(null)}
-                                className="text-xs text-muted hover:text-primary transition-colors text-center mt-2 pb-1 border-b border-transparent hover:border-muted px-4"
-                            >
-                                ← Switch Account
-                            </button>
-                        )}
                     </div>
                 )}
 
