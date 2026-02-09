@@ -1,239 +1,432 @@
-import React, { useRef } from 'react';
-import { useUserStats } from '../../hooks/useUserStats';
-import { ArrowDown, Crown, Zap, Shield, Flame, Activity } from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, Cell } from 'recharts';
+import React from 'react';
+import { useJourneyData } from '../../hooks/useJourneyData';
+import { Trophy, Zap, Shield, Flame, Activity, Filter, Share2, Settings, Download, Search } from 'lucide-react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid, LineChart, Line } from 'recharts';
 
-// --- SUB-COMPONENTS ---
+const SummaryCard = ({ label, value, trend }) => (
+    <div className="journey-card">
+        <div className="journey-card__label">{label}</div>
+        <div className="journey-card__value">{value}</div>
+        {trend && <div className="journey-card__trend">{trend}</div>}
+    </div>
+);
 
-/* 1. HERO Identity */
-const HeroSection = ({ stats }) => {
-    return (
-        <section className="min-h-[85vh] flex flex-col items-center justify-center relative p-8 text-center snap-start">
-            <div className="absolute inset-0 bg-gradient-to-b from-blue-500/10 to-transparent pointer-events-none" />
-
-            <div className="mb-8 relative group">
-                <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-violet-600 rounded-full blur opacity-25 group-hover:opacity-75 transition duration-1000 group-hover:duration-200"></div>
-                <div className="relative w-32 h-32 rounded-full bg-[#111] ring-4 ring-white/5 flex items-center justify-center text-5xl font-bold text-white shadow-2xl overflow-hidden">
-                    {stats.heroUser.charAt(0).toUpperCase()}
-                    <div className="absolute inset-0 bg-gradient-to-tr from-white/10 to-transparent pointer-events-none" />
-                </div>
-                <div className="absolute -bottom-2 -right-2 bg-[#000] border border-white/10 rounded-full p-2 shadow-lg backdrop-blur-xl">
-                    {stats.archetype.includes('Solid') ? <Shield className="text-emerald-400" size={20} /> :
-                        stats.archetype.includes('Chaos') ? <Flame className="text-orange-400" size={20} /> :
-                            stats.archetype.includes('Crusher') ? <Zap className="text-yellow-400" size={20} /> :
-                                <Crown className="text-blue-400" size={20} />}
-                </div>
-            </div>
-
-            <h1 className="text-6xl md:text-8xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-b from-white to-white/40 mb-6 font-display">
-                {stats.heroUser}
-            </h1>
-            <p className="text-xl md:text-2xl text-secondary font-light max-w-2xl leading-relaxed">
-                The <span className="text-blue-400 font-medium">{stats.archetype}</span>.
-            </p>
-
-            <div className="mt-12 grid grid-cols-3 gap-8 md:gap-16 text-center">
-                <div>
-                    <div className="text-3xl font-bold text-primary">{stats.highestRating}</div>
-                    <div className="text-xs uppercase tracking-widest text-secondary mt-1">Peak Rating</div>
-                </div>
-                <div>
-                    <div className="text-3xl font-bold text-primary">{stats.totalGames}</div>
-                    <div className="text-xs uppercase tracking-widest text-secondary mt-1">Battles</div>
-                </div>
-                <div>
-                    <div className="text-3xl font-bold text-green-400">{stats.winRate}%</div>
-                    <div className="text-xs uppercase tracking-widest text-secondary mt-1">Win Rate</div>
-                </div>
-            </div>
-
-            <div className="absolute bottom-10 animate-bounce text-muted">
-                <ArrowDown size={24} />
-            </div>
-        </section>
-    );
-};
-
-/* 2. TIMELINE Growth */
-const TimelineSection = ({ data }) => {
-    return (
-        <section className="min-h-screen flex flex-col justify-center p-8 md:p-20 snap-start bg-[#050505] relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-black to-transparent z-10" />
-
-            <div className="max-w-5xl mx-auto w-full z-10 relative">
-                <h2 className="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 mb-4 tracking-tight">The Climb</h2>
-                <p className="text-xl text-secondary/80 mb-12 max-w-xl font-light leading-relaxed">
-                    Every point earned, every plateau endured. Your journey visible in a single line.
-                </p>
-
-                <div className="h-[500px] w-full bg-gradient-to-b from-white/5 to-transparent border border-white/5 rounded-3xl p-1 backdrop-blur-sm shadow-2xl relative group">
-                    <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-3xl blur opacity-0 group-hover:opacity-100 transition duration-1000" />
-                    <div className="h-full w-full bg-[#0a0a0a] rounded-[22px] p-6 relative overflow-hidden flex flex-col">
-                        {(!data || data.length === 0) ? (
-                            <div className="flex-1 flex items-center justify-center text-secondary">
-                                No rating history available yet.
-                            </div>
-                        ) : (
-                            <div className="flex-1 min-h-0 w-full">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={data}>
-                                        <defs>
-                                            <linearGradient id="colorRating" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3} />
-                                                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                                            </linearGradient>
-                                        </defs>
-                                        <XAxis dataKey="date" hide />
-                                        <YAxis domain={['auto', 'auto']} hide />
-                                        <Tooltip
-                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
-                                            itemStyle={{ color: '#a78bfa' }}
-                                            formatter={(value) => [`${value}`, 'Rating']}
-                                            labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
-                                        />
-                                        <Area
-                                            type="monotone"
-                                            dataKey="rating"
-                                            stroke="#8b5cf6"
-                                            strokeWidth={3}
-                                            fillOpacity={1}
-                                            fill="url(#colorRating)"
-                                        />
-                                    </AreaChart>
-                                </ResponsiveContainer>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </section>
-    );
-};
-
-/* 3. EVOLUTION (Mistakes) */
-const EvolutionSection = ({ stats }) => {
-    const data = [
-        { name: 'Start', blunders: Number(stats.mistakeEvolution.earlyRate) },
-        { name: 'Now', blunders: Number(stats.mistakeEvolution.recentRate) },
-    ];
-
-    return (
-        <section className="min-h-screen flex flex-col justify-center p-8 md:p-20 snap-start bg-app relative">
-            <div className="max-w-5xl mx-auto w-full grid md:grid-cols-2 gap-12 items-center">
-                <div>
-                    <h2 className="text-4xl font-bold text-primary mb-4">Evolution of Precision</h2>
-                    <p className="text-lg text-secondary leading-relaxed mb-6">
-                        You used to blunder <span className="text-red-400 font-semibold">{stats.mistakeEvolution.earlyRate}</span> times every 100 moves.
-                        <br /><br />
-                        Today? Only <span className="text-emerald-400 font-semibold">{stats.mistakeEvolution.recentRate}</span>.
-                    </p>
-                    <div className="inline-block px-4 py-2 bg-emerald-500/10 text-emerald-400 rounded-full font-medium border border-emerald-500/20">
-                        {stats.mistakeEvolution.improvement}% Reduction in Errors
-                    </div>
-                </div>
-
-                <div className="h-[300px] bg-panel/30 border border-white/5 rounded-3xl p-8 flex items-end gap-4 justify-center">
-                    {/* Visual Bar Comparison */}
-                    <div className="w-24 bg-red-500/20 rounded-t-xl relative group transition-all hover:bg-red-500/30" style={{ height: '80%' }}>
-                        <div className="absolute -top-8 w-full text-center text-red-400 font-bold text-xl">{data[0].blunders}</div>
-                        <div className="absolute bottom-4 w-full text-center text-red-400/50 uppercase text-xs font-bold tracking-wider">Then</div>
-                    </div>
-                    <div className="w-24 bg-emerald-500/20 rounded-t-xl relative group transition-all hover:bg-emerald-500/30" style={{ height: `${(data[1].blunders / data[0].blunders) * 80}%` }}>
-                        <div className="absolute -top-8 w-full text-center text-emerald-400 font-bold text-xl">{data[1].blunders}</div>
-                        <div className="absolute bottom-4 w-full text-center text-emerald-400/50 uppercase text-xs font-bold tracking-wider">Now</div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    );
-};
-
-
-/* 4. TROPHY ROOM */
-const TrophyCard = ({ title, value, subtext, icon: Icon, color }) => (
-    <div className="relative group perspective-1000">
-        <div className={`absolute -inset-0.5 bg-gradient-to-r from-${color}-500/20 to-${color}-600/20 rounded-2xl blur opacity-0 group-hover:opacity-100 transition duration-500`} />
-        <div className="relative h-full bg-[#0a0a0a] border border-white/5 rounded-2xl p-8 hover:bg-[#111] transition-all duration-300 flex flex-col">
-            <div className={`w-14 h-14 rounded-2xl bg-${color}-500/10 text-${color}-400 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300 shadow-inner`}>
-                <Icon size={28} strokeWidth={1.5} />
-            </div>
-            <h3 className="text-secondary text-xs font-bold uppercase tracking-widest mb-2 opacity-70">{title}</h3>
-            <div className="text-3xl font-bold text-white mb-3 tracking-tight">{value}</div>
-            <p className="text-sm text-muted leading-relaxed font-light">{subtext}</p>
+const InsightCard = ({ title, value, description, icon: Icon, tone }) => (
+    <div className={`insight-card insight-card--${tone}`}>
+        <div className="insight-card__icon">
+            <Icon size={20} />
+        </div>
+        <div>
+            <div className="insight-card__title">{title}</div>
+            <div className="insight-card__value">{value}</div>
+            <div className="insight-card__desc">{description}</div>
         </div>
     </div>
 );
 
-const TrophyRoom = ({ stats }) => {
-    return (
-        <section className="min-h-screen flex flex-col justify-center p-8 md:p-20 snap-start bg-[#050505] relative">
-            <div className="max-w-6xl mx-auto w-full">
-                <h2 className="text-4xl md:text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-orange-200 to-amber-500 mb-16 text-center tracking-tighter">Moments of Glory</h2>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    {stats.biggestUpset && (
-                        <TrophyCard
-                            title="Giant Killer"
-                            value={`+${stats.biggestUpset.ratingDiff} pts`}
-                            subtext={`Defeated ${stats.biggestUpset.opponent} (${stats.biggestUpset.rating}) on ${new Date(stats.biggestUpset.date).toLocaleDateString()}`}
-                            icon={Flame}
-                            color="orange"
-                        />
-                    )}
-                    {stats.wildestGame && (
-                        <TrophyCard
-                            title="Wildest Ride"
-                            value={`${stats.wildestGame.swing} cp`}
-                            subtext={`Analysis swung wildly against ${stats.wildestGame.opponent}. A true rollercoaster.`}
-                            icon={Activity}
-                            color="red"
-                        />
-                    )}
-                    {stats.fastestWin && (
-                        <TrophyCard
-                            title="Blitzkrieg"
-                            value={`${stats.fastestWin.ply} moves`}
-                            subtext={`Crushed ${stats.fastestWin.opponent} in record time.`}
-                            icon={Zap}
-                            color="yellow"
-                        />
-                    )}
-                </div>
-            </div>
-        </section>
-    );
-};
-
-// --- MAIN COMPONENT ---
-
 export const ChessJourney = () => {
-    const stats = useUserStats();
+    const {
+        filters,
+        setFilters,
+        summary,
+        ratingHistory,
+        perfCounts,
+        accuracySeries,
+        accuracyByPerf,
+        openings,
+        openingEvolution,
+        topVictories,
+        favoriteGames
+    } = useJourneyData();
 
-    // Use a ref to scroll to top on mount if needed, or manage scroll snap
-    const containerRef = useRef(null);
+    const heroInitial = summary?.heroUser ? summary.heroUser.charAt(0).toUpperCase() : '?';
 
-    if (!stats) {
+    if (!summary) {
         return (
-            <div className="flex flex-col items-center justify-center h-full text-secondary bg-app">
-                <div className="animate-pulse text-xl font-light">Loading your story...</div>
+            <div className="journey-loading">
+                <div className="journey-loading__card" />
+                <div className="journey-loading__card" />
+                <div className="journey-loading__card" />
+                <span>Loading your journey...</span>
             </div>
         );
     }
 
     return (
-        <div ref={containerRef} className="h-full overflow-y-auto snap-y snap-mandatory bg-app scroll-smooth">
-            <HeroSection stats={stats} />
-            <TimelineSection data={stats.ratingHistory} />
-            <EvolutionSection stats={stats} />
-            <TrophyRoom stats={stats} />
+        <div className="journey-page">
+            <header className="journey-header">
+                <div className="journey-title">
+                    <div className="journey-title__badge">
+                        <Trophy size={14} />
+                        Chess Journey
+                    </div>
+                    <h1>Personal Analytics</h1>
+                    <p>Track progress across variants, openings, and accuracy with live analysis updates.</p>
+                </div>
+                <div className="journey-header__actions">
+                    <button className="btn-chip">
+                        <Share2 size={16} />
+                        Share
+                    </button>
+                    <button className="btn-chip">
+                        <Download size={16} />
+                        Export
+                    </button>
+                    <button className="btn-chip">
+                        <Settings size={16} />
+                        Settings
+                    </button>
+                </div>
+            </header>
 
-            {/* Footer */}
-            <section className="min-h-[50vh] flex items-center justify-center snap-start p-12 text-center">
-                <div className="text-muted text-sm">
-                    <p>Generated by ReelChess</p>
-                    <p className="mt-2 text-xs opacity-50">Your journey continues with every move.</p>
+            <section className="journey-hero">
+                <div className="journey-identity">
+                    <div className="journey-avatar">{heroInitial}</div>
+                    <div>
+                        <div className="journey-identity__name">Your Journey</div>
+                        <div className="journey-identity__meta">
+                            Peak rating {summary.highestRating || '-'} • {summary.totalGames} games • {summary.winRate}% win rate
+                        </div>
+                    </div>
+                </div>
+                <div className="journey-summary">
+                    <SummaryCard label="Peak Rating" value={summary.highestRating || '-'} />
+                    <SummaryCard label="Total Games" value={summary.totalGames} />
+                    <SummaryCard label="Win Rate" value={`${summary.winRate}%`} />
+                    <SummaryCard label="Avg Accuracy" value={summary.avgAccuracy ? `${summary.avgAccuracy}%` : '-'} trend="Analyzed games only" />
                 </div>
             </section>
+
+            <section className="journey-timeline">
+                <div className="section-header">
+                    <div>
+                        <h2>Rating Timeline</h2>
+                        <p>Timeline is scoped to the selected variant.</p>
+                    </div>
+                    <div className="section-controls">
+                        <div className="chip-group">
+                            {['1m', '3m', '1y', 'all'].map((key) => (
+                                <button
+                                    key={key}
+                                    className={`pill ${filters.range === key ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, range: key })}
+                                >
+                                    {key.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="chip-group">
+                            {['all', 'rated', 'unrated'].map((key) => (
+                                <button
+                                    key={key}
+                                    className={`pill ${filters.rated === key ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, rated: key })}
+                                >
+                                    {key}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="chip-group">
+                            {['all', 'bullet', 'blitz', 'rapid', 'classical'].map((key) => (
+                                <button
+                                    key={key}
+                                    className={`pill ${filters.perf === key ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, perf: key })}
+                                >
+                                    {key}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="timeline-card">
+                    {(!ratingHistory || ratingHistory.length === 0) ? (
+                        <div className="timeline-empty">
+                            <Filter size={24} />
+                            <h3>No rating history for this filter</h3>
+                            <p>Adjust filters or import more games.</p>
+                        </div>
+                    ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={ratingHistory}>
+                                <defs>
+                                    <linearGradient id="journeyRating" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.35} />
+                                        <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <XAxis dataKey="date" hide />
+                                <YAxis domain={['auto', 'auto']} hide />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
+                                    itemStyle={{ color: '#38bdf8' }}
+                                    formatter={(value) => [`${value}`, 'Rating']}
+                                    labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                                />
+                                <Area
+                                    type="monotone"
+                                    dataKey="rating"
+                                    stroke="#38bdf8"
+                                    strokeWidth={2.5}
+                                    fillOpacity={1}
+                                    fill="url(#journeyRating)"
+                                />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    )}
+                </div>
+            </section>
+
+            <section className="journey-filters">
+                <div className="section-header">
+                    <div>
+                        <h2>Search & Filters</h2>
+                        <p>Filters update every chart in real time.</p>
+                    </div>
+                </div>
+                <div className="journey-filter-grid">
+                    <div className="journey-filter-field">
+                        <Search size={16} />
+                        <input
+                            placeholder="Search opponent..."
+                            value={filters.opponent}
+                            onChange={(e) => setFilters({ ...filters, opponent: e.target.value })}
+                        />
+                    </div>
+                    <div className="journey-filter-field">
+                        <Search size={16} />
+                        <input
+                            placeholder="Search opening..."
+                            value={filters.opening}
+                            onChange={(e) => setFilters({ ...filters, opening: e.target.value })}
+                        />
+                    </div>
+                    <div className="journey-filter-field">
+                        <select
+                            value={filters.color}
+                            onChange={(e) => setFilters({ ...filters, color: e.target.value })}
+                        >
+                            <option value="all">Any Color</option>
+                            <option value="white">White</option>
+                            <option value="black">Black</option>
+                        </select>
+                    </div>
+                    <div className="journey-filter-field">
+                        <select
+                            value={filters.result}
+                            onChange={(e) => setFilters({ ...filters, result: e.target.value })}
+                        >
+                            <option value="all">All Results</option>
+                            <option value="win">Wins</option>
+                            <option value="loss">Losses</option>
+                            <option value="draw">Draws</option>
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <section className="journey-insights">
+                <div className="section-header">
+                    <div>
+                        <h2>Accuracy & Trends</h2>
+                        <p>Accuracy is computed only on analyzed games.</p>
+                    </div>
+                </div>
+
+                <div className="journey-chart-grid">
+                    <div className="journey-chart-card">
+                        <div className="chart-title">Accuracy Over Time</div>
+                        {accuracySeries.length === 0 ? (
+                            <div className="timeline-empty">
+                                <Shield size={20} />
+                                <h3>No analyzed games yet</h3>
+                                <p>Run analysis to unlock accuracy trends.</p>
+                            </div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height={240}>
+                                <LineChart data={accuracySeries}>
+                                    <CartesianGrid stroke="rgba(148,163,184,0.15)" vertical={false} />
+                                    <XAxis dataKey="date" hide />
+                                    <YAxis domain={[0, 100]} hide />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
+                                        itemStyle={{ color: '#22c55e' }}
+                                        formatter={(value) => [`${value}%`, 'Accuracy']}
+                                        labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                                    />
+                                    <Line type="monotone" dataKey="accuracy" stroke="#22c55e" strokeWidth={2.5} dot={false} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                    <div className="journey-chart-card">
+                        <div className="chart-title">Accuracy by Variant</div>
+                        {accuracyByPerf.length === 0 ? (
+                            <div className="timeline-empty">
+                                <Zap size={20} />
+                                <h3>No analyzed games yet</h3>
+                                <p>Accuracy appears once analysis is complete.</p>
+                            </div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height={240}>
+                                <BarChart data={accuracyByPerf}>
+                                    <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
+                                    <XAxis dataKey="perf" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                                    <YAxis domain={[0, 100]} hide />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
+                                        formatter={(value) => [`${value}%`, 'Accuracy']}
+                                        labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                                    />
+                                    <Bar dataKey="accuracy" fill="#38bdf8" radius={[8, 8, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                </div>
+            </section>
+
+            <section className="journey-highlights">
+                <div className="section-header">
+                    <div>
+                        <h2>Variants & Openings</h2>
+                        <p>See what you play most and how openings evolve.</p>
+                    </div>
+                </div>
+
+                <div className="journey-chart-grid">
+                    <div className="journey-chart-card">
+                        <div className="chart-title">Variants Played</div>
+                        {perfCounts.length === 0 ? (
+                            <div className="timeline-empty">
+                                <Activity size={20} />
+                                <h3>No games found</h3>
+                                <p>Import games to build your journey.</p>
+                            </div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height={240}>
+                                <BarChart data={perfCounts}>
+                                    <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
+                                    <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                                    <YAxis hide />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
+                                        formatter={(value) => [`${value}`, 'Games']}
+                                        labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                                    />
+                                    <Bar dataKey="value" fill="#f5c84b" radius={[8, 8, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                    <div className="journey-chart-card">
+                        <div className="chart-title">Top Openings</div>
+                        {openings.length === 0 ? (
+                            <div className="timeline-empty">
+                                <Flame size={20} />
+                                <h3>No openings yet</h3>
+                                <p>Openings appear once games are imported.</p>
+                            </div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height={240}>
+                                <BarChart data={openings}>
+                                    <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
+                                    <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} interval={0} />
+                                    <YAxis hide />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
+                                        formatter={(value) => [`${value}`, 'Games']}
+                                        labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                                    />
+                                    <Bar dataKey="count" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                </div>
+                <div className="journey-chart-card">
+                    <div className="chart-title">Opening Evolution</div>
+                    {openingEvolution.length === 0 ? (
+                        <div className="timeline-empty">
+                            <Flame size={20} />
+                            <h3>No opening evolution yet</h3>
+                            <p>Play more games to build this trend.</p>
+                        </div>
+                    ) : (
+                        <ResponsiveContainer width="100%" height={260}>
+                            <AreaChart data={openingEvolution}>
+                                <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
+                                <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                                <YAxis hide />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
+                                    labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                                />
+                                {openings.map((opening, idx) => (
+                                    <Area
+                                        key={opening.name}
+                                        type="monotone"
+                                        dataKey={opening.name}
+                                        stackId="1"
+                                        stroke={['#38bdf8', '#f59e0b', '#a78bfa', '#22c55e', '#fb7185'][idx % 5]}
+                                        fillOpacity={0.25}
+                                        fill={['#38bdf8', '#f59e0b', '#a78bfa', '#22c55e', '#fb7185'][idx % 5]}
+                                    />
+                                ))}
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    )}
+                </div>
+            </section>
+
+            <section className="journey-highlights">
+                <div className="section-header">
+                    <div>
+                        <h2>Top Wins & Favorites</h2>
+                        <p>Highlights update as analysis completes.</p>
+                    </div>
+                </div>
+                <div className="journey-list-grid">
+                    <div className="journey-list-card">
+                        <div className="chart-title">Top Rated Victories</div>
+                        {topVictories.length === 0 ? (
+                            <div className="list-empty">No victories yet.</div>
+                        ) : (
+                            topVictories.map((g) => (
+                                <div key={g.id} className="list-row">
+                                    <div>
+                                        <div className="list-title">{g.opponent}</div>
+                                        <div className="list-meta">{g.perf} • {new Date(g.date).toLocaleDateString()}</div>
+                                    </div>
+                                    <div className="list-value">+{g.ratingDiff}</div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                    <div className="journey-list-card">
+                        <div className="chart-title">Favorite Games (Accuracy)</div>
+                        {favoriteGames.length === 0 ? (
+                            <div className="list-empty">Analyze games to surface favorites.</div>
+                        ) : (
+                            favoriteGames.map((g) => (
+                                <div key={g.id} className="list-row">
+                                    <div>
+                                        <div className="list-title">{g.opponent}</div>
+                                        <div className="list-meta">{g.perf} • {new Date(g.date).toLocaleDateString()}</div>
+                                    </div>
+                                    <div className="list-value">{g.accuracy}%</div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </section>
+
+            <footer className="journey-footer">
+                <div>Generated by ReelChess</div>
+                <div>Your journey continues with every move.</div>
+            </footer>
         </div>
     );
 };
