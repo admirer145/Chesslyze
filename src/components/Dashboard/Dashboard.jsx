@@ -2,9 +2,10 @@ import React, { useLayoutEffect, useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { Chessboard } from 'react-chessboard';
-import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, Play, FastForward, Rewind, AlertCircle, BookOpen } from 'lucide-react';
+import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, Play, FastForward, Rewind, AlertCircle, BookOpen, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Chess } from 'chess.js';
+import { processGame } from '../../services/analyzer';
 import { AnalyticsPanel } from './AnalyticsPanel';
 import { AIAnalysisModal } from './AIAnalysisModal';
 import { AIInsightsView } from './AIInsightsView';
@@ -238,7 +239,17 @@ export const Dashboard = () => {
 
     const handleAnalyze = async () => {
         if (!activeGame) return;
-        setShowAIModal(true);
+        if (aiAnalysis) {
+            setActiveTab('ai');
+        } else {
+            setShowAIModal(true);
+        }
+    };
+
+    const handleStockfishAnalyze = async () => {
+        if (!activeGame) return;
+        // Reset to pending to trigger queue
+        await db.games.update(activeGame.id, { analyzed: false, analysisStatus: 'pending' });
     };
 
     const handleJumpTo = (index) => {
@@ -553,6 +564,22 @@ export const Dashboard = () => {
 
                     {/* Controls */}
                     <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
+                        {activeGame && (
+                            <button
+                                onClick={handleStockfishAnalyze}
+                                disabled={activeGame.analysisStatus === 'analyzing'}
+                                className={`mr-4 flex items-left gap-4 px-4 py-2 rounded-full text-xs font-medium transition-colors ${activeGame.analysisStatus === 'analyzing' ? 'bg-blue-500/10 text-blue-400 cursor-wait' :
+                                    activeGame.analysisStatus === 'failed' ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' :
+                                        activeGame.analyzed ? 'bg-subtle text-secondary hover:text-primary' :
+                                            'bg-primary text-black hover:opacity-90'
+                                    }`}
+                            >
+                                <Zap size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
+                                {activeGame.analysisStatus === 'analyzing' ? 'Analyzing...' :
+                                    activeGame.analysisStatus === 'failed' ? 'Retry Analysis' :
+                                        activeGame.analyzed ? 'Re-analyze' : 'Analyze'}
+                            </button>
+                        )}
                         <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
                         <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
                         <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
