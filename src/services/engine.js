@@ -8,69 +8,82 @@ class EngineService {
         this.engineName = null;
         this.engineCaps = { nnue: false, multipv: false };
         this.lastJobFinishTime = 0;
+        this.version = null;
     }
 
-    init() {
-        if (this.worker) return Promise.resolve();
+    init(version = '17.1-single') {
+        if (this.worker && this.version === version) return Promise.resolve();
+
+        // If worker exists but version different, stop old one
+        if (this.worker) {
+            this.terminate();
+        }
+
         if (this.initPromise) return this.initPromise;
 
-        this.initPromise = new Promise((resolve) => {
-            console.log("[EngineService] Initializing worker...");
-            // In Vite, we import workers with this syntax
-            this.worker = new Worker(new URL('../workers/analysis.worker.js', import.meta.url), {
-                type: 'classic', // Classic because we use importScripts
-            });
+        this.version = version;
 
-            this.worker.onmessage = (e) => {
-                const { type, jobId, evaluation, move, error, name, caps } = e.data;
+        this.initPromise = new Promise((resolve, reject) => {
+            try {
+                this.worker = new Worker(new URL('../workers/analysis.worker.js', import.meta.url), {
+                    type: 'classic'
+                });
 
-                // Debug log for worker messages (optional, ensure not too spammy)
-                // console.log("[EngineService] Message from worker:", type, jobId, e.data);
+                this.worker.onmessage = (e) => {
+                    const { type, data, error, name, caps, jobId, evaluation, move } = e.data;
 
-                if (type === 'ENGINE_ID') {
-                    this.engineName = name || null;
-                    return;
-                }
-                if (type === 'ENGINE_CAPS' && caps && typeof caps === 'object') {
-                    this.engineCaps = { ...this.engineCaps, ...caps };
-                    return;
-                }
+                    if (type === 'ENGINE_ID') {
+                        this.engineName = name || null;
+                        return;
+                    }
 
-                const job = this.jobs.get(jobId);
+                    if (type === 'ENGINE_CAPS' && caps && typeof caps === 'object') {
+                        this.engineCaps = { ...this.engineCaps, ...caps };
+                        return;
+                    }
 
-                if (!job) return;
+                    if (type === 'ERROR') {
+                        console.error("[EngineService] Worker Error:", error);
+                        return;
+                    }
 
-                if (type === 'BEST_MOVE') {
-                    const pvLines = Array.from(job.pvLinesByMultiPv.values())
-                        .filter(Boolean)
-                        .sort((a, b) => (a.multipv || 1) - (b.multipv || 1));
-                    job.resolve({ bestMove: move, evaluation: job.lastEvaluation, pvLines });
-                    this.jobs.delete(jobId);
-                    this.lastJobFinishTime = Date.now();
-                } else if (type === 'INFO') {
-                    job.lastEvaluation = evaluation;
-                    const multi = evaluation?.multipv || 1;
-                    job.pvLinesByMultiPv.set(multi, evaluation);
-                    if (job.onUpdate) job.onUpdate(evaluation);
-                } else if (type === 'ERROR') {
-                    console.error("[EngineService] Worker Error:", error);
-                    job.reject(new Error(error || "Engine error"));
-                    this.jobs.delete(jobId);
-                    this.lastJobFinishTime = Date.now();
-                }
-            };
+                    if (jobId && this.jobs.has(jobId)) {
+                        const job = this.jobs.get(jobId);
 
-            this.worker.onerror = (err) => {
-                console.error("[EngineService] Worker Error (System):", err);
-                // If the worker crashes (e.g. exit(1)), we must reset it so next init() creates a new one.
-                this.terminate();
-            };
+                        if (type === 'BEST_MOVE') {
+                            const pvLines = Array.from(job.pvLinesByMultiPv.values())
+                                .filter(Boolean)
+                                .sort((a, b) => (a.multipv || 1) - (b.multipv || 1));
+                            job.resolve({ bestMove: move, evaluation: job.lastEvaluation, pvLines });
+                            this.jobs.delete(jobId);
+                            this.lastJobFinishTime = Date.now();
+                        } else if (type === 'INFO') {
+                            job.lastEvaluation = evaluation;
+                            const multi = evaluation?.multipv || 1;
+                            job.pvLinesByMultiPv.set(multi, evaluation);
+                            if (job.onUpdate) job.onUpdate(evaluation);
+                        } else if (type === 'ERROR') {
+                            job.reject(new Error(error || "Engine error"));
+                            this.jobs.delete(jobId);
+                            this.lastJobFinishTime = Date.now();
+                        }
+                    }
+                };
 
-            this.worker.postMessage({ type: 'INIT' });
+                this.worker.onerror = (err) => {
+                    console.error("[EngineService] Worker Error (System):", err);
+                    this.terminate();
+                    reject(err);
+                };
 
-            // Resolve immediately as the worker will handle its own readiness
-            console.log("[EngineService] Worker created.");
-            resolve();
+                this.worker.postMessage({ type: 'INIT', version });
+                console.log(`[EngineService] Initialized worker with version ${version}`);
+                resolve();
+
+            } catch (err) {
+                console.error("[EngineService] Failed to create worker:", err);
+                reject(err);
+            }
         });
 
         return this.initPromise;
@@ -102,10 +115,10 @@ class EngineService {
         // Safety clamp for WASM memory/thread limits
         const safeOptions = options.map(opt => {
             if (opt.name === 'Hash') {
-                return { ...opt, value: Math.min(64, Math.max(1, opt.value)) };
+                return { ...opt, value: Math.min(256, Math.max(1, opt.value)) };
             }
             if (opt.name === 'Threads') {
-                return { ...opt, value: Math.min(1, Math.max(1, opt.value)) };
+                return { ...opt, value: Math.min(32, Math.max(1, opt.value)) };
             }
             return opt;
         });
@@ -113,18 +126,20 @@ class EngineService {
         this.worker.postMessage({ type: 'SET_OPTIONS', data: { options: safeOptions } });
     }
 
-    async restart() {
+    async restart(version) {
         try {
             this.stop();
         } catch {
             // ignore
         }
         this.terminate();
-        await this.init();
+        await this.init(version || this.version);
     }
 
     async analyze(fen, depthOrOptions = 15, onUpdate) {
-        if (!this.worker) await this.init();
+        // Use current expected version if not initialized (should be set by init/restart previously)
+        // If not set, use default '17.1-single'
+        if (!this.worker) await this.init(this.version || '17.1-single');
 
         const jobId = Math.random().toString(36).substring(7);
 
@@ -170,8 +185,6 @@ class EngineService {
                     this.jobs.delete(jobId);
                     try { this.stop(); } catch { }
                     reject(new Error("Analysis timeout"));
-
-                    // Optional warning: Maybe restart worker if it's consistently timing out?
                 }
             }, timeoutMs);
 

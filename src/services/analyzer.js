@@ -28,13 +28,16 @@ const loadActiveEngineProfile = () => {
         const parsed = JSON.parse(rawProfiles);
         if (!Array.isArray(parsed) || !parsed.length) return null;
         const selected = parsed.find((p) => p?.id === activeId) || parsed[0];
+
+        // Return with new limits and version
         return {
             depth: clampInt(selected?.depth ?? 15, 8, 60, 15),
             multiPv: clampInt(selected?.multiPv ?? 1, 1, 5, 1),
             deepDepth: clampInt(selected?.deepDepth ?? 0, 0, 60, 0),
-            hash: clampInt(selected?.hash ?? 32, 1, 32, 32),
-            threads: clampInt(selected?.threads ?? 1, 1, 1, 1),
-            useNNUE: typeof selected?.useNNUE === 'boolean' ? selected.useNNUE : true
+            hash: clampInt(selected?.hash ?? 32, 16, 256, 32),
+            threads: clampInt(selected?.threads ?? 1, 1, 32, 1),
+            useNNUE: typeof selected?.useNNUE === 'boolean' ? selected.useNNUE : true,
+            version: selected?.version || '17.1-single'
         };
     } catch {
         return null;
@@ -413,14 +416,30 @@ export const processGame = async (gameId) => {
 
     // Performance Settings
     const hashRaw = profile?.hash ?? parseInt(localStorage.getItem('engineHash') || '32', 10);
-    const hash = Math.min(32, Math.max(1, hashRaw)); // Clamp hash to 32MB to prevent WASM OOM
+    const hash = Math.min(256, Math.max(1, hashRaw)); // Relax clamp for desktop/multi-thread
 
     const threadsRaw = profile?.threads ?? parseInt(localStorage.getItem('engineThreads') || '1', 10);
-    const threads = Math.min(1, Math.max(1, threadsRaw)); // Force 1 thread for single-threaded WASM
+    const threads = Math.min(32, Math.max(1, threadsRaw)); // Allow multi-threading
 
     const useNNUE = typeof profile?.useNNUE === 'boolean'
         ? profile.useNNUE
         : localStorage.getItem('engineUseNNUE') !== 'false'; // Default to true
+
+    // Check if version changed
+    const currentVersion = engine.version;
+    const newVersion = profile?.version || '17.1-single';
+
+    console.log(`[Analyzer] Profile Version: ${newVersion}, Current Engine Version: ${currentVersion}`);
+
+    if (currentVersion !== newVersion) {
+        console.log(`[Analyzer] Switching engine version from ${currentVersion} to ${newVersion}`);
+        // If engine not started, init with new version
+        if (!engine.worker) {
+            await engine.init(newVersion);
+        } else {
+            await engine.restart(newVersion);
+        }
+    }
 
     // Ensure engine options are up to date
     engine.setOptions([

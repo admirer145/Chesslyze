@@ -4,6 +4,7 @@ import { db } from '../../services/db';
 import { engine } from '../../services/engine';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { Chess } from 'chess.js';
+import { ConfirmModal } from '../common/ConfirmModal';
 
 const ENGINE_PROFILES_KEY = 'engineProfiles';
 const ENGINE_ACTIVE_KEY = 'activeEngineProfileId';
@@ -48,9 +49,10 @@ const normalizeProfile = (profile, fallbackId) => {
         depth: clampInt(safe.depth ?? 15, 8, 60, 15),
         multiPv: clampInt(safe.multiPv ?? 3, 1, 5, 3),
         deepDepth: clampInt(safe.deepDepth ?? 0, 0, 60, 0),
-        hash: clampInt(safe.hash ?? 32, 16, 32, 32),
-        threads: clampInt(safe.threads ?? 1, 1, 16, 1),
-        useNNUE: typeof safe.useNNUE === 'boolean' ? safe.useNNUE : true
+        hash: clampInt(safe.hash ?? 32, 16, 256, 32), // Allow up to 256MB for desktop/17.1
+        threads: clampInt(safe.threads ?? 1, 1, 32, 1), // Allow more threads
+        useNNUE: typeof safe.useNNUE === 'boolean' ? safe.useNNUE : true,
+        version: safe.version || '17.1-single'
     };
 };
 
@@ -89,6 +91,9 @@ export const Settings = () => {
     const [profiles, setProfiles] = useState(initialEngineState.profiles);
     const [activeProfileId, setActiveProfileId] = useState(initialEngineState.activeId);
     const [newProfileName, setNewProfileName] = useState('');
+    const [confirmAnalyzeAllOpen, setConfirmAnalyzeAllOpen] = useState(false);
+    const [confirmStopOpen, setConfirmStopOpen] = useState(false);
+    const [confirmBookOpen, setConfirmBookOpen] = useState(false);
 
     const activeProfile = useMemo(() => {
         if (!profiles.length) return null;
@@ -109,15 +114,14 @@ export const Settings = () => {
 
     useEffect(() => {
         // Ensure worker initialized so we can read id name / caps.
-        engine.init().then(() => setEngineInfo(engine.getInfo())).catch(() => { });
+        // Use the active profile's version if available, or default to 17.1-single
+        const version = activeProfile?.version || '17.1-single';
+        engine.init(version).then(() => setEngineInfo(engine.getInfo())).catch(() => { });
 
         const t = setTimeout(() => setEngineInfo(engine.getInfo()), 400);
 
-        // Auto-migrate idle to pending per user request - REMOVED to allow distinction
-        // db.games.where('analysisStatus').equals('idle').modify({ analysisStatus: 'pending' }).catch(() => {});
-
         return () => clearTimeout(t);
-    }, []);
+    }, [activeProfile?.version]); // Re-run if version setting changes (though profiles change usually triggers re-render)
 
     useEffect(() => {
         if (!profiles.length) return;
@@ -207,6 +211,17 @@ export const Settings = () => {
         const idle = games.length - (analyzed + pending + analyzing + failed + ignored);
 
         return { total: games.length, heroTotal, analyzed, pending, ignored, analyzing, failed, idle };
+    }, [games, heroUser]);
+
+    const analyzeAllCount = useMemo(() => {
+        if (!games) return 0;
+        let count = 0;
+        games.forEach((g) => {
+            const isHero = heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser);
+            const needsAnalysis = !g.analyzed || g.analysisStatus === 'failed';
+            if (isHero && needsAnalysis) count += 1;
+        });
+        return count;
     }, [games, heroUser]);
 
     const handleAnalyzeAll = async () => {
@@ -383,12 +398,12 @@ export const Settings = () => {
     };
 
     const handleHashChange = (value) => {
-        const v = Math.min(32, Math.max(16, value));
+        const v = Math.min(256, Math.max(16, value));
         updateActiveProfile({ hash: v });
     };
 
     const handleThreadsChange = (value) => {
-        const v = Math.max(1, Math.min(16, value));
+        const v = Math.max(1, Math.min(32, value));
         updateActiveProfile({ threads: v });
     };
 
@@ -469,7 +484,7 @@ export const Settings = () => {
                     <p className="text-sm text-secondary mb-4">
                         Queue analysis for all games that haven't been analyzed yet. Already analyzed games will be skipped.
                     </p>
-                    <button className="btn btn-primary" onClick={handleAnalyzeAll}>
+                    <button className="btn btn-primary" onClick={() => setConfirmAnalyzeAllOpen(true)} disabled={analyzeAllCount === 0}>
                         Analyze All (Unanalyzed)
                     </button>
 
@@ -487,7 +502,7 @@ export const Settings = () => {
                     <p className="text-sm text-secondary mb-4">
                         Halts the engine and clears any queued games. Already running analysis may finish its current move.
                     </p>
-                    <button className="btn btn-secondary" onClick={handleStopAnalysis}>
+                    <button className="btn btn-secondary" onClick={() => setConfirmStopOpen(true)}>
                         Stop Analysis
                     </button>
                 </div>
@@ -502,6 +517,17 @@ export const Settings = () => {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label className="text-xs text-muted uppercase tracking-wider">Engine Version</label>
+                            <select
+                                value={activeProfile?.version || '17.1-single'}
+                                onChange={(e) => updateActiveProfile({ version: e.target.value })}
+                                className="bg-subtle border rounded px-3 py-2 text-sm text-primary w-full mt-2"
+                            >
+                                <option value="17.1-single">Stockfish 17.1 (Standard, Single-Thread)</option>
+                                <option value="17.1-multi">Stockfish 17.1 (High Perf, Multi-Thread)</option>
+                            </select>
+                        </div>
                         <div>
                             <label className="text-xs text-muted uppercase tracking-wider">Active Profile</label>
                             <select
@@ -577,13 +603,13 @@ export const Settings = () => {
                                     <input
                                         type="range"
                                         min="16"
-                                        max="32"
+                                        max="256"
                                         step="16"
                                         value={hash}
                                         onChange={(e) => handleHashChange(parseInt(e.target.value, 10))}
                                         className="w-full"
                                     />
-                                    <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Max 32MB for stability.</p>
+                                    <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Max 256MB.</p>
                                 </div>
 
                                 <div>
@@ -594,7 +620,7 @@ export const Settings = () => {
                                     <input
                                         type="range"
                                         min="1"
-                                        max="1"
+                                        max="32"
                                         step="1"
                                         value={threads}
                                         onChange={(e) => handleThreadsChange(parseInt(e.target.value, 10))}
@@ -677,7 +703,7 @@ export const Settings = () => {
                     <p className="text-sm text-secondary mb-4">
                         Sync master book moves for all your openings to enrich analytics and book move detection.
                     </p>
-                    <button className="btn btn-secondary" onClick={syncBookMoves}>
+                    <button className="btn btn-secondary" onClick={() => setConfirmBookOpen(true)}>
                         Sync Book Moves
                     </button>
                     {bookStatus && (
@@ -689,6 +715,44 @@ export const Settings = () => {
                     )}
                 </div>
             </div>
+
+            <ConfirmModal
+                open={confirmAnalyzeAllOpen}
+                title="Analyze all unanalyzed games?"
+                description="This will queue analysis for all eligible games in your library."
+                meta={analyzeAllCount ? `${analyzeAllCount} games will be queued.` : null}
+                confirmText="Queue Analysis"
+                cancelText="Cancel"
+                onCancel={() => setConfirmAnalyzeAllOpen(false)}
+                onConfirm={async () => {
+                    setConfirmAnalyzeAllOpen(false);
+                    await handleAnalyzeAll();
+                }}
+            />
+            <ConfirmModal
+                open={confirmStopOpen}
+                title="Stop current analysis?"
+                description="This will halt the engine and reset queued games back to idle. The currently running game will be marked failed."
+                confirmText="Stop Analysis"
+                cancelText="Cancel"
+                onCancel={() => setConfirmStopOpen(false)}
+                onConfirm={async () => {
+                    setConfirmStopOpen(false);
+                    await handleStopAnalysis();
+                }}
+            />
+            <ConfirmModal
+                open={confirmBookOpen}
+                title="Sync book moves now?"
+                description="This fetches master database moves for your openings. It can take a few minutes and uses rate-limited requests."
+                confirmText="Start Sync"
+                cancelText="Cancel"
+                onCancel={() => setConfirmBookOpen(false)}
+                onConfirm={async () => {
+                    setConfirmBookOpen(false);
+                    await syncBookMoves();
+                }}
+            />
         </div>
     );
 };

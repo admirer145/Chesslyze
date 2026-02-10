@@ -92,79 +92,188 @@ self.Module = {
 
 // console.log("Worker: Importing stockfish.js...");
 
-// Hack: Define module/exports to capture Stockfish factory
-// and hide onmessage to prevent Stockfish from interpreting this as a worker auto-run
-self.exports = {};
-self.module = { exports: self.exports };
-const _tempOnMessage = self.onmessage;
-delete self.onmessage; // Temporarily remove handler
+// self.exports = {};
+// self.module = { exports: self.exports };
+// const _tempOnMessage = self.onmessage;
+// delete self.onmessage; // Temporarily remove handler
 
-importScripts('/stockfish.js');
+// Dynamic import will happen in INIT
+// importScripts('/stockfish.js');
 
-self.onmessage = _tempOnMessage; // Restore handler
+// self.onmessage = _tempOnMessage; // Restore handler
 
 // Capture factory checking multiple locations
-const exported = self.module.exports;
-// If module.exports is the function itself (common in some builds)
-if (typeof exported === 'function') {
-    self.Stockfish = exported;
-} else if (exported && typeof exported.Stockfish === 'function') {
-    self.Stockfish = exported.Stockfish;
-} else {
-    // Fallback to global or self.exports
-    self.Stockfish = self.exports.Stockfish || self.Stockfish;
-}
+// Shim module/exports for legacy stockfish BEFORE any usage
+self.exports = self.exports || {};
+// We need to keep the reference to the same object so we can check it later
+self.module = self.module || { exports: self.exports };
+
+// The check for exported must happen AFTER importScripts in initEngine.
+// So we remove the top-level check here.
 
 // console.log("Worker: stockfish.js imported. Typeof Stockfish:", typeof self.Stockfish);
 
-// Variables to hold the engine instance
+// Engine instance
 let engine = null;
 let engineReady = false;
 
-// Initialization logic for newer Stockfish (Factory pattern)
-if (typeof Stockfish === 'function') {
-    // console.log("Worker: Detected Stockfish factory.");
-    Stockfish({
+// Initialize the engine based on version
+const initEngine = (version) => {
+    // Prevent double initialization
+    if (engine) return;
+
+    // Default: 17.1 Single Threaded (Stable/Compatible)
+    // We replace the broken 16.1 with 17.1 Single
+    let scriptPath = '/stockfish-17-single.js';
+    let wasmPath = '/stockfish-17-single.wasm';
+    // ^ Wait, 17.1 single is ALSO multi-part?
+    // Based on LS, yes: stockfish-17.1-single-a496a04-part-0.wasm
+    // So both are multi-part now.
+
+    let isMultiPart = true;
+
+    if (version === '17.1-multi') {
+        scriptPath = '/stockfish-17-multi.js';
+        isMultiPart = true;
+    } else {
+        // Default / '17.1-single' / legacy mapped to 17.1-single
+        scriptPath = '/stockfish-17-single.js';
+        isMultiPart = true;
+    }
+
+    // Hack for legacy Stockfish (16.1) which might expect module.exports or self.exports
+    // (Handled at top level now)
+
+    // Hook fetch to intercept WASM part requests from the multi-part loader
+    // The loader in 17.1 derives path from self.location, which is wrong for the worker.
+    const originalFetch = self.fetch;
+    self.fetch = (input, init) => {
+        let url = input;
+        if (typeof input === 'string') {
+            url = input;
+        } else if (input instanceof Request) {
+            url = input.url;
+        }
+
+        if (url.includes('part-') && url.endsWith('.wasm')) {
+            // It's likely a Stockfish part request
+            // derived path might look like ".../analysis.worker-part-0.wasm"
+            // We want to redirect to our correct script base
+
+            // Extract the part number
+            const match = url.match(/part-(\d+)\.wasm/);
+            if (match) {
+                const partNum = match[1];
+                const base = scriptPath.replace('.js', ''); // e.g. /stockfish-17-single
+                const newUrl = `${base}-part-${partNum}.wasm`; // e.g. /stockfish-17-single-part-0.wasm
+                console.log(`Worker: Redirecting fetch ${url} -> ${newUrl}`);
+                return originalFetch(newUrl, init);
+            }
+        }
+
+        return originalFetch(input, init);
+    };
+
+    // Configure global Module for the auto-running Emscripten script
+    self.Module = {
         locateFile: (path) => {
-            if (path.endsWith('.wasm')) return '/stockfish-nnue-16-single.wasm';
-            if (path.endsWith('.nnue')) return '/nn-5af11540bbfe.nnue';
+            // Debug log
+            const debugPath = path;
+
+            if (isMultiPart) {
+                const base = scriptPath.replace('.js', ''); // e.g. /stockfish-17-single
+
+                // Check for "part" anywhere in filename
+                if (path.includes('part')) {
+                    // Try to extract the number
+                    // Matches "part-0", "part0", ".0.wasm" etc depending on emscripten version
+                    // But our files are named ...-part-X.wasm
+                    // The loader likely asks for "stockfish-17.1-single...part-0.wasm"
+                    const match = path.match(/part-?(\d+)/);
+                    if (match) {
+                        const num = match[1];
+                        const final = `${base}-part-${num}.wasm`;
+                        // console.log(`Worker locateFile: mapped ${debugPath} -> ${final}`);
+                        return final;
+                    }
+                }
+
+                if (path.endsWith('.wasm')) {
+                    // console.log(`Worker locateFile: mapped ${debugPath} -> ${base}.wasm (fallback)`);
+                    return `${base}.wasm`;
+                }
+                return path;
+            }
+            // Legacy/Default fallback
+            if (path.endsWith('.wasm')) return wasmPath;
+            if (path.endsWith('.nnue')) return nnuePath;
             return path;
         },
         print: (text) => {
-            // console.log("SF STDOUT:", text);
             handleEngineOutput(text);
         },
         printErr: (text) => {
-            // console.error("SF STDERR:", text);
-            rawPostMessage({ type: 'LOG', message: "SF STDERR: " + text });
+            console.warn("SF STDERR:", text);
         }
+    };
+
+    try {
+        console.log(`Worker: Importing ${scriptPath} with WASM path strategy...`);
+        importScripts(scriptPath);
+    } catch (e) {
+        console.error("Worker: Failed to import script:", e);
+        rawPostMessage({ type: 'ERROR', error: "Failed to load engine script: " + e.message });
+        return;
+    }
+
+    // Check module.exports for the factory
+    const exported = self.module.exports;
+    if (typeof exported === 'function') {
+        self.Stockfish = exported;
+    } else if (exported && typeof exported.Stockfish === 'function') {
+        self.Stockfish = exported.Stockfish;
+    } else {
+        // Fallback to global or self.exports
+        self.Stockfish = self.exports.Stockfish || self.Stockfish;
+    }
+
+    if (typeof self.Stockfish !== 'function') {
+        // Check if engine auto-initialized via onmessage
+        if (engineMessageHandler) {
+            console.log("Worker: Engine auto-initialized via onmessage.");
+            engineReady = true;
+            // Send UCI init
+            if (typeof engineMessageHandler === 'function') {
+                engineMessageHandler({ data: 'uci' });
+            }
+            return;
+        }
+
+        console.warn("Worker: Stockfish factory not found. Waiting for auto-init...");
+        // It might be async (17.1 single waits for fetch). 
+        // We set a timeout to check again or assume the onmessage setter will trigger engineReady.
+        return;
+    }
+
+    self.Stockfish({
+        // locateFile is now handled by global Module, but we can keep it here for redundancy if the factory ignores global.
+        // However, usually one is enough. Let's rely on the global Module being set correct.
     }).then((sf) => {
         engine = sf;
         engineReady = true;
 
-        // console.log("Worker: Engine Object Keys:", Object.keys(engine));
-        // console.log("Worker: Engine postMessage type:", typeof engine.postMessage);
-        // console.log("Worker: Engine addMessageListener type:", typeof engine.addMessageListener);
-
-        // Hook into engine output if it supports addMessageListener
         if (typeof engine.addMessageListener === 'function') {
-            // console.log("Worker: Adding message listener via API");
             engine.addMessageListener((line) => {
                 handleEngineOutput(line);
             });
         }
 
-        // console.log("Worker: Engine initialized via Factory.");
-
-        // Ensure queue is running
         if (typeof engine.unpauseQueue === 'function') {
-            console.log("Worker: Unpausing queue...");
             engine.unpauseQueue();
         }
 
         // Send initial UCI commands
         const sendParams = (cmd) => {
-            // console.log(`Worker: Sending '${cmd.trim()}'...`);
             if (typeof engine.onCustomMessage === 'function') {
                 engine.onCustomMessage(cmd + '\n');
             } else {
@@ -174,24 +283,31 @@ if (typeof Stockfish === 'function') {
 
         sendParams('uci');
     }).catch(err => {
-        console.error("Worker: Stockfish Factory Initialization Failed:", err);
+        console.error("Worker: Stockfish Initialization Failed:", err);
         rawPostMessage({ type: 'ERROR', error: "Engine Init Failed: " + err });
     });
-} else {
-    // Legacy fallback or if Stockfish attached to self
-    console.warn("Worker: Stockfish factory not found. Assuming global attachment.");
-    engineReady = true; // Assume immediate readiness for legacy
+};
+
+
+// Intercept onmessage assignment by the engine script
+let engineMessageHandler = null;
+try {
+    Object.defineProperty(self, 'onmessage', {
+        set: (handler) => {
+            console.log("Worker: Engine set onmessage handler (captured)");
+            engineMessageHandler = handler;
+            engineReady = true;
+        },
+        get: () => engineMessageHandler
+    });
+} catch (e) {
+    console.warn("Worker: Could not hook onmessage property", e);
 }
 
-
-// Debug: Check if something stole onmessage
-// console.log("Worker: onmessage status before hook:", self.onmessage);
-
 // Replace with addEventListener to avoid conflicts
+// (self.onmessage is now our property accessor)
 self.addEventListener('message', (e) => {
     const { type, data, jobId } = e.data;
-    // console.log(`Worker: Received Message ${type} (Job: ${jobId})`);
-    // logCheck(`Received ${type} for ${jobId}`);
 
     const sendToEngine = (cmd) => {
         if (!engineReady) {
@@ -201,21 +317,29 @@ self.addEventListener('message', (e) => {
         }
 
         const msg = cmd + '\n';
+
+        // Priority 1: Captured onmessage handler (Auto-init engines like 17.1)
+        if (engineMessageHandler && typeof engineMessageHandler === 'function') {
+            engineMessageHandler({ data: msg });
+            return;
+        }
+
+        // Priority 2: Factory-created instance
         if (engine && typeof engine.onCustomMessage === 'function') {
             engine.onCustomMessage(msg);
         } else if (engine && typeof engine.postMessage === 'function') {
             engine.postMessage(msg);
         } else if (self.postMessage && typeof self.postMessage === 'function') {
-            // Fallback for some legacy environments
-            // But usually the above covering engine object is enough
+            // This is risky as it might send to main thread, but some engines output via postMessage
             console.error("Worker: No valid way to send message to engine.");
         }
     };
 
     if (type === 'INIT') {
-        sendToEngine('uci');
-        sendToEngine('isready');
+        const version = data?.version || e.data.version;
+        initEngine(version);
     }
+    // ... rest of listener
 
     if (type === 'ANALYZE') {
         currentJobId = jobId;

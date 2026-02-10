@@ -2,7 +2,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { db } from '../../services/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
-import { Filter, Search, RotateCcw, ChevronDown, Trophy, Brain, Calendar, X } from 'lucide-react';
+import { Filter, Search, RotateCcw, ChevronDown, Trophy, Brain, Calendar, X, Zap } from 'lucide-react';
+import { ConfirmModal } from '../common/ConfirmModal';
 
 export const GamesLibrary = () => {
     const FILTERS_KEY = 'gamesLibraryFilters';
@@ -43,6 +44,8 @@ export const GamesLibrary = () => {
     const [page, setPage] = useState(1);
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [activeFilterCount, setActiveFilterCount] = useState(0);
+    const [queueing, setQueueing] = useState(false);
+    const [confirmAnalyzeOpen, setConfirmAnalyzeOpen] = useState(false);
     const [sortOrder, setSortOrder] = useState(() => {
         if (typeof window === 'undefined') return 'desc';
         return localStorage.getItem(SORT_ORDER_KEY) || 'desc';
@@ -100,6 +103,34 @@ export const GamesLibrary = () => {
         if (isBlack && game.result === '0-1') return 'win';
         if (isBlack && game.result === '1-0') return 'loss';
         return null;
+    };
+
+    const handleAnalyzeFiltered = async () => {
+        if (!games || games.length === 0) return;
+        setQueueing(true);
+        try {
+            const ordered = [...games];
+            const basePriority = Date.now();
+            await db.transaction('rw', db.games, async () => {
+                for (let i = 0; i < ordered.length; i++) {
+                    const g = ordered[i];
+                    if (!g?.id) continue;
+                    await db.games.update(g.id, {
+                        analyzed: false,
+                        analysisStatus: 'pending',
+                        analysisStartedAt: null,
+                        analysisHeartbeatAt: null,
+                        analysisProgress: 0,
+                        analysisLog: [],
+                        priority: basePriority + (ordered.length - i)
+                    });
+                }
+            });
+        } catch (error) {
+            console.error('Failed to queue filtered analysis', error);
+        } finally {
+            setQueueing(false);
+        }
     };
 
     const games = useLiveQuery(async () => {
@@ -312,6 +343,14 @@ export const GamesLibrary = () => {
                             {activeFilterCount > 0 && (
                                 <span className="chip-count">{activeFilterCount}</span>
                             )}
+                        </button>
+                        <button
+                            onClick={() => setConfirmAnalyzeOpen(true)}
+                            className="btn-secondary"
+                            disabled={queueing || !games || games.length === 0}
+                        >
+                            <Zap size={16} />
+                            {queueing ? 'Queueing...' : `Analyze Filtered${games ? ` (${games.length})` : ''}`}
                         </button>
                         <button
                             onClick={() => navigate('/import')}
@@ -780,6 +819,20 @@ export const GamesLibrary = () => {
                     </div>
                 </div>
             </div>
+
+            <ConfirmModal
+                open={confirmAnalyzeOpen}
+                title="Analyze filtered games?"
+                description="This will queue analysis for every game in the current filtered list. Existing analyses will be re-run."
+                meta={games ? `${games.length} games will be queued in the current order.` : null}
+                confirmText="Queue Analysis"
+                cancelText="Cancel"
+                onCancel={() => setConfirmAnalyzeOpen(false)}
+                onConfirm={async () => {
+                    setConfirmAnalyzeOpen(false);
+                    await handleAnalyzeFiltered();
+                }}
+            />
         </div>
     );
 };
