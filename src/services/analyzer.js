@@ -272,13 +272,6 @@ export const processGame = async (gameId) => {
         return;
     }
 
-    await db.games.update(gameId, {
-        analysisStatus: 'analyzing',
-        analysisStartedAt: new Date().toISOString(),
-        analysisHeartbeatAt: new Date().toISOString()
-    });
-    await db.positions.where('gameId').equals(gameId).delete();
-
     const chess = new Chess();
     try {
         chess.loadPgn(game.pgn);
@@ -288,10 +281,24 @@ export const processGame = async (gameId) => {
         return;
     }
 
+    await db.games.update(gameId, {
+        analysisStatus: 'analyzing',
+        analysisStartedAt: new Date().toISOString(),
+        analysisHeartbeatAt: new Date().toISOString()
+    });
+
     const history = chess.history({ verbose: true });
     chess.reset();
 
-    const analysisLog = [];
+    const existingLog = Array.isArray(game.analysisLog) ? game.analysisLog : [];
+    const resuming = existingLog.length > 0 && existingLog.length < history.length;
+    const analysisLog = resuming ? existingLog : [];
+
+    if (!resuming) {
+        // Only clear old positions if starting fresh
+        await db.positions.where('gameId').equals(gameId).delete();
+    }
+
     const reelPositions = [];
     let whiteAccuracySum = 0;
     let whiteMoves = 0;
@@ -302,6 +309,51 @@ export const processGame = async (gameId) => {
     let totalCpLoss = 0;
     let maxEvalSwing = 0;
     let prevScoreWhite = 0;
+
+    // If resuming, restore state from existing log
+    if (resuming) {
+        for (const entry of analysisLog) {
+            // Replay move to get board state correct
+            const move = history.find(m =>
+                (m.from + m.to + (m.promotion || '')).toLowerCase() === entry.move.toLowerCase()
+            );
+            if (move) chess.move(move);
+
+            // Re-hydrate stats
+            if (entry.turn === 'w') {
+                // Approximate accuracy reconstruction not strictly needed for resume, 
+                // but nice for final report. We can re-calculate if needed or just sum.
+                // Simpler: Just rely on final summation at end? No, we need sums.
+                // We'll trust the log has correct data.
+                // Calculate accuracy from evalDiff stored in log
+                const rawAcc = calculateAccuracy(entry.evalDiff);
+                const acc = applyClassificationPenalty(rawAcc, entry.classification);
+                whiteAccuracySum += acc;
+                whiteMoves++;
+            } else {
+                const rawAcc = calculateAccuracy(entry.evalDiff);
+                const acc = applyClassificationPenalty(rawAcc, entry.classification);
+                blackAccuracySum += acc;
+                blackMoves++;
+            }
+            totalCpLoss += entry.evalDiff;
+
+            // Streak
+            const rawAcc = calculateAccuracy(entry.evalDiff);
+            const acc = applyClassificationPenalty(rawAcc, entry.classification);
+            if (acc >= ACCURACY_STREAK) {
+                currentStreak++;
+                maxStreak = Math.max(maxStreak, currentStreak);
+            } else {
+                currentStreak = 0;
+            }
+
+            // Eval Swing
+            const score = entry.score; // White POV
+            maxEvalSwing = Math.max(maxEvalSwing, Math.abs(score - prevScoreWhite));
+            prevScoreWhite = score;
+        }
+    }
 
     let bookMoves = [];
     let bookMoveByFen = null;
@@ -331,8 +383,12 @@ export const processGame = async (gameId) => {
     const deepDepth = Math.max(0, Math.min(60, deepDepthRaw));
 
     // Performance Settings
-    const hash = parseInt(localStorage.getItem('engineHash') || '32', 10);
-    const threads = parseInt(localStorage.getItem('engineThreads') || '1', 10);
+    const hashRaw = parseInt(localStorage.getItem('engineHash') || '32', 10);
+    const hash = Math.min(32, Math.max(1, hashRaw)); // Clamp hash to 32MB to prevent WASM OOM
+
+    const threadsRaw = parseInt(localStorage.getItem('engineThreads') || '1', 10);
+    const threads = Math.min(1, Math.max(1, threadsRaw)); // Force 1 thread for single-threaded WASM
+
     const useNNUE = localStorage.getItem('engineUseNNUE') !== 'false'; // Default to true
 
     // Ensure engine options are up to date
@@ -363,7 +419,8 @@ export const processGame = async (gameId) => {
     };
 
     try {
-        for (let i = 0; i < history.length; i++) {
+        // Start from where we left off
+        for (let i = analysisLog.length; i < history.length; i++) {
 
             const move = history[i];
             const fenBefore = chess.fen();

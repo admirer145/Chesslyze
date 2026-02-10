@@ -7,6 +7,7 @@ class EngineService {
         this.initPromise = null;
         this.engineName = null;
         this.engineCaps = { nnue: false, multipv: false };
+        this.lastJobFinishTime = 0;
     }
 
     init() {
@@ -45,6 +46,7 @@ class EngineService {
                         .sort((a, b) => (a.multipv || 1) - (b.multipv || 1));
                     job.resolve({ bestMove: move, evaluation: job.lastEvaluation, pvLines });
                     this.jobs.delete(jobId);
+                    this.lastJobFinishTime = Date.now();
                 } else if (type === 'INFO') {
                     job.lastEvaluation = evaluation;
                     const multi = evaluation?.multipv || 1;
@@ -54,7 +56,14 @@ class EngineService {
                     console.error("[EngineService] Worker Error:", error);
                     job.reject(new Error(error || "Engine error"));
                     this.jobs.delete(jobId);
+                    this.lastJobFinishTime = Date.now();
                 }
+            };
+
+            this.worker.onerror = (err) => {
+                console.error("[EngineService] Worker Error (System):", err);
+                // If the worker crashes (e.g. exit(1)), we must reset it so next init() creates a new one.
+                this.terminate();
             };
 
             this.worker.postMessage({ type: 'INIT' });
@@ -76,7 +85,32 @@ class EngineService {
 
     setOptions(options = []) {
         if (!this.worker) return;
-        this.worker.postMessage({ type: 'SET_OPTIONS', data: { options } });
+
+        // Block if currently running a job
+        if (this.jobs.size > 0) {
+            console.warn("[EngineService] Ignoring setOptions because engine is busy analyzing.");
+            return;
+        }
+
+        // Block if a job finished very recently (likely in a loop), to prevent race conditions between moves
+        const timeSinceLastJob = Date.now() - (this.lastJobFinishTime || 0);
+        if (timeSinceLastJob < 2000) {
+            console.warn("[EngineService] Ignoring setOptions because engine was recently active (possible analysis loop).");
+            return;
+        }
+
+        // Safety clamp for WASM memory/thread limits
+        const safeOptions = options.map(opt => {
+            if (opt.name === 'Hash') {
+                return { ...opt, value: Math.min(64, Math.max(1, opt.value)) };
+            }
+            if (opt.name === 'Threads') {
+                return { ...opt, value: Math.min(1, Math.max(1, opt.value)) };
+            }
+            return opt;
+        });
+
+        this.worker.postMessage({ type: 'SET_OPTIONS', data: { options: safeOptions } });
     }
 
     async restart() {

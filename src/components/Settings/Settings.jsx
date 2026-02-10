@@ -20,8 +20,14 @@ export const Settings = () => {
         const v = parseInt(localStorage.getItem('engineDeepDepth') || '0', 10);
         return Number.isNaN(v) ? 0 : v;
     });
-    const [hash, setHash] = useState(() => parseInt(localStorage.getItem('engineHash') || '32', 10)); // Default 32MB
-    const [threads, setThreads] = useState(() => parseInt(localStorage.getItem('engineThreads') || '1', 10));
+    const [hash, setHash] = useState(() => {
+        const v = parseInt(localStorage.getItem('engineHash') || '32', 10);
+        return Math.min(512, Math.max(16, v)); // Clamp to 32MB max for safety
+    });
+    const [threads, setThreads] = useState(() => {
+        const v = parseInt(localStorage.getItem('engineThreads') || '1', 10);
+        return Math.min(16, Math.max(1, v)); // Force 1 thread
+    });
     const [useNNUE, setUseNNUE] = useState(() => {
         const stored = localStorage.getItem('engineUseNNUE');
         return stored === null ? true : stored === 'true';
@@ -44,12 +50,22 @@ export const Settings = () => {
     }, []);
 
     // Sync options
+    // Sync options with debounce
+    const isFirstRun = React.useRef(true);
     useEffect(() => {
-        engine.setOptions([
-            { name: 'Hash', value: hash },
-            { name: 'Threads', value: threads },
-            { name: 'Use NNUE', value: useNNUE },
-        ]);
+        if (isFirstRun.current) {
+            isFirstRun.current = false;
+            return;
+        }
+
+        const t = setTimeout(() => {
+            engine.setOptions([
+                { name: 'Hash', value: hash },
+                { name: 'Threads', value: threads },
+                { name: 'Use NNUE', value: useNNUE },
+            ]);
+        }, 500); // 500ms debounce
+        return () => clearTimeout(t);
     }, [hash, threads, useNNUE]);
 
     const stats = useMemo(() => {
@@ -268,9 +284,9 @@ export const Settings = () => {
     };
 
     const handleHashChange = (value) => {
-        setHash(value);
-        localStorage.setItem('engineHash', String(value));
-        // Force restart maybe? Or just setOption. Stockfish handles dynamic hash usually, but clear hash is good.
+        const v = Math.min(512, Math.max(16, value));
+        setHash(v);
+        localStorage.setItem('engineHash', String(v));
     };
 
     const handleThreadsChange = (value) => {
@@ -409,13 +425,13 @@ export const Settings = () => {
                             <input
                                 type="range"
                                 min="16"
-                                max="512"
+                                max="32"
                                 step="16"
                                 value={hash}
                                 onChange={(e) => handleHashChange(parseInt(e.target.value, 10))}
                                 className="w-full"
                             />
-                            <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Recommended: 64-128MB for desktop.</p>
+                            <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Max 32MB for stability.</p>
                         </div>
 
                         <div>
@@ -426,7 +442,7 @@ export const Settings = () => {
                             <input
                                 type="range"
                                 min="1"
-                                max="8" // Cap at 8 for safety, user can edit localstorage if they want more
+                                max="1" // Cap at 1 for WASM stability
                                 step="1"
                                 value={threads}
                                 onChange={(e) => handleThreadsChange(parseInt(e.target.value, 10))}
