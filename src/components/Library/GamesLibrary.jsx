@@ -5,17 +5,16 @@ import { useNavigate } from 'react-router-dom';
 import { Filter, Search, RotateCcw, ChevronDown, Trophy, Brain, Calendar, X } from 'lucide-react';
 
 export const GamesLibrary = () => {
-    const navigate = useNavigate();
-    const [page, setPage] = useState(1);
-    const [filtersOpen, setFiltersOpen] = useState(false);
-    const [activeFilterCount, setActiveFilterCount] = useState(0);
-    const [sortOrder, setSortOrder] = useState('desc');
-    const [filters, setFilters] = useState({
+    const FILTERS_KEY = 'gamesLibraryFilters';
+    const SORT_BY_KEY = 'gamesLibrarySortBy';
+    const SORT_ORDER_KEY = 'gamesLibrarySortOrder';
+    const DEFAULT_FILTERS = {
         result: 'all',
         color: 'all',
         opening: '',
         analyzed: 'all',
         perf: 'all',
+        rated: 'all',
         dateFrom: '',
         dateTo: '',
         player: '',
@@ -25,8 +24,34 @@ export const GamesLibrary = () => {
         oppRatingVal: '',
         titledOnly: false,
         botOnly: false
+    };
+
+    const loadFilters = () => {
+        if (typeof window === 'undefined') return DEFAULT_FILTERS;
+        try {
+            const raw = localStorage.getItem(FILTERS_KEY);
+            if (!raw) return DEFAULT_FILTERS;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object') return DEFAULT_FILTERS;
+            return { ...DEFAULT_FILTERS, ...parsed };
+        } catch {
+            return DEFAULT_FILTERS;
+        }
+    };
+
+    const navigate = useNavigate();
+    const [page, setPage] = useState(1);
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const [activeFilterCount, setActiveFilterCount] = useState(0);
+    const [sortOrder, setSortOrder] = useState(() => {
+        if (typeof window === 'undefined') return 'desc';
+        return localStorage.getItem(SORT_ORDER_KEY) || 'desc';
     });
-    const [sortBy, setSortBy] = useState('date');
+    const [sortBy, setSortBy] = useState(() => {
+        if (typeof window === 'undefined') return 'date';
+        return localStorage.getItem(SORT_BY_KEY) || 'date';
+    });
+    const [filters, setFilters] = useState(loadFilters);
 
     const heroUser = useMemo(() => localStorage.getItem('heroUser') || '', []);
     const heroLower = heroUser.toLowerCase();
@@ -39,6 +64,7 @@ export const GamesLibrary = () => {
         if (filters.opening !== '') count++;
         if (filters.analyzed !== 'all') count++;
         if (filters.perf !== 'all') count++;
+        if (filters.rated !== 'all') count++;
         if (filters.dateFrom !== '') count++;
         if (filters.dateTo !== '') count++;
         if (filters.player !== '') count++;
@@ -52,6 +78,16 @@ export const GamesLibrary = () => {
     useEffect(() => {
         setPage(1);
     }, [filters, sortOrder, sortBy]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
+            localStorage.setItem(SORT_BY_KEY, sortBy);
+            localStorage.setItem(SORT_ORDER_KEY, sortOrder);
+        } catch {
+            // Ignore persistence failures
+        }
+    }, [filters, sortBy, sortOrder]);
 
     const getHeroResult = (game) => {
         if (!heroUser) return null;
@@ -117,6 +153,10 @@ export const GamesLibrary = () => {
                 if (filters.analyzed === 'failed' && !isFailed) return false;
             }
             if (filters.perf !== 'all' && (game.perf || '').toLowerCase() !== filters.perf) return false;
+            if (filters.rated !== 'all') {
+                if (filters.rated === 'rated' && game.rated !== true) return false;
+                if (filters.rated === 'unrated' && game.rated !== false) return false;
+            }
             if (filters.opening) {
                 const target = `${game.openingName || ''} ${game.eco || ''}`.toLowerCase();
                 if (!target.includes(filters.opening.toLowerCase())) return false;
@@ -226,23 +266,7 @@ export const GamesLibrary = () => {
     };
 
     const clearFilter = (key) => {
-        const defaults = {
-            result: 'all',
-            color: 'all',
-            opening: '',
-            analyzed: 'all',
-            perf: 'all',
-            dateFrom: '',
-            dateTo: '',
-            player: '',
-            myRatingOp: 'any',
-            myRatingVal: '',
-            oppRatingOp: 'any',
-            oppRatingVal: '',
-            titledOnly: false,
-            botOnly: false
-        };
-        setFilters({ ...filters, [key]: defaults[key] });
+        setFilters({ ...filters, [key]: DEFAULT_FILTERS[key] });
     };
 
     const formatDate = (dateStr) => {
@@ -360,6 +384,22 @@ export const GamesLibrary = () => {
                                     key={o.v}
                                     className={`pill ${filters.perf === o.v ? 'pill--active' : ''}`}
                                     onClick={() => setFilters({ ...filters, perf: o.v })}
+                                >
+                                    {o.l}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="filter-group">
+                            {[
+                                { v: 'all', l: 'All Games' },
+                                { v: 'rated', l: 'Rated' },
+                                { v: 'unrated', l: 'Unrated' }
+                            ].map((o) => (
+                                <button
+                                    key={o.v}
+                                    className={`pill ${filters.rated === o.v ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, rated: o.v })}
                                 >
                                     {o.l}
                                 </button>
@@ -529,8 +569,7 @@ export const GamesLibrary = () => {
                         <div className="empty-actions">
                             <button
                                 onClick={() => setFilters({
-                                    result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: '',
-                                    myRatingOp: 'any', myRatingVal: '', oppRatingOp: 'any', oppRatingVal: '', titledOnly: false, botOnly: false
+                                    ...DEFAULT_FILTERS
                                 })}
                                 className="btn-secondary"
                             >
@@ -637,6 +676,20 @@ export const GamesLibrary = () => {
                         </div>
 
                         <div className="drawer-section">
+                            <label>Rated Games</label>
+                            <div className="drawer-input">
+                                <select
+                                    value={filters.rated}
+                                    onChange={(e) => setFilters({ ...filters, rated: e.target.value })}
+                                >
+                                    <option value="all">All</option>
+                                    <option value="rated">Rated</option>
+                                    <option value="unrated">Unrated</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="drawer-section">
                             <label>My Rating</label>
                             <div className="drawer-grid">
                                 <div className="drawer-input">
@@ -716,8 +769,7 @@ export const GamesLibrary = () => {
                             <label>Quick Reset</label>
                             <button
                                 onClick={() => setFilters({
-                                    result: 'all', color: 'all', opening: '', analyzed: 'all', perf: 'all', dateFrom: '', dateTo: '', player: '',
-                                    myRatingOp: 'any', myRatingVal: '', oppRatingOp: 'any', oppRatingVal: '', titledOnly: false, botOnly: false
+                                    ...DEFAULT_FILTERS
                                 })}
                                 className="btn-secondary w-full"
                             >

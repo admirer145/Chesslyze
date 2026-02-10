@@ -27,6 +27,7 @@ const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
 );
 
 export const Dashboard = () => {
+    const DASHBOARD_STATE_PREFIX = 'dashboardState:';
     const latestGame = useLiveQuery(() => db.games.orderBy('date').reverse().first());
     const [selectedGameId, setSelectedGameId] = useState(() => localStorage.getItem('activeGameId'));
 
@@ -130,6 +131,20 @@ export const Dashboard = () => {
 
     const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false);
     const [lastAnalyzeMode, setLastAnalyzeMode] = useState(() => localStorage.getItem('dashboardAnalyzeMode') || 'stockfish');
+    const loadSavedMoveIndex = (gameId, maxIndex) => {
+        if (!gameId || typeof window === 'undefined') return null;
+        try {
+            const raw = localStorage.getItem(`${DASHBOARD_STATE_PREFIX}${gameId}`);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            const saved = Number(parsed?.moveIndex);
+            if (!Number.isFinite(saved)) return null;
+            const clamped = Math.max(-1, Math.min(maxIndex, saved));
+            return clamped;
+        } catch {
+            return null;
+        }
+    };
 
     // Auto-switch to analysis tab when analysis completes
     useEffect(() => {
@@ -214,12 +229,19 @@ export const Dashboard = () => {
 
                     // Support deep-linking from Smart Reels: jump to the puzzle start position.
                     let nextIndex = -1;
+                    let usedJump = false;
                     const jumpGameIdRaw = Number(localStorage.getItem('activeGameJumpGameId'));
                     const jumpMoveIndexRaw = Number(localStorage.getItem('activeGameJumpMoveIndex'));
                     if (Number.isFinite(jumpGameIdRaw) && jumpGameIdRaw === activeGame.id && Number.isFinite(jumpMoveIndexRaw)) {
                         nextIndex = Math.max(-1, Math.min(moves.length - 1, jumpMoveIndexRaw));
+                        usedJump = true;
                         localStorage.removeItem('activeGameJumpGameId');
                         localStorage.removeItem('activeGameJumpMoveIndex');
+                    }
+
+                    if (!usedJump) {
+                        const savedIndex = loadSavedMoveIndex(activeGame.id, moves.length - 1);
+                        if (Number.isFinite(savedIndex)) nextIndex = savedIndex;
                     }
                     setMoveIndex(nextIndex);
 
@@ -230,6 +252,17 @@ export const Dashboard = () => {
             }
         }
     }, [activeGame]);
+
+    useEffect(() => {
+        if (!activeGame?.id) return;
+        try {
+            localStorage.setItem(`${DASHBOARD_STATE_PREFIX}${activeGame.id}`, JSON.stringify({
+                moveIndex
+            }));
+        } catch {
+            // Ignore persistence errors
+        }
+    }, [activeGame?.id, moveIndex]);
 
     const handleNext = () => {
         if (moveIndex < history.length - 1) {

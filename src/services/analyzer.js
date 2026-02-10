@@ -13,6 +13,34 @@ const THRESHOLDS = {
 const WINNING_THRESHOLD = 150;
 const ACCURACY_STREAK = 90;
 
+const clampInt = (value, min, max, fallback) => {
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+};
+
+const loadActiveEngineProfile = () => {
+    if (typeof window === 'undefined') return null;
+    try {
+        const rawProfiles = localStorage.getItem('engineProfiles');
+        const activeId = localStorage.getItem('activeEngineProfileId');
+        if (!rawProfiles) return null;
+        const parsed = JSON.parse(rawProfiles);
+        if (!Array.isArray(parsed) || !parsed.length) return null;
+        const selected = parsed.find((p) => p?.id === activeId) || parsed[0];
+        return {
+            depth: clampInt(selected?.depth ?? 15, 8, 60, 15),
+            multiPv: clampInt(selected?.multiPv ?? 1, 1, 5, 1),
+            deepDepth: clampInt(selected?.deepDepth ?? 0, 0, 60, 0),
+            hash: clampInt(selected?.hash ?? 32, 1, 32, 32),
+            threads: clampInt(selected?.threads ?? 1, 1, 1, 1),
+            useNNUE: typeof selected?.useNNUE === 'boolean' ? selected.useNNUE : true
+        };
+    } catch {
+        return null;
+    }
+};
+
 // Calculate accuracy based on centipawn loss (0-100)
 // Formula: 100 * exp(-0.002 * cpLoss)
 const calculateAccuracy = (cpLoss) => {
@@ -373,23 +401,26 @@ export const processGame = async (gameId) => {
         return bookMoves;
     };
 
-    const depthSetting = parseInt(localStorage.getItem('engineDepth') || '15', 10);
+    const profile = loadActiveEngineProfile();
+    const depthSetting = profile?.depth ?? parseInt(localStorage.getItem('engineDepth') || '15', 10);
     const depth = Number.isNaN(depthSetting) ? 15 : depthSetting;
     const shallowDepth = Math.max(8, depth - 4);
-    const multiPvSetting = parseInt(localStorage.getItem('engineMultiPv') || '1', 10);
+    const multiPvSetting = profile?.multiPv ?? parseInt(localStorage.getItem('engineMultiPv') || '1', 10);
     const multiPv = Number.isNaN(multiPvSetting) ? 1 : Math.max(1, Math.min(5, multiPvSetting));
-    const deepDepthSetting = parseInt(localStorage.getItem('engineDeepDepth') || '0', 10);
+    const deepDepthSetting = profile?.deepDepth ?? parseInt(localStorage.getItem('engineDeepDepth') || '0', 10);
     const deepDepthRaw = Number.isNaN(deepDepthSetting) ? 0 : deepDepthSetting;
     const deepDepth = Math.max(0, Math.min(60, deepDepthRaw));
 
     // Performance Settings
-    const hashRaw = parseInt(localStorage.getItem('engineHash') || '32', 10);
+    const hashRaw = profile?.hash ?? parseInt(localStorage.getItem('engineHash') || '32', 10);
     const hash = Math.min(32, Math.max(1, hashRaw)); // Clamp hash to 32MB to prevent WASM OOM
 
-    const threadsRaw = parseInt(localStorage.getItem('engineThreads') || '1', 10);
+    const threadsRaw = profile?.threads ?? parseInt(localStorage.getItem('engineThreads') || '1', 10);
     const threads = Math.min(1, Math.max(1, threadsRaw)); // Force 1 thread for single-threaded WASM
 
-    const useNNUE = localStorage.getItem('engineUseNNUE') !== 'false'; // Default to true
+    const useNNUE = typeof profile?.useNNUE === 'boolean'
+        ? profile.useNNUE
+        : localStorage.getItem('engineUseNNUE') !== 'false'; // Default to true
 
     // Ensure engine options are up to date
     engine.setOptions([

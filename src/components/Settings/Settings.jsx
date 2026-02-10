@@ -5,33 +5,103 @@ import { engine } from '../../services/engine';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { Chess } from 'chess.js';
 
+const ENGINE_PROFILES_KEY = 'engineProfiles';
+const ENGINE_ACTIVE_KEY = 'activeEngineProfileId';
+
+const clampInt = (value, min, max, fallback) => {
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+};
+
+const buildLegacyProfile = () => {
+    const depth = clampInt(localStorage.getItem('engineDepth') || '15', 8, 60, 15);
+    const multiPv = clampInt(localStorage.getItem('engineMultiPv') || '3', 1, 5, 3);
+    const deepDepth = clampInt(localStorage.getItem('engineDeepDepth') || '0', 0, 60, 0);
+    const hash = clampInt(localStorage.getItem('engineHash') || '32', 16, 32, 32);
+    const threads = clampInt(localStorage.getItem('engineThreads') || '1', 1, 16, 1);
+    const stored = localStorage.getItem('engineUseNNUE');
+    const useNNUE = stored === null ? true : stored === 'true';
+    const preset = localStorage.getItem('enginePreset') || 'custom';
+
+    return {
+        id: 'stockfish-default',
+        name: 'Stockfish Default',
+        type: 'stockfish',
+        preset,
+        depth,
+        multiPv,
+        deepDepth,
+        hash,
+        threads,
+        useNNUE
+    };
+};
+
+const normalizeProfile = (profile, fallbackId) => {
+    const safe = profile && typeof profile === 'object' ? profile : {};
+    return {
+        id: String(safe.id || fallbackId),
+        name: String(safe.name || 'Engine Profile'),
+        type: safe.type || 'stockfish',
+        preset: safe.preset || 'custom',
+        depth: clampInt(safe.depth ?? 15, 8, 60, 15),
+        multiPv: clampInt(safe.multiPv ?? 3, 1, 5, 3),
+        deepDepth: clampInt(safe.deepDepth ?? 0, 0, 60, 0),
+        hash: clampInt(safe.hash ?? 32, 16, 32, 32),
+        threads: clampInt(safe.threads ?? 1, 1, 16, 1),
+        useNNUE: typeof safe.useNNUE === 'boolean' ? safe.useNNUE : true
+    };
+};
+
+const getInitialEngineState = () => {
+    let profiles = [];
+    try {
+        const raw = localStorage.getItem(ENGINE_PROFILES_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                profiles = parsed.map((p, idx) => normalizeProfile(p, `stockfish-${idx + 1}`));
+            }
+        }
+    } catch {
+        profiles = [];
+    }
+
+    if (!profiles.length) {
+        profiles = [buildLegacyProfile()];
+    }
+
+    let activeId = localStorage.getItem(ENGINE_ACTIVE_KEY);
+    if (!activeId || !profiles.find((p) => p.id === activeId)) {
+        activeId = profiles[0].id;
+    }
+
+    return { profiles, activeId };
+};
+
 export const Settings = () => {
     const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
     const [status, setStatus] = useState(null);
-    const [depth, setDepth] = useState(() => parseInt(localStorage.getItem('engineDepth') || '15', 10));
-    const [multiPv, setMultiPv] = useState(() => {
-        const v = parseInt(localStorage.getItem('engineMultiPv') || '3', 10);
-        return Number.isNaN(v) ? 3 : v;
-    });
-    const [preset, setPreset] = useState(() => localStorage.getItem('enginePreset') || 'custom');
     const [bookStatus, setBookStatus] = useState(null);
     const [engineInfo, setEngineInfo] = useState(() => engine.getInfo());
-    const [deepDepth, setDeepDepth] = useState(() => {
-        const v = parseInt(localStorage.getItem('engineDeepDepth') || '0', 10);
-        return Number.isNaN(v) ? 0 : v;
-    });
-    const [hash, setHash] = useState(() => {
-        const v = parseInt(localStorage.getItem('engineHash') || '32', 10);
-        return Math.min(512, Math.max(16, v)); // Clamp to 32MB max for safety
-    });
-    const [threads, setThreads] = useState(() => {
-        const v = parseInt(localStorage.getItem('engineThreads') || '1', 10);
-        return Math.min(16, Math.max(1, v)); // Force 1 thread
-    });
-    const [useNNUE, setUseNNUE] = useState(() => {
-        const stored = localStorage.getItem('engineUseNNUE');
-        return stored === null ? true : stored === 'true';
-    });
+    const initialEngineState = useMemo(() => getInitialEngineState(), []);
+    const [profiles, setProfiles] = useState(initialEngineState.profiles);
+    const [activeProfileId, setActiveProfileId] = useState(initialEngineState.activeId);
+    const [newProfileName, setNewProfileName] = useState('');
+
+    const activeProfile = useMemo(() => {
+        if (!profiles.length) return null;
+        return profiles.find((p) => p.id === activeProfileId) || profiles[0];
+    }, [profiles, activeProfileId]);
+
+    const depth = activeProfile?.depth ?? 15;
+    const multiPv = activeProfile?.multiPv ?? 3;
+    const preset = activeProfile?.preset ?? 'custom';
+    const deepDepth = activeProfile?.deepDepth ?? 0;
+    const hash = activeProfile?.hash ?? 32;
+    const threads = activeProfile?.threads ?? 1;
+    const useNNUE = activeProfile?.useNNUE ?? true;
 
     const games = useLiveQuery(async () => {
         return await db.games.toArray();
@@ -48,6 +118,37 @@ export const Settings = () => {
 
         return () => clearTimeout(t);
     }, []);
+
+    useEffect(() => {
+        if (!profiles.length) return;
+        if (!profiles.find((p) => p.id === activeProfileId)) {
+            setActiveProfileId(profiles[0].id);
+        }
+    }, [profiles, activeProfileId]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(ENGINE_PROFILES_KEY, JSON.stringify(profiles));
+            localStorage.setItem(ENGINE_ACTIVE_KEY, activeProfileId);
+        } catch {
+            // Ignore persistence failures
+        }
+    }, [profiles, activeProfileId]);
+
+    useEffect(() => {
+        if (!activeProfile) return;
+        try {
+            localStorage.setItem('engineDepth', String(depth));
+            localStorage.setItem('engineMultiPv', String(multiPv));
+            localStorage.setItem('engineDeepDepth', String(deepDepth));
+            localStorage.setItem('engineHash', String(hash));
+            localStorage.setItem('engineThreads', String(threads));
+            localStorage.setItem('engineUseNNUE', String(useNNUE));
+            localStorage.setItem('enginePreset', String(preset));
+        } catch {
+            // Ignore persistence failures
+        }
+    }, [activeProfile, depth, multiPv, deepDepth, hash, threads, useNNUE, preset]);
 
     // Sync options
     // Sync options with debounce
@@ -264,56 +365,61 @@ export const Settings = () => {
         }
     };
 
+    const updateActiveProfile = (patch) => {
+        if (!activeProfile) return;
+        setProfiles((prev) => prev.map((p) => (p.id === activeProfileId ? { ...p, ...patch } : p)));
+    };
+
     const handleDepthChange = (value) => {
-        setDepth(value);
-        localStorage.setItem('engineDepth', String(value));
-        setPreset('custom');
-        localStorage.setItem('enginePreset', 'custom');
+        updateActiveProfile({ depth: value, preset: 'custom' });
     };
 
     const handleMultiPvChange = (value) => {
-        setMultiPv(value);
-        localStorage.setItem('engineMultiPv', String(value));
-        setPreset('custom');
-        localStorage.setItem('enginePreset', 'custom');
+        updateActiveProfile({ multiPv: value, preset: 'custom' });
     };
 
     const handleDeepDepthChange = (value) => {
-        setDeepDepth(value);
-        localStorage.setItem('engineDeepDepth', String(value));
+        updateActiveProfile({ deepDepth: value });
     };
 
     const handleHashChange = (value) => {
-        const v = Math.min(512, Math.max(16, value));
-        setHash(v);
-        localStorage.setItem('engineHash', String(v));
+        const v = Math.min(32, Math.max(16, value));
+        updateActiveProfile({ hash: v });
     };
 
     const handleThreadsChange = (value) => {
         const v = Math.max(1, Math.min(16, value));
-        setThreads(v);
-        localStorage.setItem('engineThreads', String(v));
+        updateActiveProfile({ threads: v });
     };
 
     const handleNNUEChange = (enabled) => {
-        setUseNNUE(enabled);
-        localStorage.setItem('engineUseNNUE', String(enabled));
+        updateActiveProfile({ useNNUE: enabled });
     };
 
     const handlePresetChange = (value) => {
-        setPreset(value);
-        localStorage.setItem('enginePreset', value);
         const presets = {
             fast: { depth: 10, multiPv: 1 },
             balanced: { depth: 14, multiPv: 2 },
             deep: { depth: 20, multiPv: 3 }
         };
+        if (value === 'custom') {
+            updateActiveProfile({ preset: 'custom' });
+            return;
+        }
         const next = presets[value];
         if (!next) return;
-        setDepth(next.depth);
-        setMultiPv(next.multiPv);
-        localStorage.setItem('engineDepth', String(next.depth));
-        localStorage.setItem('engineMultiPv', String(next.multiPv));
+        updateActiveProfile({ preset: value, depth: next.depth, multiPv: next.multiPv });
+    };
+
+    const handleAddProfile = () => {
+        if (!activeProfile) return;
+        const trimmed = newProfileName.trim();
+        const name = trimmed || `Profile ${profiles.length + 1}`;
+        const id = `engine-${Date.now()}`;
+        const next = { ...activeProfile, id, name, preset: 'custom' };
+        setProfiles((prev) => [...prev, next]);
+        setActiveProfileId(id);
+        setNewProfileName('');
     };
 
     return (
@@ -387,15 +493,55 @@ export const Settings = () => {
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Engine Profile</h3>
+                    <h3 className="text-sm font-semibold text-primary mb-3">Engine Profiles</h3>
                     <p className="text-sm text-secondary mb-4">
-                        This app currently runs a single Stockfish build locally, but you can switch between analysis profiles
-                        (depth + top lines) depending on speed vs accuracy.
+                        Group engine settings by profile so you can switch between fast and deep analysis modes.
                     </p>
                     <div className="text-xs text-muted mb-4">
                         Engine: {engineInfo?.name || 'Unknown'} • NNUE: {engineInfo?.caps?.nnue ? 'Yes' : 'No'} • MultiPV: {engineInfo?.caps?.multipv ? 'Yes' : 'No'}
                     </div>
-                    <div className="flex items-center gap-3">
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label className="text-xs text-muted uppercase tracking-wider">Active Profile</label>
+                            <select
+                                value={activeProfileId}
+                                onChange={(e) => setActiveProfileId(e.target.value)}
+                                className="bg-subtle border rounded px-3 py-2 text-sm text-primary w-full mt-2"
+                            >
+                                {profiles.map((profile) => (
+                                    <option key={profile.id} value={profile.id}>
+                                        {profile.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs text-muted uppercase tracking-wider">Profile Name</label>
+                            <input
+                                value={activeProfile?.name || ''}
+                                onChange={(e) => updateActiveProfile({ name: e.target.value })}
+                                className="bg-subtle border rounded px-3 py-2 text-sm text-primary w-full mt-2"
+                                placeholder="e.g. Deep Analysis"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs text-muted uppercase tracking-wider">New Profile</label>
+                            <div className="flex items-center gap-2 mt-2">
+                                <input
+                                    value={newProfileName}
+                                    onChange={(e) => setNewProfileName(e.target.value)}
+                                    className="bg-subtle border rounded px-3 py-2 text-sm text-primary w-full"
+                                    placeholder="Profile name"
+                                />
+                                <button className="btn btn-secondary" onClick={handleAddProfile}>
+                                    Add
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 mt-4">
                         <select
                             value={preset}
                             onChange={(e) => handlePresetChange(e.target.value)}
@@ -406,116 +552,123 @@ export const Settings = () => {
                             <option value="deep">Deep</option>
                             <option value="custom">Custom</option>
                         </select>
-                        <div className="text-xs text-muted">Applies to new analysis runs.</div>
+                        <div className="text-xs text-muted">Applies to new analysis runs for {activeProfile?.name || 'this profile'}.</div>
                     </div>
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Performance Tuning</h3>
+                    <h3 className="text-sm font-semibold text-primary mb-3">Active Engine Settings</h3>
                     <p className="text-sm text-secondary mb-4">
-                        Optimize engine performance for your device.
+                        Tuning for <span className="text-primary font-medium">{activeProfile?.name || 'Active Profile'}</span>.
                     </p>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <label className="text-sm font-medium text-primary">Hash Size (MB)</label>
-                                <span className="text-xs text-muted">{hash} MB</span>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div className="rounded-lg border border-white/5 bg-subtle/40 p-4">
+                            <h4 className="text-sm font-semibold text-primary mb-2">Performance Tuning</h4>
+                            <p className="text-xs text-secondary mb-4">
+                                Optimize engine performance for your device.
+                            </p>
+                            <div className="grid grid-cols-1 gap-4">
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-sm font-medium text-primary">Hash Size (MB)</label>
+                                        <span className="text-xs text-muted">{hash} MB</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="16"
+                                        max="32"
+                                        step="16"
+                                        value={hash}
+                                        onChange={(e) => handleHashChange(parseInt(e.target.value, 10))}
+                                        className="w-full"
+                                    />
+                                    <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Max 32MB for stability.</p>
+                                </div>
+
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-sm font-medium text-primary">Threads</label>
+                                        <span className="text-xs text-muted">{threads} Core{threads !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="1"
+                                        max="1"
+                                        step="1"
+                                        value={threads}
+                                        onChange={(e) => handleThreadsChange(parseInt(e.target.value, 10))}
+                                        className="w-full"
+                                    />
+                                    <p className="text-xs text-muted mt-1">More threads = faster analysis. Don't exceed your CPU core count.</p>
+                                </div>
+
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="checkbox"
+                                        id="nnue-toggle"
+                                        checked={useNNUE}
+                                        onChange={(e) => handleNNUEChange(e.target.checked)}
+                                        className="w-4 h-4"
+                                    />
+                                    <label htmlFor="nnue-toggle" className="text-sm font-medium text-primary cursor-pointer select-none">
+                                        Enable NNUE (Neural Net)
+                                    </label>
+                                </div>
                             </div>
-                            <input
-                                type="range"
-                                min="16"
-                                max="32"
-                                step="16"
-                                value={hash}
-                                onChange={(e) => handleHashChange(parseInt(e.target.value, 10))}
-                                className="w-full"
-                            />
-                            <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Max 32MB for stability.</p>
                         </div>
 
-                        <div>
-                            <div className="flex items-center justify-between mb-2">
-                                <label className="text-sm font-medium text-primary">Threads</label>
-                                <span className="text-xs text-muted">{threads} Core{threads !== 1 ? 's' : ''}</span>
+                        <div className="rounded-lg border border-white/5 bg-subtle/40 p-4">
+                            <h4 className="text-sm font-semibold text-primary mb-2">Engine Depth</h4>
+                            <p className="text-xs text-secondary mb-4">
+                                Higher depth improves accuracy but is slower. Depth 50+ is expensive in WASM; consider using MultiPV first.
+                            </p>
+                            <div className="flex items-center gap-4">
+                                <input
+                                    type="range"
+                                    min="8"
+                                    max="60"
+                                    value={depth}
+                                    onChange={(e) => handleDepthChange(parseInt(e.target.value, 10))}
+                                />
+                                <div className="text-sm text-primary">Depth {depth}</div>
                             </div>
-                            <input
-                                type="range"
-                                min="1"
-                                max="1" // Cap at 1 for WASM stability
-                                step="1"
-                                value={threads}
-                                onChange={(e) => handleThreadsChange(parseInt(e.target.value, 10))}
-                                className="w-full"
-                            />
-                            <p className="text-xs text-muted mt-1">More threads = faster analysis. Don't exceed your CPU core count.</p>
                         </div>
 
-                        <div className="flex items-center gap-3">
-                            <input
-                                type="checkbox"
-                                id="nnue-toggle"
-                                checked={useNNUE}
-                                onChange={(e) => handleNNUEChange(e.target.checked)}
-                                className="w-4 h-4"
-                            />
-                            <label htmlFor="nnue-toggle" className="text-sm font-medium text-primary cursor-pointer select-none">
-                                Enable NNUE (Neural Net)
-                            </label>
+                        <div className="rounded-lg border border-white/5 bg-subtle/40 p-4">
+                            <h4 className="text-sm font-semibold text-primary mb-2">Top Lines (MultiPV)</h4>
+                            <p className="text-xs text-secondary mb-4">
+                                Show more than one best line. This also helps avoid false "opening mistakes" by considering multiple strong candidates.
+                            </p>
+                            <div className="flex items-center gap-4">
+                                <input
+                                    type="range"
+                                    min="1"
+                                    max="5"
+                                    value={multiPv}
+                                    onChange={(e) => handleMultiPvChange(parseInt(e.target.value, 10))}
+                                />
+                                <div className="text-sm text-primary">{multiPv} line{multiPv === 1 ? '' : 's'}</div>
+                            </div>
                         </div>
-                    </div>
-                </div>
 
-
-                <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Engine Depth</h3>
-                    <p className="text-sm text-secondary mb-4">
-                        Higher depth improves accuracy but is slower. Depth 50+ is expensive in WASM; consider using MultiPV first.
-                    </p>
-                    <div className="flex items-center gap-4">
-                        <input
-                            type="range"
-                            min="8"
-                            max="60"
-                            value={depth}
-                            onChange={(e) => handleDepthChange(parseInt(e.target.value, 10))}
-                        />
-                        <div className="text-sm text-primary">Depth {depth}</div>
-                    </div>
-                </div>
-
-                <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Top Lines (MultiPV)</h3>
-                    <p className="text-sm text-secondary mb-4">
-                        Show more than one best line. This also helps avoid false "opening mistakes" by considering multiple strong candidates.
-                    </p>
-                    <div className="flex items-center gap-4">
-                        <input
-                            type="range"
-                            min="1"
-                            max="5"
-                            value={multiPv}
-                            onChange={(e) => handleMultiPvChange(parseInt(e.target.value, 10))}
-                        />
-                        <div className="text-sm text-primary">{multiPv} line{multiPv === 1 ? '' : 's'}</div>
-                    </div>
-                </div>
-
-                <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Deep Verification Depth</h3>
-                    <p className="text-sm text-secondary mb-4">
-                        Optional second-pass depth used only to re-check moves the engine flags as blunders.
-                        This reduces false positives without analyzing every move at depth 50+.
-                    </p>
-                    <div className="flex items-center gap-4">
-                        <input
-                            type="range"
-                            min="0"
-                            max="60"
-                            value={deepDepth}
-                            onChange={(e) => handleDeepDepthChange(parseInt(e.target.value, 10))}
-                        />
-                        <div className="text-sm text-primary">{deepDepth === 0 ? 'Off' : `Depth ${deepDepth}`}</div>
+                        <div className="rounded-lg border border-white/5 bg-subtle/40 p-4">
+                            <h4 className="text-sm font-semibold text-primary mb-2">Deep Verification Depth</h4>
+                            <p className="text-xs text-secondary mb-4">
+                                Optional second-pass depth used only to re-check moves the engine flags as blunders.
+                                This reduces false positives without analyzing every move at depth 50+.
+                            </p>
+                            <div className="flex items-center gap-4">
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="60"
+                                    value={deepDepth}
+                                    onChange={(e) => handleDeepDepthChange(parseInt(e.target.value, 10))}
+                                />
+                                <div className="text-sm text-primary">{deepDepth === 0 ? 'Off' : `Depth ${deepDepth}`}</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
