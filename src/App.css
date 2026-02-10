@@ -3793,12 +3793,13 @@ a {
 }
 
 .variant-card {
-  padding: 14px;
+  padding: 18px;
   border-radius: 16px;
   border: 1px solid rgba(148, 163, 184, 0.15);
   background: rgba(15, 23, 42, 0.75);
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  min-height: 120px;
 }
 
 .variant-card__title {
@@ -3826,7 +3827,7 @@ a {
 
 .journey-list-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
   gap: 16px;
 }
 
@@ -3848,9 +3849,43 @@ a {
   border-bottom: 1px solid rgba(148, 163, 184, 0.08);
 }
 
+.list-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.list-rows--spaced {
+  justify-content: space-around;
+  min-height: 200px;
+}
+
+.list-row--link {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0 0 8px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.list-row--link:hover {
+  background: rgba(148, 163, 184, 0.06);
+  border-radius: 12px;
+  padding: 8px 10px;
+  margin: -8px -10px 0;
+}
+
 .list-row:last-child {
   border-bottom: none;
   padding-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  .journey-list-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .list-title {

@@ -35,14 +35,25 @@ export const ChessJourney = () => {
         perfStats,
         accuracySeries,
         accuracyByPerf,
+        gamesPlayedSeries,
         openings,
         openingEvolution,
         topVictories,
-        favoriteGames
+        topAccurateGames,
+        mostBrilliantGames,
+        winsVsTitled,
+        favoriteOpponents
     } = useJourneyData();
 
     const heroInitial = summary?.heroUser ? summary.heroUser.charAt(0).toUpperCase() : '?';
     const navigate = useNavigate();
+
+    const openGame = (gameId) => {
+        if (!gameId) return;
+        localStorage.setItem('activeGameId', String(gameId));
+        window.dispatchEvent(new Event('activeGameChanged'));
+        navigate('/');
+    };
 
     const handleShare = async () => {
         const shareData = {
@@ -71,10 +82,14 @@ export const ChessJourney = () => {
             perfCounts,
             accuracySeries,
             accuracyByPerf,
+            gamesPlayedSeries,
             openings,
             openingEvolution,
             topVictories,
-            favoriteGames
+            topAccurateGames,
+            mostBrilliantGames,
+            winsVsTitled,
+            favoriteOpponents
         };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -368,6 +383,44 @@ export const ChessJourney = () => {
                             </ResponsiveContainer>
                         )}
                     </div>
+                    <div className="journey-chart-card">
+                        <div className="chart-title">Games Played Over Time</div>
+                        {gamesPlayedSeries.length === 0 ? (
+                            <div className="timeline-empty">
+                                <Activity size={20} />
+                                <h3>No games found</h3>
+                                <p>Import games to build a timeline.</p>
+                            </div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height={240}>
+                                <AreaChart data={gamesPlayedSeries}>
+                                    <defs>
+                                        <linearGradient id="journeyGames" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
+                                            <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid stroke="rgba(148,163,184,0.15)" vertical={false} />
+                                    <XAxis dataKey="date" hide />
+                                    <YAxis hide />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
+                                        itemStyle={{ color: '#f59e0b' }}
+                                        formatter={(value) => [`${value}`, 'Games']}
+                                        labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                                    />
+                                    <Area
+                                        type="monotone"
+                                        dataKey="games"
+                                        stroke="#f59e0b"
+                                        strokeWidth={2.5}
+                                        fillOpacity={1}
+                                        fill="url(#journeyGames)"
+                                    />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
                 </div>
             </section>
 
@@ -472,38 +525,97 @@ export const ChessJourney = () => {
                     </div>
                 </div>
                 <div className="journey-list-grid">
-                    <div className="journey-list-card">
-                        <div className="chart-title">Top Rated Victories</div>
-                        {topVictories.length === 0 ? (
-                            <div className="list-empty">No victories yet.</div>
-                        ) : (
-                            topVictories.map((g) => (
-                                <div key={g.id} className="list-row">
-                                    <div>
-                                        <div className="list-title">{g.opponent}</div>
-                                        <div className="list-meta">{g.perf} • {new Date(g.date).toLocaleDateString()}</div>
-                                    </div>
-                                    <div className="list-value">+{g.ratingDiff}</div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                    <div className="journey-list-card">
-                        <div className="chart-title">Favorite Games (Accuracy)</div>
-                        {favoriteGames.length === 0 ? (
-                            <div className="list-empty">Analyze games to surface favorites.</div>
-                        ) : (
-                            favoriteGames.map((g) => (
-                                <div key={g.id} className="list-row">
-                                    <div>
-                                        <div className="list-title">{g.opponent}</div>
-                                        <div className="list-meta">{g.perf} • {new Date(g.date).toLocaleDateString()}</div>
-                                    </div>
-                                    <div className="list-value">{g.accuracy}%</div>
-                                </div>
-                            ))
-                        )}
-                    </div>
+                    {topVictories.length > 0 && (
+                        <div className="journey-list-card">
+                            <div className="chart-title">Top Rated Victories</div>
+                            <div className={`list-rows ${topVictories.length < 5 ? 'list-rows--spaced' : ''}`}>
+                                {topVictories.map((g) => (
+                                    <button key={g.id} type="button" className="list-row list-row--link" onClick={() => openGame(g.id)}>
+                                        <div>
+                                            <div className="list-title">{g.opponent}</div>
+                                            <div className="list-meta">{g.perf} • {new Date(g.date).toLocaleDateString()}</div>
+                                        </div>
+                                        <div className="list-value">{g.oppRating}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {topAccurateGames.length > 0 && (
+                        <div className="journey-list-card">
+                            <div className="chart-title">Top Accurate Games</div>
+                            <div className={`list-rows ${topAccurateGames.length < 5 ? 'list-rows--spaced' : ''}`}>
+                                {topAccurateGames.map((g) => (
+                                    <button key={g.id} type="button" className="list-row list-row--link" onClick={() => openGame(g.id)}>
+                                        <div>
+                                            <div className="list-title">{g.opponent}</div>
+                                            <div className="list-meta">{g.perf} • {new Date(g.date).toLocaleDateString()}</div>
+                                        </div>
+                                        <div className="list-value">{g.accuracy}%</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {mostBrilliantGames.length > 0 && (
+                        <div className="journey-list-card">
+                            <div className="chart-title">Most Brilliant Games</div>
+                            <div className={`list-rows ${mostBrilliantGames.length < 5 ? 'list-rows--spaced' : ''}`}>
+                                {mostBrilliantGames.map((g) => (
+                                    <button key={g.id} type="button" className="list-row list-row--link" onClick={() => openGame(g.id)}>
+                                        <div>
+                                            <div className="list-title">{g.opponent}</div>
+                                            <div className="list-meta">
+                                                Brilliant {g.brilliant} • Great {g.great} • {g.perf} • {new Date(g.date).toLocaleDateString()}
+                                            </div>
+                                        </div>
+                                        <div className="list-value">{g.total}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {favoriteOpponents.length > 0 && (
+                        <div className="journey-list-card">
+                            <div className="chart-title">Favorite Opponents</div>
+                            <div className={`list-rows ${favoriteOpponents.length < 5 ? 'list-rows--spaced' : ''}`}>
+                                {favoriteOpponents.map((g) => (
+                                    <button key={g.opponent} type="button" className="list-row list-row--link" onClick={() => openGame(g.id)}>
+                                        <div>
+                                            <div className="list-title">{g.opponent}</div>
+                                            <div className="list-meta">
+                                                {g.perf} • {g.date ? new Date(g.date).toLocaleDateString() : 'Unknown date'}
+                                            </div>
+                                        </div>
+                                        <div className="list-value">{g.count}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {winsVsTitled.length > 0 && (
+                        <div className="journey-list-card">
+                            <div className="chart-title">Wins vs Titled Players</div>
+                            <div className={`list-rows ${winsVsTitled.length < 5 ? 'list-rows--spaced' : ''}`}>
+                                {winsVsTitled.map((g) => (
+                                    <button key={g.id} type="button" className="list-row list-row--link" onClick={() => openGame(g.id)}>
+                                        <div>
+                                            <div className="list-title">{g.opponentTitle ? `${g.opponentTitle} ${g.opponent}` : g.opponent}</div>
+                                            <div className="list-meta">{g.perf} • {new Date(g.date).toLocaleDateString()}</div>
+                                        </div>
+                                        <div className="list-value">{g.oppRating || '-'}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {(winsVsTitled.length === 0
+                        && topVictories.length === 0
+                        && topAccurateGames.length === 0
+                        && mostBrilliantGames.length === 0
+                        && favoriteOpponents.length === 0) && (
+                        <div className="list-empty">No highlights yet. Analyze or import more games.</div>
+                    )}
                 </div>
             </section>
 

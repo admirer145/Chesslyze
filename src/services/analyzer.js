@@ -3,14 +3,14 @@ import { engine } from './engine';
 import { Chess } from 'chess.js';
 
 const THRESHOLDS = {
-    BLUNDER: 200,
-    MISTAKE: 90,
-    INACCURACY: 30,
+    BLUNDER: 250,
+    MISTAKE: 100,
+    INACCURACY: 40,
     GOOD: 10,
     BEST: 10
 };
 
-const WINNING_THRESHOLD = 150;
+const WINNING_THRESHOLD = 200;
 const ACCURACY_STREAK = 90;
 
 const MATE_SCORE = 100000;
@@ -93,79 +93,118 @@ const getClassification = ({
     gapToSecond,
     secondScoreCp,
     playerRating,
-    isRecapture
+    isRecapture,
+    motifs
 }) => {
     const before = typeof scoreBefore === 'number' ? scoreBefore : 0;
     const after = typeof scoreAfter === 'number' ? scoreAfter : 0;
+    const motifsArr = Array.isArray(motifs) ? motifs : [];
 
     const isOpening = phase === 'opening';
 
     // --- Core thresholds (centipawns) ---
-    const WINNING = 200;        // +2.0
-    const CLEAR_EDGE = 120;     // +1.2
-    const NEAR_EQUAL = 60;      // ±0.6
+    const WINNING = 200;        // +2.0  — clearly winning
+    const CLEAR_EDGE = 150;     // +1.5  — solid advantage
+    const SLIGHT_EDGE = 80;     // +0.8  — moderate edge
+    const NEAR_EQUAL = 50;      // ±0.5  — roughly equal
 
-    const swing = after - before;
+    // --- Helpers for position brackets ---
+    const isMateScore = (cp) => Math.abs(cp) >= MATE_SCORE - 10000;
+    const bothMatesForSameSide = isMateScore(before) && isMateScore(after) &&
+        Math.sign(before) === Math.sign(after);
 
-    const nearEqualBefore = Math.abs(before) <= NEAR_EQUAL;
-
-    const saved =
-        before <= -CLEAR_EDGE &&
-        after >= -NEAR_EQUAL;
-
-    const improvedToWin =
-        nearEqualBefore &&
-        after >= CLEAR_EDGE;
-
-    const recoveredFromLosing =
-        before <= -WINNING &&
-        after >= -CLEAR_EDGE;
+    const beforeWinning = before >= WINNING;
+    const afterWinning = after >= WINNING;
+    const beforeLosing = before <= -WINNING;
+    const afterLosing = after <= -WINNING;
+    const stillWinning = beforeWinning && after >= SLIGHT_EDGE;
+    const stillLosing = beforeLosing && afterLosing;
 
     const deferredSac = typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -3;
     const sacrifice = materialDelta <= -2 || deferredSac;
     const majorMaterialLoss = materialDelta <= -5; // rook/queen
 
     const rating = typeof playerRating === 'number' ? playerRating : null;
-    const greatFactor = rating ? (rating < 1200 ? 0.75 : rating < 1600 ? 0.85 : rating < 2000 ? 0.95 : 1) : 1;
     const brilliantFactor = rating ? (rating < 1200 ? 0.9 : rating < 1600 ? 0.95 : 1) : 1;
 
-    const ONLY_MOVE_GAP = 100 * greatFactor;
-    const onlyMove = typeof gapToSecond === 'number' && gapToSecond >= ONLY_MOVE_GAP;
     const secondScore = typeof secondScoreCp === 'number' ? secondScoreCp : null;
-    const criticalDrop = secondScore !== null && (secondScore <= -NEAR_EQUAL || (before - secondScore) >= CLEAR_EDGE);
-    const criticalOnlyMove = onlyMove && criticalDrop;
+    const gap = typeof gapToSecond === 'number' ? gapToSecond : null;
 
-    // Opening forgiveness
-    const multiplier = isOpening ? 1.3 : 1;
+    // Opening forgiveness — be more lenient in book territory
+    const multiplier = isOpening ? 1.4 : 1;
+
+    // Tactical motifs present in the position
+    const hasTacticalMotif = motifsArr.some(m => ['fork', 'pin', 'skewer'].includes(m));
 
     // =========================
     // BEST / GREAT / BRILLIANT
     // =========================
     if (isBestMove) {
-        const BRILLIANT_GAP = 80 * brilliantFactor;
         const immediateSac = materialDelta <= -2;
-        const significantSac = materialDelta <= -3 || deferredSac;
+        const pieceSac = materialDelta <= -3 || deferredSac; // minor piece or more
+        const BRILLIANT_GAP = 100 * brilliantFactor;
 
-        // 🔥 BRILLIANT: best/near-best + sacrifice + not already winning
+        // 🔥 BRILLIANT: Best move + genuine sacrifice + non-obvious
+        // Requires:
+        //  - Not a simple recapture
+        //  - Genuine material sacrifice (piece-level, OR minor + tactical motif)
+        //  - Not already in an overwhelming position (< +5.0)
+        //  - Position stays reasonable after the sacrifice
+        //  - Move stands out from alternatives (gap to second best)
+        const notOverwhelming = before < 500;
+        const positionHeld = after >= -NEAR_EQUAL && after >= before - 50;
+        const standoutMove = gap !== null && gap >= BRILLIANT_GAP;
+
         if (
             !isRecapture &&
-            (significantSac || (immediateSac && swing >= BRILLIANT_GAP)) &&
-            before < WINNING &&
-            after >= -NEAR_EQUAL &&
-            after >= before - 30 &&
-            (onlyMove || (typeof gapToSecond === 'number' && gapToSecond >= BRILLIANT_GAP))
+            notOverwhelming &&
+            positionHeld &&
+            (
+                // Path A: Piece-level sacrifice (knight/bishop/rook/queen)
+                (pieceSac && standoutMove) ||
+                // Path B: Smaller sacrifice (pawn/exchange) but with a tactical motif
+                (immediateSac && hasTacticalMotif && standoutMove) ||
+                // Path C: Piece sacrifice that dramatically improves position
+                (pieceSac && (after - before) >= 60)
+            )
         ) {
             return 'brilliant';
         }
 
-        // ⭐ GREAT: critical necessity or big improvement (not just a nice best move)
-        const criticalGreat =
-            criticalOnlyMove ||
-            saved ||
-            improvedToWin ||
-            recoveredFromLosing;
+        // ⭐ GREAT: Best move in a truly critical moment — rare and special
+        // Only triggers when the move is exceptionally important:
+        //  1. Recovered from a losing position (was -2.0+, now near equal or better)
+        //  2. Only move that prevents disaster (second-best leads to losing)
+        //  3. Found the move to convert from equal to winning with difficulty
 
-        if (criticalGreat && (!isRecapture || saved || improvedToWin || recoveredFromLosing)) {
+        const recoveredFromLosing =
+            before <= -WINNING &&
+            after >= -NEAR_EQUAL;
+
+        const savedFromCollapse =
+            before <= -CLEAR_EDGE &&
+            after >= -SLIGHT_EDGE &&
+            secondScore !== null &&
+            secondScore <= -WINNING; // second-best leads to losing
+
+        const onlyMovePreventingDisaster =
+            gap !== null && gap >= 200 &&
+            secondScore !== null &&
+            secondScore <= -CLEAR_EDGE &&
+            after >= -NEAR_EQUAL;
+
+        const criticalConversion =
+            Math.abs(before) <= SLIGHT_EDGE &&
+            after >= WINNING &&
+            gap !== null && gap >= 150;
+
+        const isGreat =
+            recoveredFromLosing ||
+            savedFromCollapse ||
+            onlyMovePreventingDisaster ||
+            criticalConversion;
+
+        if (isGreat && !isRecapture) {
             return 'great';
         }
 
@@ -176,24 +215,42 @@ const getClassification = ({
     // NON-BEST MOVES
     // =========================
 
-    // If you're already winning and stay clearly winning, soften the label.
-    if (before >= WINNING && after >= WINNING) {
-        if (evalDiff <= 120 * multiplier) return 'good';
-        if (evalDiff <= 220 * multiplier) return 'inaccuracy';
-        // let larger drops continue to be mistakes/blunders
+    // --- Mate-zone protection ---
+    // If both evaluations are forced mates for the same side, never worse than inaccuracy.
+    // Mate-in-4 → Mate-in-7 is NOT a blunder, you're still winning with checkmate guaranteed.
+    if (bothMatesForSameSide) {
+        if (evalDiff > THRESHOLDS.INACCURACY) return 'inaccuracy';
+        return 'good';
     }
 
-    // --- Hard blunder: evaluation flip ---
-    const flipThreshold = CLEAR_EDGE;
+    // --- Still winning protection ---
+    // If you were winning and you're STILL clearly winning, cap severity.
+    // Losing some advantage while comfortably winning is not a blunder.
+    if (stillWinning) {
+        if (evalDiff <= 150 * multiplier) return 'good';
+        if (evalDiff <= 300 * multiplier) return 'inaccuracy';
+        return 'mistake'; // cap — never blunder if still winning
+    }
+
+    // --- Still losing protection ---
+    // If you were losing and still losing, cap at mistake (you can't lose what you didn't have)
+    if (stillLosing && !majorMaterialLoss) {
+        if (evalDiff <= 200 * multiplier) return 'good';
+        if (evalDiff <= 400 * multiplier) return 'inaccuracy';
+        return 'mistake'; // cap
+    }
+
+    // --- Hard blunder: evaluation bracket flip ---
+    // Winning → Losing or Winning → Equal (devastating collapse)
     if (
-        (before >= flipThreshold && after <= -flipThreshold) ||
-        (before <= -flipThreshold && after >= flipThreshold)
+        (before >= CLEAR_EDGE && after <= -SLIGHT_EDGE) ||
+        (before <= -CLEAR_EDGE && after >= SLIGHT_EDGE)
     ) {
         return 'blunder';
     }
 
-    // --- Material blunder ---
-    if (majorMaterialLoss && after < -CLEAR_EDGE) {
+    // --- Material blunder: major piece loss that puts you in a losing position ---
+    if (majorMaterialLoss && after <= -CLEAR_EDGE) {
         return 'blunder';
     }
 
@@ -202,24 +259,25 @@ const getClassification = ({
         return 'good';
     }
 
-    // --- Blunder / mistake / inaccuracy by eval loss ---
+    // --- Blunder by eval loss: only if position character fundamentally changes ---
     if (
         evalDiff > THRESHOLDS.BLUNDER * multiplier &&
-        (!isOpening || evalDiff > 220)
+        (!isOpening || evalDiff > 300) &&
+        // Must cross from positive to negative territory (or near it)
+        (after <= -SLIGHT_EDGE || (before >= SLIGHT_EDGE && after <= NEAR_EQUAL))
     ) {
         return 'blunder';
     }
 
-    const wasBetter = before >= CLEAR_EDGE;
-    const nowWorse = after <= -CLEAR_EDGE;
-
+    // --- Mistake: meaningful advantage lost ---
     if (
         evalDiff > THRESHOLDS.MISTAKE * multiplier &&
-        (wasBetter || nowWorse)
+        (before >= SLIGHT_EDGE || after <= -SLIGHT_EDGE)
     ) {
         return 'mistake';
     }
 
+    // --- Inaccuracy: suboptimal but not damaging ---
     if (evalDiff > THRESHOLDS.INACCURACY * multiplier) {
         return 'inaccuracy';
     }
@@ -429,13 +487,13 @@ const generatePlanHint = ({ phase, motifs, classification }) => {
 
 const generateExplanation = (classification, evalDiff, move, bestMove) => {
     if (classification === 'book') return `Book move. This is a known opening line.`;
-    if (classification === 'brilliant') return `Brilliant!! A difficult-to-find, winning sacrifice. ${move} is the engine's top choice.`;
-    if (classification === 'great') return `Great! A critical, often only, good move. ${move} keeps you on track.`;
-    if (classification === 'blunder') return `This move loses significant material or allows a mate. You played ${move}, but ${bestMove} was much better.`;
-    if (classification === 'mistake') return `A mistake that gives away your advantage. ${bestMove} would have kept the position equal or better.`;
-    if (classification === 'inaccuracy') return `A slightly passive move. ${bestMove} was more precise.`;
-    if (classification === 'best') return `Best move. ${move} is the highest-engine-rated choice.`;
-    if (classification === 'good') return `Good move. Solid and correct, though not the very best.`;
+    if (classification === 'brilliant') return `Brilliant!! An outstanding sacrifice — ${move} is a deep, non-obvious move that the engine confirms as the best choice.`;
+    if (classification === 'great') return `Great find! ${move} is a critical move — the only way to hold the position or turn the game around.`;
+    if (classification === 'blunder') return `Blunder! This move fundamentally changes the position. You played ${move}, but ${bestMove} was necessary to maintain your standing.`;
+    if (classification === 'mistake') return `Mistake. This move gives away a significant portion of your advantage. ${bestMove} was the stronger continuation.`;
+    if (classification === 'inaccuracy') return `Inaccuracy. A slightly imprecise move — ${bestMove} was more accurate.`;
+    if (classification === 'best') return `Best move. ${move} is the engine's top recommendation.`;
+    if (classification === 'good') return `Good move. Solid and reasonable, though not the absolute best.`;
     return `Analysis: CP Loss ${Math.round(evalDiff)}`;
 };
 
@@ -794,7 +852,8 @@ export const processGame = async (gameId) => {
                 gapToSecond,
                 secondScoreCp,
                 playerRating,
-                isRecapture
+                isRecapture,
+                motifs
             });
 
             // Book is its own move-quality bucket (not "good/best") so stats are not confusing.
@@ -835,7 +894,8 @@ export const processGame = async (gameId) => {
                         gapToSecond: deepGapToSecond,
                         secondScoreCp: deepSecondScoreCp,
                         playerRating,
-                        isRecapture
+                        isRecapture,
+                        motifs
                     });
 
                     // If the deep pass disagrees, trust it (prevents reels from being polluted).

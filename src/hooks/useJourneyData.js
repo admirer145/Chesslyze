@@ -38,6 +38,9 @@ const normalizeGame = (g, heroLower) => {
     const heroRating = isWhite ? (g.whiteRating ?? g.whiteElo) : (g.blackRating ?? g.blackElo);
     const oppRating = isWhite ? (g.blackRating ?? g.blackElo) : (g.whiteRating ?? g.whiteElo);
     const opponent = isWhite ? black : white;
+    const whiteTitle = (g.whiteTitle || '').trim();
+    const blackTitle = (g.blackTitle || '').trim();
+    const opponentTitle = isWhite ? blackTitle : whiteTitle;
     const perf = (g.perf || g.speed || 'standard').toLowerCase();
     const openingName = g.openingName || g.eco || 'Unknown Opening';
     const openingFamily = openingName.split(':')[0]?.trim() || openingName;
@@ -49,6 +52,7 @@ const normalizeGame = (g, heroLower) => {
 
     const analyzed = g.analysisStatus === 'completed' || !!g.analyzed;
     const accuracy = analyzed && g.accuracy ? (heroColor === 'white' ? g.accuracy.white : g.accuracy.black) : null;
+    const analysisLog = Array.isArray(g.analysisLog) ? g.analysisLog : [];
 
     return {
         id: g.id,
@@ -58,13 +62,15 @@ const normalizeGame = (g, heroLower) => {
         heroRating: typeof heroRating === 'number' ? heroRating : null,
         oppRating: typeof oppRating === 'number' ? oppRating : null,
         opponent,
+        opponentTitle,
         perf,
         rated,
         result,
         openingName,
         openingFamily,
         analyzed,
-        accuracy
+        accuracy,
+        analysisLog
     };
 };
 
@@ -117,6 +123,10 @@ const average = (values) => {
     if (!values.length) return null;
     return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
 };
+
+const normalizeTitle = (title) => (title || '').trim().toUpperCase();
+const isBotTitle = (title) => normalizeTitle(title) === 'BOT';
+const isBotOpponent = (game) => isBotTitle(game.opponentTitle);
 
 export const useJourneyData = () => {
     const heroUser = useMemo(() => (localStorage.getItem('heroUser') || '').toLowerCase(), []);
@@ -191,6 +201,19 @@ export const useJourneyData = () => {
         })).sort((a, b) => b.accuracy - a.accuracy);
     }, [analyzedGames]);
 
+    const gamesPlayedSeries = useMemo(() => {
+        const buckets = {};
+        filteredGames.forEach((g) => {
+            const key = monthKey(g.date);
+            if (!buckets[key]) buckets[key] = 0;
+            buckets[key] += 1;
+        });
+        return Object.entries(buckets).map(([key, value]) => ({
+            date: key,
+            games: value
+        })).sort((a, b) => a.date.localeCompare(b.date));
+    }, [filteredGames]);
+
     const openings = useMemo(() => {
         const map = {};
         filteredGames.forEach((g) => {
@@ -258,21 +281,23 @@ export const useJourneyData = () => {
 
     const topVictories = useMemo(() => {
         return filteredGames
-            .filter((g) => g.result === 'win' && typeof g.oppRating === 'number' && typeof g.heroRating === 'number')
+            .filter((g) => g.result === 'win' && typeof g.oppRating === 'number')
+            .filter((g) => !isBotOpponent(g))
             .map((g) => ({
                 id: g.id,
                 opponent: g.opponent,
-                ratingDiff: g.oppRating - g.heroRating,
+                oppRating: g.oppRating,
                 date: g.date,
                 perf: g.perf
             }))
-            .sort((a, b) => b.ratingDiff - a.ratingDiff)
+            .sort((a, b) => b.oppRating - a.oppRating)
             .slice(0, 5);
     }, [filteredGames]);
 
-    const favoriteGames = useMemo(() => {
+    const topAccurateGames = useMemo(() => {
         return analyzedGames
-            .filter((g) => g.result === 'win' && typeof g.accuracy === 'number')
+            .filter((g) => typeof g.accuracy === 'number')
+            .filter((g) => !isBotOpponent(g))
             .map((g) => ({
                 id: g.id,
                 opponent: g.opponent,
@@ -283,6 +308,90 @@ export const useJourneyData = () => {
             .sort((a, b) => b.accuracy - a.accuracy)
             .slice(0, 5);
     }, [analyzedGames]);
+
+    const mostBrilliantGames = useMemo(() => {
+        const heroTurn = (g) => (g.heroColor === 'white' ? 'w' : 'b');
+        return analyzedGames
+            .filter((g) => !isBotOpponent(g))
+            .map((g) => {
+                const heroSide = heroTurn(g);
+                const log = Array.isArray(g.analysisLog) ? g.analysisLog : [];
+                let brilliant = 0;
+                let great = 0;
+                log.forEach((entry) => {
+                    if (entry?.turn !== heroSide) return;
+                    if (entry.classification === 'brilliant') brilliant += 1;
+                    if (entry.classification === 'great') great += 1;
+                });
+                const total = brilliant + great;
+                return {
+                    id: g.id,
+                    opponent: g.opponent,
+                    brilliant,
+                    great,
+                    total,
+                    date: g.date,
+                    perf: g.perf
+                };
+            })
+            .filter((g) => g.total > 0)
+            .sort((a, b) => {
+                if (b.total !== a.total) return b.total - a.total;
+                if (b.brilliant !== a.brilliant) return b.brilliant - a.brilliant;
+                return b.great - a.great;
+            })
+            .slice(0, 5);
+    }, [analyzedGames]);
+
+    const favoriteOpponents = useMemo(() => {
+        const map = new Map();
+        filteredGames.forEach((g) => {
+            if (!g.opponent || isBotOpponent(g)) return;
+            const existing = map.get(g.opponent) || {
+                opponent: g.opponent,
+                count: 0,
+                lastDate: null,
+                lastGameId: null,
+                perf: g.perf
+            };
+            existing.count += 1;
+            const d = toDate(g.date);
+            if (d && (!existing.lastDate || d > existing.lastDate)) {
+                existing.lastDate = d;
+                existing.lastGameId = g.id;
+                existing.perf = g.perf;
+            }
+            map.set(g.opponent, existing);
+        });
+
+        return Array.from(map.values())
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5)
+            .map((entry) => ({
+                id: entry.lastGameId,
+                opponent: entry.opponent,
+                count: entry.count,
+                date: entry.lastDate ? entry.lastDate.toISOString() : null,
+                perf: entry.perf
+            }));
+    }, [filteredGames]);
+
+    const winsVsTitled = useMemo(() => {
+        return filteredGames
+            .filter((g) => g.result === 'win')
+            .filter((g) => !isBotOpponent(g))
+            .map((g) => ({
+                id: g.id,
+                opponent: g.opponent,
+                opponentTitle: normalizeTitle(g.opponentTitle),
+                oppRating: g.oppRating,
+                date: g.date,
+                perf: g.perf
+            }))
+            .filter((g) => g.opponentTitle && !isBotTitle(g.opponentTitle))
+            .sort((a, b) => (b.oppRating || 0) - (a.oppRating || 0))
+            .slice(0, 5);
+    }, [filteredGames]);
 
     const summary = useMemo(() => {
         const totalGames = filteredGames.length;
@@ -317,9 +426,13 @@ export const useJourneyData = () => {
         perfStats,
         accuracySeries,
         accuracyByPerf,
+        gamesPlayedSeries,
         openings,
         openingEvolution,
         topVictories,
-        favoriteGames
+        topAccurateGames,
+        mostBrilliantGames,
+        winsVsTitled,
+        favoriteOpponents
     };
 };
