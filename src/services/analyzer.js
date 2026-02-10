@@ -442,12 +442,22 @@ export const processGame = async (gameId) => {
     }
 
     // Ensure engine options are up to date
-    engine.setOptions([
+    const engineOptions = [
         { name: 'Hash', value: hash },
-        { name: 'Threads', value: threads },
-        { name: 'Use NNUE', value: useNNUE },
-        { name: 'EvalFile', value: 'nn-5af11540bbfe.nnue' }
-    ]);
+        { name: 'Threads', value: threads }
+    ];
+
+    if (newVersion?.startsWith('17.1')) {
+        // Stockfish 17.1 no longer has "Use NNUE" option
+        // Default nets for 17.1 (must exist in /public)
+        engineOptions.push({ name: 'EvalFile', value: 'nn-1c0000000000.nnue' });
+        engineOptions.push({ name: 'EvalFileSmall', value: 'nn-37f18f62d772.nnue' });
+    } else {
+        engineOptions.push({ name: 'Use NNUE', value: useNNUE });
+        engineOptions.push({ name: 'EvalFile', value: 'nn-5af11540bbfe.nnue' });
+    }
+
+    engine.setOptions(engineOptions);
 
     const safeAnalyze = async (fen, opts) => {
         try {

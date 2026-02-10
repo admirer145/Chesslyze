@@ -31,6 +31,7 @@ class EngineService {
 
                 this.worker.onmessage = (e) => {
                     const { type, data, error, name, caps, jobId, evaluation, move } = e.data;
+                    console.log(`[EngineService] <- Worker [${type}]:`, e.data);
 
                     if (type === 'ENGINE_ID') {
                         this.engineName = name || null;
@@ -78,6 +79,14 @@ class EngineService {
 
                 this.worker.postMessage({ type: 'INIT', version });
                 console.log(`[EngineService] Initialized worker with version ${version}`);
+
+                // Add debug listener for all messages
+                const originalPostMessage = this.worker.postMessage.bind(this.worker);
+                this.worker.postMessage = (msg) => {
+                    console.log("[EngineService] -> Worker:", msg);
+                    originalPostMessage(msg);
+                };
+
                 resolve();
 
             } catch (err) {
