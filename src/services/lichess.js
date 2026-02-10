@@ -46,6 +46,9 @@ const mapLichessGame = (game) => {
         variant: game.variant || 'standard',
         rated: typeof game.rated === 'boolean' ? game.rated : null,
         tournament: game.tournament || '',
+        isHero: true,
+        source: 'lichess',
+        importTag: 'hero',
         analyzed: false,
         analysisStatus: 'idle'
     };

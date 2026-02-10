@@ -108,6 +108,20 @@ db.version(15).stores({
     });
 });
 
+db.version(16).stores({
+    games: '++id, lichessId, pgnHash, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority, rated, variant, whiteTitle, blackTitle, isHero, source, importTag',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt'
+}).upgrade((tx) => {
+    return tx.table('games').toCollection().modify((g) => {
+        if (typeof g.isHero !== 'boolean') g.isHero = true;
+        if (!g.source) g.source = g.lichessId ? 'lichess' : 'pgn';
+        if (!g.importTag) g.importTag = '';
+        if (!g.pgnHash) g.pgnHash = '';
+    });
+});
+
 export const saveAIAnalysis = async (gameId, analysisData, promptVersion = '1.0') => {
     const existing = await db.ai_analyses.where('gameId').equals(gameId).first();
     const record = {
@@ -188,8 +202,9 @@ export const bulkUpsertGames = async (games) => {
 export const getLatestGameTimestamp = async (username) => {
     const latest = await db.games
         .filter(g => {
+            if (typeof g.isHero === 'boolean') return g.isHero;
             const isHero = username && (g.white?.toLowerCase() === username.toLowerCase() || g.black?.toLowerCase() === username.toLowerCase());
-            return isHero;
+            return !!isHero;
         })
         .reverse()
         .sortBy('timestamp');

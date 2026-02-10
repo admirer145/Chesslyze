@@ -656,6 +656,7 @@ export const ReelFeed = () => {
         for (const pos of candidates) {
             const game = gameMap.get(pos.gameId);
             if (!game) continue;
+            if (typeof game.isHero === 'boolean' && game.isHero === false) continue;
 
             const gameWhite = typeof game.white === 'string' ? game.white : game.white?.name || '';
             const gameBlack = typeof game.black === 'string' ? game.black : game.black?.name || '';

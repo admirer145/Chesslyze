@@ -10,6 +10,7 @@ export const GamesLibrary = () => {
     const SORT_BY_KEY = 'gamesLibrarySortBy';
     const SORT_ORDER_KEY = 'gamesLibrarySortOrder';
     const DEFAULT_FILTERS = {
+        scope: 'all',
         result: 'all',
         color: 'all',
         opening: '',
@@ -63,6 +64,7 @@ export const GamesLibrary = () => {
     useEffect(() => {
         let count = 0;
         if (filters.result !== 'all') count++;
+        if (filters.scope !== 'all') count++;
         if (filters.color !== 'all') count++;
         if (filters.opening !== '') count++;
         if (filters.analyzed !== 'all') count++;
@@ -157,6 +159,13 @@ export const GamesLibrary = () => {
 
         const all = await db.games.toArray();
         const filtered = all.filter((game) => {
+            const isHeroGame = typeof game.isHero === 'boolean'
+                ? game.isHero
+                : heroUser && (game.white?.toLowerCase() === heroUser.toLowerCase() || game.black?.toLowerCase() === heroUser.toLowerCase());
+
+            if (filters.scope === 'hero' && !isHeroGame) return false;
+            if (filters.scope === 'others' && isHeroGame) return false;
+
             if (filters.result !== 'all') {
                 const heroResult = getHeroResult(game);
                 if (!heroResult || heroResult !== filters.result) return false;
@@ -447,6 +456,22 @@ export const GamesLibrary = () => {
 
                         <div className="filter-group">
                             {[
+                                { v: 'all', l: 'All Games' },
+                                { v: 'hero', l: 'Hero Only' },
+                                { v: 'others', l: 'Others' }
+                            ].map((o) => (
+                                <button
+                                    key={o.v}
+                                    className={`pill ${filters.scope === o.v ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, scope: o.v })}
+                                >
+                                    {o.l}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="filter-group">
+                            {[
                                 { v: 'all', l: 'All Status' },
                                 { v: 'yes', l: 'Analyzed' },
                                 { v: 'no', l: 'Pending' },
@@ -711,6 +736,20 @@ export const GamesLibrary = () => {
                                         onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
                                     />
                                 </div>
+                            </div>
+                        </div>
+
+                        <div className="drawer-section">
+                            <label>Game Scope</label>
+                            <div className="drawer-input">
+                                <select
+                                    value={filters.scope}
+                                    onChange={(e) => setFilters({ ...filters, scope: e.target.value })}
+                                >
+                                    <option value="all">All Games</option>
+                                    <option value="hero">Hero Only</option>
+                                    <option value="others">Others</option>
+                                </select>
                             </div>
                         </div>
 

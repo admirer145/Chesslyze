@@ -9,6 +9,13 @@ class EngineService {
         this.engineCaps = { nnue: false, multipv: false };
         this.lastJobFinishTime = 0;
         this.version = null;
+        this.debug = false;
+        try {
+            this.debug = (typeof window !== 'undefined' && window.__ENGINE_DEBUG__ === true)
+                || localStorage.getItem('engineDebug') === 'true';
+        } catch {
+            // ignore
+        }
     }
 
     init(version = '17.1-single') {
@@ -31,7 +38,9 @@ class EngineService {
 
                 this.worker.onmessage = (e) => {
                     const { type, data, error, name, caps, jobId, evaluation, move } = e.data;
-                    console.log(`[EngineService] <- Worker [${type}]:`, e.data);
+                    if (this.debug) {
+                        console.log(`[EngineService] <- Worker [${type}]:`, e.data);
+                    }
 
                     if (type === 'ENGINE_ID') {
                         this.engineName = name || null;
@@ -77,13 +86,17 @@ class EngineService {
                     reject(err);
                 };
 
-                this.worker.postMessage({ type: 'INIT', version });
-                console.log(`[EngineService] Initialized worker with version ${version}`);
+                this.worker.postMessage({ type: 'INIT', version, debug: this.debug });
+                if (this.debug) {
+                    console.log(`[EngineService] Initialized worker with version ${version}`);
+                }
 
                 // Add debug listener for all messages
                 const originalPostMessage = this.worker.postMessage.bind(this.worker);
                 this.worker.postMessage = (msg) => {
-                    console.log("[EngineService] -> Worker:", msg);
+                    if (this.debug) {
+                        console.log("[EngineService] -> Worker:", msg);
+                    }
                     originalPostMessage(msg);
                 };
 
@@ -178,10 +191,12 @@ class EngineService {
                 pvLinesByMultiPv: new Map()
             });
 
+            const movetime = opts.movetime;
+
             this.worker.postMessage({
                 type: 'ANALYZE',
                 jobId,
-                data: { fen, depth, multiPv }
+                data: { fen, depth, multiPv, movetime }
             });
 
             // Fallback timeout to prevent infinite hangs

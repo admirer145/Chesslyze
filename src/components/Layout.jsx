@@ -75,7 +75,7 @@ export const Layout = ({ children }) => {
                         <NavItem to="/openings" icon={BookOpen} label="Opening Explorer" collapsed={collapsed} />
                         <NavItem to="/profile" icon={User} label="Chess Journey" collapsed={collapsed} />
                         <div className="my-2 border-t mx-4" />
-                        <NavItem to="/import" icon={Import} label="Sync Games" collapsed={collapsed} />
+                        <NavItem to="/import" icon={Import} label="Import Games" collapsed={collapsed} />
                         <NavItem to="/settings" icon={Settings} label="Settings" collapsed={collapsed} />
                     </div>
 

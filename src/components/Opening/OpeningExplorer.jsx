@@ -325,6 +325,13 @@ export const OpeningExplorer = () => {
         };
 
         allGames.forEach(game => {
+            const whiteName = getPlayerName(game.white).toLowerCase();
+            const blackName = getPlayerName(game.black).toLowerCase();
+            const isHeroGame = typeof game.isHero === 'boolean'
+                ? game.isHero
+                : (heroUser && (whiteName === heroUser.toLowerCase() || blackName === heroUser.toLowerCase()));
+            if (!isHeroGame) return;
+
             const name = game.eco || 'Unknown';
             if (!stats[name]) {
                 stats[name] = {

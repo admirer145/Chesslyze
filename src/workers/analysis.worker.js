@@ -24,15 +24,13 @@ self.postMessage = (msg) => {
     }
 };
 
-// Log wrapper that sends debug info to main thread or console
-const logCheck = (msg) => {
-    // Uncomment to debug worker internals in browser console
-    // console.log("Worker Middleware:", msg);
-}
+let debug = false;
+const log = (...args) => { if (debug) console.log(...args); };
+const warn = (...args) => { if (debug) console.warn(...args); };
 
 // Handler for parsing raw UCI output into structured messages
 const handleEngineOutput = (line) => {
-    // logCheck("Engine Output: " + line);
+    // debug: log("Engine Output:", line);
 
     if (line.startsWith('id name')) {
         const name = line.substring('id name'.length).trim();
@@ -87,7 +85,7 @@ const handleEngineOutput = (line) => {
         }
     } else if (line === 'readyok') {
         // no-op
-    } else {
+    } else if (debug) {
         // Surface raw lines for debugging (errors/info strings)
         rawPostMessage({ type: 'RAW', line });
     }
@@ -111,10 +109,10 @@ const initEngine = (version) => {
     // Check for required features
     const isSecure = self.crossOriginIsolated;
     const hasSAB = typeof SharedArrayBuffer !== 'undefined';
-    console.log(`Worker: Environment Check - Secure Context: ${isSecure}, SharedArrayBuffer: ${hasSAB}`);
+    log(`Worker: Environment Check - Secure Context: ${isSecure}, SharedArrayBuffer: ${hasSAB}`);
 
     if (version === '17.1-multi' && (!isSecure || !hasSAB)) {
-        console.warn("Worker: Multi-threaded engine requested but environment is not secure. Fallback to single-threaded?");
+        warn("Worker: Multi-threaded engine requested but environment is not secure. Fallback to single-threaded?");
         rawPostMessage({ type: 'WARNING', message: "Multi-threaded engine requires secure context (COOP/COEP Headers)." });
     }
 
@@ -123,7 +121,7 @@ const initEngine = (version) => {
         : '/stockfish-17-single.js';
 
     try {
-        console.log(`Worker: Spawning engine worker ${scriptPath}...`);
+        log(`Worker: Spawning engine worker ${scriptPath}...`);
         engine = new Worker(scriptPath, { type: 'classic' });
 
         engine.onmessage = (e) => {
@@ -159,7 +157,7 @@ self.addEventListener('message', (e) => {
 
     const sendToEngine = (cmd) => {
         if (!engineReady) {
-            console.warn("Worker: Engine not ready, buffering or dropping command:", cmd);
+            warn("Worker: Engine not ready, buffering or dropping command:", cmd);
             setTimeout(() => sendToEngine(cmd), 500);
             return;
         }
@@ -169,7 +167,7 @@ self.addEventListener('message', (e) => {
                 pendingCommands.push(cmd);
                 return;
             }
-            console.log("Worker: Sending to engine via worker:", cmd);
+            log("Worker: Sending to engine via worker:", cmd);
             engine.postMessage(cmd);
             return;
         }
@@ -179,23 +177,29 @@ self.addEventListener('message', (e) => {
 
     if (type === 'INIT') {
         const version = data?.version || e.data.version;
+        debug = !!(data && data.debug);
         initEngine(version);
     }
     // ... rest of listener
 
     if (type === 'ANALYZE') {
         currentJobId = jobId;
-        console.log("Worker: Context ANALYZE received, starting processing...");
+        log("Worker: Context ANALYZE received, starting processing...");
         // Reset state for new analysis
         // stop previous
-        const { fen, depth = 15, multiPv = 1 } = data;
+        const { fen, depth = 15, multiPv = 1, movetime } = data;
         currentMultiPv = Math.max(1, Math.min(8, parseInt(multiPv, 10) || 1));
 
         sendToEngine('stop');
         sendToEngine('ucinewgame');
         sendToEngine(`setoption name MultiPV value ${currentMultiPv}`);
         sendToEngine(`position fen ${fen}`);
-        sendToEngine(`go depth ${depth}`);
+
+        let goCmd = `go depth ${depth}`;
+        if (movetime && typeof movetime === 'number' && movetime > 0) {
+            goCmd += ` movetime ${movetime}`;
+        }
+        sendToEngine(goCmd);
     }
 
     if (type === 'SET_OPTIONS') {

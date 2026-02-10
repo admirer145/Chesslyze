@@ -49,8 +49,9 @@ const normalizeProfile = (profile, fallbackId) => {
         depth: clampInt(safe.depth ?? 15, 8, 60, 15),
         multiPv: clampInt(safe.multiPv ?? 3, 1, 5, 3),
         deepDepth: clampInt(safe.deepDepth ?? 0, 0, 60, 0),
-        hash: clampInt(safe.hash ?? 32, 16, 256, 32), // Allow up to 256MB for desktop/17.1
-        threads: clampInt(safe.threads ?? 1, 1, 32, 1), // Allow more threads
+        hash: clampInt(safe.hash ?? 32, 16, 2048, 32), // Allow up to 2048MB
+        threads: clampInt(safe.threads ?? 1, 1, 128, 1), // Allow more threads (clamped by UI later)
+        timePerMove: clampInt(safe.timePerMove ?? 0, 0, 60000, 0), // 0 = off, max 60s
         useNNUE: typeof safe.useNNUE === 'boolean' ? safe.useNNUE : true,
         version: safe.version || '17.1-single'
     };
@@ -95,6 +96,9 @@ export const Settings = () => {
     const [confirmStopOpen, setConfirmStopOpen] = useState(false);
     const [confirmBookOpen, setConfirmBookOpen] = useState(false);
 
+    // Get system thread count
+    const maxThreads = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 16) : 16;
+
     const activeProfile = useMemo(() => {
         if (!profiles.length) return null;
         return profiles.find((p) => p.id === activeProfileId) || profiles[0];
@@ -106,6 +110,7 @@ export const Settings = () => {
     const deepDepth = activeProfile?.deepDepth ?? 0;
     const hash = activeProfile?.hash ?? 32;
     const threads = activeProfile?.threads ?? 1;
+    const timePerMove = activeProfile?.timePerMove ?? 0;
     const useNNUE = activeProfile?.useNNUE ?? true;
 
     const games = useLiveQuery(async () => {
@@ -147,6 +152,7 @@ export const Settings = () => {
             localStorage.setItem('engineDeepDepth', String(deepDepth));
             localStorage.setItem('engineHash', String(hash));
             localStorage.setItem('engineThreads', String(threads));
+            localStorage.setItem('engineTimePerMove', String(timePerMove));
             localStorage.setItem('engineUseNNUE', String(useNNUE));
             localStorage.setItem('enginePreset', String(preset));
         } catch {
@@ -398,13 +404,18 @@ export const Settings = () => {
     };
 
     const handleHashChange = (value) => {
-        const v = Math.min(256, Math.max(16, value));
+        const v = Math.min(2048, Math.max(16, value));
         updateActiveProfile({ hash: v });
     };
 
     const handleThreadsChange = (value) => {
-        const v = Math.max(1, Math.min(32, value));
+        const v = Math.max(1, Math.min(maxThreads, value));
         updateActiveProfile({ threads: v });
+    };
+
+    const handleTimePerMoveChange = (value) => {
+        const v = Math.min(60000, Math.max(0, value));
+        updateActiveProfile({ timePerMove: v });
     };
 
     const handleNNUEChange = (enabled) => {
@@ -603,13 +614,13 @@ export const Settings = () => {
                                     <input
                                         type="range"
                                         min="16"
-                                        max="256"
+                                        max="2048"
                                         step="16"
                                         value={hash}
                                         onChange={(e) => handleHashChange(parseInt(e.target.value, 10))}
                                         className="w-full"
                                     />
-                                    <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Max 256MB.</p>
+                                    <p className="text-xs text-muted mt-1">Higher hash helps at high depths. Max 2048MB.</p>
                                 </div>
 
                                 <div>
@@ -620,7 +631,7 @@ export const Settings = () => {
                                     <input
                                         type="range"
                                         min="1"
-                                        max="32"
+                                        max={maxThreads}
                                         step="1"
                                         value={threads}
                                         onChange={(e) => handleThreadsChange(parseInt(e.target.value, 10))}
@@ -640,6 +651,26 @@ export const Settings = () => {
                                     <label htmlFor="nnue-toggle" className="text-sm font-medium text-primary cursor-pointer select-none">
                                         Enable NNUE (Neural Net)
                                     </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="rounded-lg border border-white/5 bg-subtle/40 p-4">
+                            <h4 className="text-sm font-semibold text-primary mb-2">Time Per Move</h4>
+                            <p className="text-xs text-secondary mb-4">
+                                Limit analysis time per move. Engine stops at depth OR time, whichever comes first.
+                            </p>
+                            <div className="flex items-center gap-4">
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="10000"
+                                    step="100"
+                                    value={timePerMove}
+                                    onChange={(e) => handleTimePerMoveChange(parseInt(e.target.value, 10))}
+                                />
+                                <div className="text-sm text-primary">
+                                    {timePerMove === 0 ? 'Off (Depth only)' : `${(timePerMove / 1000).toFixed(1)}s`}
                                 </div>
                             </div>
                         </div>

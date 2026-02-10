@@ -61,8 +61,12 @@ export const Dashboard = () => {
         let bookTotal = 0;
 
         const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
+        const heroGames = all.filter((g) => {
+            if (typeof g.isHero === 'boolean') return g.isHero;
+            return heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser);
+        });
 
-        all.forEach(g => {
+        heroGames.forEach(g => {
             const isWhite = heroUser && g.white?.toLowerCase() === heroUser;
             const isBlack = heroUser && g.black?.toLowerCase() === heroUser;
             if (isWhite && g.result === '1-0') wins++;
@@ -94,9 +98,9 @@ export const Dashboard = () => {
         });
 
         return {
-            total: all.length,
+            total: heroGames.length,
             wins,
-            winRate: Math.round((wins / all.length) * 100),
+            winRate: heroGames.length ? Math.round((wins / heroGames.length) * 100) : 0,
             accuracy: analyzedCount ? Math.round(totalAccuracy / analyzedCount) : 0,
             avgCpLoss: cpCount ? Math.round(totalCpLoss / cpCount) : 0,
             maxStreak,

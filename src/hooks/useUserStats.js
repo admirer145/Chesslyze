@@ -6,9 +6,11 @@ export const useUserStats = () => {
         const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
         if (!heroUser) return null;
 
-        const games = await db.games
-            .filter(g => g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser)
-            .toArray();
+        const all = await db.games.toArray();
+        const games = all.filter((g) => {
+            if (typeof g.isHero === 'boolean') return g.isHero;
+            return g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser;
+        });
 
         if (!games.length) return null;
 

@@ -3,15 +3,29 @@ import { engine } from './engine';
 import { Chess } from 'chess.js';
 
 const THRESHOLDS = {
-    BLUNDER: 300,
-    MISTAKE: 100,
-    INACCURACY: 40,
-    GOOD: 15,
-    BEST: 5
+    BLUNDER: 200,
+    MISTAKE: 90,
+    INACCURACY: 30,
+    GOOD: 10,
+    BEST: 10
 };
 
 const WINNING_THRESHOLD = 150;
 const ACCURACY_STREAK = 90;
+
+const MATE_SCORE = 100000;
+const mateToCp = (mate) => {
+    if (typeof mate !== 'number') return null;
+    const dist = Math.min(99, Math.abs(mate));
+    return Math.sign(mate) * (MATE_SCORE - dist * 100);
+};
+
+const evalToCp = (line) => {
+    if (!line || typeof line !== 'object') return 0;
+    if (typeof line.mate === 'number') return mateToCp(line.mate);
+    if (typeof line.score === 'number') return line.score;
+    return 0;
+};
 
 const clampInt = (value, min, max, fallback) => {
     const parsed = parseInt(value, 10);
@@ -36,6 +50,7 @@ const loadActiveEngineProfile = () => {
             deepDepth: clampInt(selected?.deepDepth ?? 0, 0, 60, 0),
             hash: clampInt(selected?.hash ?? 32, 16, 256, 32),
             threads: clampInt(selected?.threads ?? 1, 1, 32, 1),
+            timePerMove: clampInt(selected?.timePerMove ?? 0, 0, 60000, 0),
             useNNUE: typeof selected?.useNNUE === 'boolean' ? selected.useNNUE : true,
             version: selected?.version || '17.1-single'
         };
@@ -69,44 +84,146 @@ const applyClassificationPenalty = (accuracy, classification) => {
 
 const getClassification = ({
     evalDiff,
-    userMoveUCI,
-    bestMoveUCI,
+    isBestMove,
     scoreBefore,
-    myScoreAfter,
+    scoreAfter,
     materialDelta,
+    pvMaterialDelta,
     phase,
-    isInTopLines
+    gapToSecond,
+    secondScoreCp,
+    playerRating,
+    isRecapture
 }) => {
-    const isBest = userMoveUCI === bestMoveUCI;
+    const before = typeof scoreBefore === 'number' ? scoreBefore : 0;
+    const after = typeof scoreAfter === 'number' ? scoreAfter : 0;
 
-    if (isBest) {
-        const swing = myScoreAfter - scoreBefore;
-        const winning = myScoreAfter >= 150;
-        const sacrifice = materialDelta <= -3;
+    const isOpening = phase === 'opening';
 
-        if (sacrifice && winning) return 'brilliant';
-        if (swing >= 120 || (scoreBefore > -50 && scoreBefore < 50 && myScoreAfter >= 150)) return 'great';
+    // --- Core thresholds (centipawns) ---
+    const WINNING = 200;        // +2.0
+    const CLEAR_EDGE = 120;     // +1.2
+    const NEAR_EQUAL = 60;      // ±0.6
+
+    const swing = after - before;
+
+    const nearEqualBefore = Math.abs(before) <= NEAR_EQUAL;
+
+    const saved =
+        before <= -CLEAR_EDGE &&
+        after >= -NEAR_EQUAL;
+
+    const improvedToWin =
+        nearEqualBefore &&
+        after >= CLEAR_EDGE;
+
+    const recoveredFromLosing =
+        before <= -WINNING &&
+        after >= -CLEAR_EDGE;
+
+    const deferredSac = typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -3;
+    const sacrifice = materialDelta <= -2 || deferredSac;
+    const majorMaterialLoss = materialDelta <= -5; // rook/queen
+
+    const rating = typeof playerRating === 'number' ? playerRating : null;
+    const greatFactor = rating ? (rating < 1200 ? 0.75 : rating < 1600 ? 0.85 : rating < 2000 ? 0.95 : 1) : 1;
+    const brilliantFactor = rating ? (rating < 1200 ? 0.9 : rating < 1600 ? 0.95 : 1) : 1;
+
+    const ONLY_MOVE_GAP = 100 * greatFactor;
+    const onlyMove = typeof gapToSecond === 'number' && gapToSecond >= ONLY_MOVE_GAP;
+    const secondScore = typeof secondScoreCp === 'number' ? secondScoreCp : null;
+    const criticalDrop = secondScore !== null && (secondScore <= -NEAR_EQUAL || (before - secondScore) >= CLEAR_EDGE);
+    const criticalOnlyMove = onlyMove && criticalDrop;
+
+    // Opening forgiveness
+    const multiplier = isOpening ? 1.3 : 1;
+
+    // =========================
+    // BEST / GREAT / BRILLIANT
+    // =========================
+    if (isBestMove) {
+        const BRILLIANT_GAP = 80 * brilliantFactor;
+        const immediateSac = materialDelta <= -2;
+        const significantSac = materialDelta <= -3 || deferredSac;
+
+        // 🔥 BRILLIANT: best/near-best + sacrifice + not already winning
+        if (
+            !isRecapture &&
+            (significantSac || (immediateSac && swing >= BRILLIANT_GAP)) &&
+            before < WINNING &&
+            after >= -NEAR_EQUAL &&
+            after >= before - 30 &&
+            (onlyMove || (typeof gapToSecond === 'number' && gapToSecond >= BRILLIANT_GAP))
+        ) {
+            return 'brilliant';
+        }
+
+        // ⭐ GREAT: critical necessity or big improvement (not just a nice best move)
+        const criticalGreat =
+            criticalOnlyMove ||
+            saved ||
+            improvedToWin ||
+            recoveredFromLosing;
+
+        if (criticalGreat && (!isRecapture || saved || improvedToWin || recoveredFromLosing)) {
+            return 'great';
+        }
+
         return 'best';
     }
 
-    const multiplier = phase === 'opening' ? 1.6 : 1;
+    // =========================
+    // NON-BEST MOVES
+    // =========================
 
-    // If a move flips the evaluation across a meaningful threshold, treat it as a blunder
-    // even if raw evalDiff is borderline (prevents obvious throw moves being labeled as "mistake").
-    const before = typeof scoreBefore === 'number' ? scoreBefore : 0;
-    const after = typeof myScoreAfter === 'number' ? myScoreAfter : 0;
-    const flipThreshold = 120;
-    if ((before >= flipThreshold && after <= -flipThreshold) || (before <= -flipThreshold && after >= flipThreshold)) {
+    // If you're already winning and stay clearly winning, soften the label.
+    if (before >= WINNING && after >= WINNING) {
+        if (evalDiff <= 120 * multiplier) return 'good';
+        if (evalDiff <= 220 * multiplier) return 'inaccuracy';
+        // let larger drops continue to be mistakes/blunders
+    }
+
+    // --- Hard blunder: evaluation flip ---
+    const flipThreshold = CLEAR_EDGE;
+    if (
+        (before >= flipThreshold && after <= -flipThreshold) ||
+        (before <= -flipThreshold && after >= flipThreshold)
+    ) {
         return 'blunder';
     }
 
-    if (evalDiff > THRESHOLDS.BLUNDER * multiplier) return 'blunder';
-    if (evalDiff > THRESHOLDS.MISTAKE * multiplier) return 'mistake';
-    if (evalDiff > THRESHOLDS.INACCURACY * multiplier) return 'inaccuracy';
+    // --- Material blunder ---
+    if (majorMaterialLoss && after < -CLEAR_EDGE) {
+        return 'blunder';
+    }
 
-    // If your move is one of the engine's top candidates, don't call it an inaccuracy.
-    if (isInTopLines && evalDiff <= THRESHOLDS.INACCURACY * multiplier) return 'good';
-    if (evalDiff > THRESHOLDS.GOOD) return 'good';
+    // --- Opening sacrifice forgiveness ---
+    if (isOpening && sacrifice && after > -CLEAR_EDGE) {
+        return 'good';
+    }
+
+    // --- Blunder / mistake / inaccuracy by eval loss ---
+    if (
+        evalDiff > THRESHOLDS.BLUNDER * multiplier &&
+        (!isOpening || evalDiff > 220)
+    ) {
+        return 'blunder';
+    }
+
+    const wasBetter = before >= CLEAR_EDGE;
+    const nowWorse = after <= -CLEAR_EDGE;
+
+    if (
+        evalDiff > THRESHOLDS.MISTAKE * multiplier &&
+        (wasBetter || nowWorse)
+    ) {
+        return 'mistake';
+    }
+
+    if (evalDiff > THRESHOLDS.INACCURACY * multiplier) {
+        return 'inaccuracy';
+    }
+
     return 'good';
 };
 
@@ -127,6 +244,40 @@ const materialScore = (fen) => {
     }
 
     return { white, black };
+};
+
+const uciToMove = (uci) => {
+    if (!uci || typeof uci !== 'string' || uci.length < 4) return null;
+    return {
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+        promotion: uci.length > 4 ? uci.slice(4, 5) : undefined
+    };
+};
+
+const estimatePvMaterialDelta = (fen, pv, maxPlies = 8) => {
+    if (!fen || !pv) return null;
+    const tokens = String(pv).split(' ').filter(Boolean).slice(0, maxPlies);
+    if (!tokens.length) return null;
+    const chess = new Chess(fen);
+    const before = materialScore(fen);
+    const startTurn = chess.turn();
+
+    let plies = 0;
+    for (const token of tokens) {
+        const move = uciToMove(token);
+        if (!move) break;
+        const res = chess.move({ from: move.from, to: move.to, promotion: move.promotion });
+        if (!res) break;
+        plies += 1;
+    }
+
+    if (plies === 0) return null;
+    const after = materialScore(chess.fen());
+    const delta = startTurn === 'w'
+        ? (after.white - before.white)
+        : (after.black - before.black);
+    return { delta, plies };
 };
 
 const materialTotal = (fen) => {
@@ -247,7 +398,8 @@ const detectMotifs = ({
     move,
     scoreBefore,
     myScoreAfter,
-    materialDelta
+    materialDelta,
+    pvMaterialDelta
 }) => {
     const motifs = [];
     const board = chessAfter.board();
@@ -255,7 +407,8 @@ const detectMotifs = ({
     if (detectFork(chessAfter, move)) motifs.push('fork');
     if (detectPin(chessAfter, move, board)) motifs.push('pin');
     if (detectSkewer(chessAfter, move, board)) motifs.push('skewer');
-    if (materialDelta <= -3 && myScoreAfter - scoreBefore >= 50) motifs.push('sacrifice');
+    const deferredSac = typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -3;
+    if ((materialDelta <= -3 || deferredSac) && myScoreAfter - scoreBefore >= 30) motifs.push('sacrifice');
 
     return motifs;
 };
@@ -292,7 +445,8 @@ export const processGame = async (gameId) => {
 
     const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
     const heroInGame = heroUser && (game.white?.toLowerCase() === heroUser || game.black?.toLowerCase() === heroUser);
-    if (!heroInGame) {
+    const explicitHero = typeof game.isHero === 'boolean' ? game.isHero : true;
+    if (explicitHero && heroUser && !heroInGame) {
         await db.games.update(gameId, { analyzed: false, analysisStatus: 'ignored' });
         return;
     }
@@ -418,8 +572,11 @@ export const processGame = async (gameId) => {
     const hashRaw = profile?.hash ?? parseInt(localStorage.getItem('engineHash') || '32', 10);
     const hash = Math.min(256, Math.max(1, hashRaw)); // Relax clamp for desktop/multi-thread
 
-    const threadsRaw = profile?.threads ?? parseInt(localStorage.getItem('engineThreads') || '1', 10);
-    const threads = Math.min(32, Math.max(1, threadsRaw)); // Allow multi-threading
+    const threadsRAW = profile?.threads ?? parseInt(localStorage.getItem('engineThreads') || '1', 10);
+    const threads = Math.min(32, Math.max(1, threadsRAW)); // Allow multi-threading
+
+    const timePerMoveRaw = profile?.timePerMove ?? parseInt(localStorage.getItem('engineTimePerMove') || '0', 10);
+    const timePerMove = Math.max(0, timePerMoveRaw);
 
     const useNNUE = typeof profile?.useNNUE === 'boolean'
         ? profile.useNNUE
@@ -486,17 +643,23 @@ export const processGame = async (gameId) => {
             const fenBefore = chess.fen();
             const sideToMove = chess.turn(); // 'w' or 'b'
             const ply = i + 1;
+            const playerRating = sideToMove === 'w'
+                ? (game.whiteRating ?? game.whiteElo ?? null)
+                : (game.blackRating ?? game.blackElo ?? null);
+            const prevMove = i > 0 ? history[i - 1] : null;
+            const isRecapture = !!(prevMove?.captured && move?.captured && move.to === prevMove.to);
 
             // 1. Analyze position BEFORE the move
             await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
-            const result = await safeAnalyze(fenBefore, { depth, multiPv });
-            let bestMoveUCI = result.bestMove || '';
+            const result = await safeAnalyze(fenBefore, { depth, multiPv, movetime: timePerMove });
+            let bestMoveUCI = (result.bestMove || '').toLowerCase();
             const evaluation = result.evaluation; // { score, mate, pv, multipv }
             let pvLines = Array.isArray(result.pvLines) ? result.pvLines : [];
             const bestLine = pvLines.find((l) => (l?.multipv || 1) === 1) || evaluation || {};
             // Stockfish "score" is from side-to-move POV; normalize to white POV for UI/graph stability.
             let scoreBeforeStm = typeof bestLine.score === 'number' ? bestLine.score : 0;
             let mateBeforeStm = typeof bestLine.mate === 'number' ? bestLine.mate : null;
+            let scoreBeforeCp = evalToCp(bestLine);
             const scoreBeforeWhite = sideToMove === 'w' ? scoreBeforeStm : -scoreBeforeStm;
             const mateBeforeWhite = mateBeforeStm === null ? null : (sideToMove === 'w' ? mateBeforeStm : -mateBeforeStm);
 
@@ -518,13 +681,13 @@ export const processGame = async (gameId) => {
 
             let classification = 'book';
             let evalDiff = 0;
-            let myScoreAfter = scoreBeforeStm;
+            let myScoreAfter = scoreBeforeCp;
             let materialDelta = 0;
 
             // Check if user's move was already analyzed in the main search (PV lines)
             // `pvLines` contains raw engine output (Side-to-Move POV)
             const userLine = pvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveUCI);
-            const userScoreFromLines = typeof userLine?.score === 'number' ? userLine.score : null;
+            const userScoreFromLines = userLine ? evalToCp(userLine) : null;
 
             // 3. Evaluate after move
             chess.move(move);
@@ -533,6 +696,7 @@ export const processGame = async (gameId) => {
             // OPTIMIZATION: If we found the move in the main search (depth N), 
             // use that score instead of re-analyzing at shallow depth (depth N-4).
             // This skips a redundant engine call for good/decent moves.
+            let usedShallowAfter = false;
             if (userScoreFromLines !== null) {
                 myScoreAfter = userScoreFromLines;
                 // Still update heartbeat to prevent timeouts during long processing loops
@@ -541,10 +705,11 @@ export const processGame = async (gameId) => {
                 // Not found in top lines (likely a mistake/blunder or MultiPV was low).
                 // We must analyze the resulting position to know how bad it is.
                 await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
-                const resultAfter = await safeAnalyze(fenAfter, { depth: shallowDepth, multiPv: 1 });
-                const scoreAfter = resultAfter.evaluation.score || 0;
+                const resultAfter = await safeAnalyze(fenAfter, { depth: shallowDepth, multiPv: 1, movetime: timePerMove });
+                const scoreAfter = evalToCp(resultAfter.evaluation);
                 // After the move, side-to-move flips, so negate to keep perspective of the player who just moved.
                 myScoreAfter = -scoreAfter;
+                usedShallowAfter = true;
             }
 
             const chessAfter = new Chess(fenAfter);
@@ -560,24 +725,76 @@ export const processGame = async (gameId) => {
 
             const phase = getGamePhase(ply, materialTotal(fenBefore));
 
+            // If the move is best and we only used PV score, re-evaluate after move
+            // to detect brilliant/great based on true post-move evaluation.
+            if (!usedShallowAfter && userMoveUCI === bestMoveUCI) {
+                const shouldRecheck =
+                    materialDelta <= -2 || Math.abs(scoreBeforeCp) < 80;
+                if (shouldRecheck) {
+                    await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
+                    const resultAfter = await safeAnalyze(fenAfter, { depth: shallowDepth, multiPv: 1, movetime: timePerMove });
+                    const scoreAfter = evalToCp(resultAfter.evaluation);
+                    myScoreAfter = -scoreAfter;
+                    usedShallowAfter = true;
+                }
+            }
+
             // CP Loss
             // If userScoreFromLines existed, it EQUALS myScoreAfter, so evalDiff = scoreBefore - myScoreAfter
-            evalDiff = Math.max(0, scoreBeforeStm - myScoreAfter);
+            evalDiff = Math.max(0, scoreBeforeCp - myScoreAfter);
 
             const bookMovesForFen = getBookMovesForFen(fenBefore) || [];
-            const isBookMove = phase === 'opening' && Array.isArray(bookMovesForFen) && bookMovesForFen.map(m => m.toLowerCase()).includes(userMoveUCI);
-            const topLineMoves = pvLines.slice(0, Math.max(1, Math.min(3, multiPv))).map((l) => (typeof l?.pv === 'string' ? l.pv.split(' ')[0] : null)).filter(Boolean);
-            const isInTopLines = topLineMoves.some((m) => m.toLowerCase() === userMoveUCI);
+            const normalizedBookMoves = Array.isArray(bookMovesForFen)
+                ? bookMovesForFen.map(m => String(m || '').toLowerCase())
+                : [];
+            const topLineMoves = pvLines.slice(0, Math.max(1, Math.min(3, multiPv)))
+                .map((l) => (typeof l?.pv === 'string' ? l.pv.split(' ')[0] : null))
+                .filter(Boolean)
+                .map((m) => m.toLowerCase());
+            const isInTopLines = topLineMoves.some((m) => m === userMoveUCI);
+            const isOpening = phase === 'opening';
+            const isExplicitBookMove =
+                isOpening &&
+                normalizedBookMoves.includes(userMoveUCI);
+            const isEngineBookMove =
+                isOpening &&
+                normalizedBookMoves.length === 0 &&
+                isInTopLines &&
+                evalDiff <= THRESHOLDS.BEST * 0.5 &&   // stricter than "best"
+                materialDelta >= -1 &&                // no real sacrifices
+                Math.abs(scoreBeforeCp) <= 80;        // avoid unstable evals
+            const isBookMove = isExplicitBookMove || isEngineBookMove;
+
+            const secondLine = pvLines.find((l) => (l?.multipv || 1) === 2);
+            const secondScoreCp = secondLine ? evalToCp(secondLine) : null;
+            const gapToSecond = secondScoreCp === null ? null : (scoreBeforeCp - secondScoreCp);
+            const bestThreshold = THRESHOLDS.BEST * (phase === 'opening' ? 1.3 : 1);
+            const isBestMove = userMoveUCI === bestMoveUCI || evalDiff <= bestThreshold;
+
+            const pvForUser = (userLine?.pv || bestLine?.pv || '').trim();
+            const pvMaterial = estimatePvMaterialDelta(fenBefore, pvForUser, 6);
+
+            const motifs = detectMotifs({
+                chessAfter,
+                move,
+                scoreBefore: scoreBeforeCp,
+                myScoreAfter,
+                materialDelta,
+                pvMaterialDelta: pvMaterial?.delta
+            });
 
             classification = getClassification({
                 evalDiff,
-                userMoveUCI,
-                bestMoveUCI,
-                scoreBefore: scoreBeforeStm,
-                myScoreAfter,
+                isBestMove,
+                scoreBefore: scoreBeforeCp,
+                scoreAfter: myScoreAfter,
                 materialDelta,
+                pvMaterialDelta: pvMaterial?.delta,
                 phase,
-                isInTopLines
+                gapToSecond,
+                secondScoreCp,
+                playerRating,
+                isRecapture
             });
 
             // Book is its own move-quality bucket (not "good/best") so stats are not confusing.
@@ -590,53 +807,52 @@ export const processGame = async (gameId) => {
                     await db.games.update(gameId, { analysisHeartbeatAt: new Date().toISOString() });
                     const deepResult = await safeAnalyze(fenBefore, { depth: deepDepth, multiPv, timeoutMs: 12 * 60 * 1000 });
                     const deepPvLines = Array.isArray(deepResult.pvLines) ? deepResult.pvLines : [];
-                    const deepBestMoveUCI = deepResult.bestMove || bestMoveUCI;
+                    const deepBestMoveUCI = (deepResult.bestMove || bestMoveUCI).toLowerCase();
                     const deepBestLine = deepPvLines.find((l) => (l?.multipv || 1) === 1) || deepResult.evaluation || {};
                     const deepScoreBefore = typeof deepBestLine.score === 'number' ? deepBestLine.score : scoreBeforeStm;
+                    const deepScoreBeforeCp = evalToCp(deepBestLine);
                     const deepMateBefore = typeof deepBestLine.mate === 'number' ? deepBestLine.mate : mateBeforeStm;
 
-                    const deepUserLine = deepPvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveLower);
-                    const deepUserScoreFromLines = typeof deepUserLine?.score === 'number' ? deepUserLine.score : null;
-                    const deepEvalDiff = Math.max(0, deepScoreBefore - (deepUserScoreFromLines ?? myScoreAfter));
+                    const deepUserLine = deepPvLines.find((l) => typeof l?.pv === 'string' && l.pv.split(' ')[0]?.toLowerCase() === userMoveUCI);
+                    const deepUserScoreFromLines = deepUserLine ? evalToCp(deepUserLine) : null;
+                    const deepScoreAfter = deepUserScoreFromLines ?? myScoreAfter;
+                    const deepEvalDiff = Math.max(0, deepScoreBeforeCp - deepScoreAfter);
 
-                    const deepTopLineMoves = deepPvLines.slice(0, Math.max(1, Math.min(3, multiPv)))
-                        .map((l) => (typeof l?.pv === 'string' ? l.pv.split(' ')[0] : null))
-                        .filter(Boolean);
-                    const deepIsInTopLines = deepTopLineMoves.some((m) => m.toLowerCase() === userMoveLower);
+                    const deepSecondLine = deepPvLines.find((l) => (l?.multipv || 1) === 2);
+                    const deepSecondScoreCp = deepSecondLine ? evalToCp(deepSecondLine) : null;
+                    const deepGapToSecond = deepSecondScoreCp === null ? null : (deepScoreBeforeCp - deepSecondScoreCp);
+                    const deepBestThreshold = THRESHOLDS.BEST * (phase === 'opening' ? 1.3 : 1);
+                    const deepIsBestMove = userMoveUCI === deepBestMoveUCI || deepEvalDiff <= deepBestThreshold;
 
                     const deepClassification = getClassification({
                         evalDiff: deepEvalDiff,
-                        userMoveUCI,
-                        bestMoveUCI: deepBestMoveUCI,
-                        scoreBefore: deepScoreBefore,
-                        myScoreAfter,
+                        isBestMove: deepIsBestMove,
+                        scoreBefore: deepScoreBeforeCp,
+                        scoreAfter: deepScoreAfter,
                         materialDelta,
+                        pvMaterialDelta: pvMaterial?.delta,
                         phase,
-                        isBookMove,
-                        isInTopLines: deepIsInTopLines
+                        gapToSecond: deepGapToSecond,
+                        secondScoreCp: deepSecondScoreCp,
+                        playerRating,
+                        isRecapture
                     });
 
                     // If the deep pass disagrees, trust it (prevents reels from being polluted).
                     bestMoveUCI = deepBestMoveUCI;
                     pvLines = deepPvLines;
                     scoreBeforeStm = deepScoreBefore;
+                    scoreBeforeCp = deepScoreBeforeCp;
                     mateBeforeStm = deepMateBefore;
                     evalDiff = deepEvalDiff;
+                    myScoreAfter = deepScoreAfter;
                     classification = deepClassification;
                 } catch (e) {
                     // Ignore deep pass failures and keep the first pass result.
                 }
             }
-            const motifs = detectMotifs({
-                chessAfter,
-                move,
-                scoreBefore: scoreBeforeStm,
-                myScoreAfter,
-                materialDelta
-            });
-
-            const missedWin = scoreBeforeStm >= WINNING_THRESHOLD && evalDiff > THRESHOLDS.INACCURACY;
-            const missedDefense = scoreBeforeStm <= -WINNING_THRESHOLD && evalDiff > THRESHOLDS.INACCURACY;
+            const missedWin = scoreBeforeCp >= WINNING_THRESHOLD && evalDiff > THRESHOLDS.INACCURACY;
+            const missedDefense = scoreBeforeCp <= -WINNING_THRESHOLD && evalDiff > THRESHOLDS.INACCURACY;
 
             const explanation = generateExplanation(classification, evalDiff, userMoveUCI, bestMoveUCI);
             const planHint = generatePlanHint({ phase, motifs, classification });

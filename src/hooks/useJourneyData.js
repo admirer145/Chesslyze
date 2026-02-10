@@ -132,10 +132,12 @@ export const useJourneyData = () => {
 
     const games = useLiveQuery(async () => {
         if (!heroUser) return [];
-        const all = await db.games
-            .filter((g) => g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser)
-            .toArray();
-        return all.map((g) => normalizeGame(g, heroUser)).filter(Boolean);
+        const all = await db.games.toArray();
+        const heroGames = all.filter((g) => {
+            if (typeof g.isHero === 'boolean') return g.isHero;
+            return g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser;
+        });
+        return heroGames.map((g) => normalizeGame(g, heroUser)).filter(Boolean);
     }, [heroUser]);
 
     const filteredGames = useMemo(() => applyFilters(games || [], filters), [games, filters]);
