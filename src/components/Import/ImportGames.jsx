@@ -22,6 +22,13 @@ export const ImportGames = () => {
     const [pgnMessage, setPgnMessage] = useState('');
     const [pgnStats, setPgnStats] = useState(null);
     const [pgnFileName, setPgnFileName] = useState('');
+    const [isSmallScreen, setIsSmallScreen] = useState(window.innerWidth < 640);
+
+    useEffect(() => {
+        const handleResize = () => setIsSmallScreen(window.innerWidth < 640);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     const USER_STATS_TTL_MS = 24 * 60 * 60 * 1000;
     const NEW_GAMES_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
@@ -194,6 +201,12 @@ export const ImportGames = () => {
             setPgnStats(result);
             setPgnStatus('success');
             setPgnMessage(`Imported ${result.imported} games. Skipped ${result.skipped}.`);
+            // Clear form
+            setPgnText('');
+            setPgnTag('');
+            setPgnFileName('');
+            // Redirect to library
+            setTimeout(() => navigate('/library'), 1500);
         } catch (err) {
             console.error(err);
             setPgnStatus('error');
@@ -202,248 +215,298 @@ export const ImportGames = () => {
     };
 
     return (
-        <div className="h-full bg-app p-8 overflow-y-auto">
-            <div className="w-full max-w-5xl mx-auto grid gap-6 lg:grid-cols-2">
-                <div className="bg-panel border border-white/5 rounded-2xl p-8 shadow-2xl animate-fade-in relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500" />
+        <div className="h-full bg-app p-4 sm:p-8 overflow-y-auto">
+            <div className="w-full max-w-5xl mx-auto">
+                <div className="text-center mb-8">
+                    <h1 className="text-3xl font-bold text-primary mb-2">Import Games</h1>
+                    <p className="text-secondary text-sm max-w-md mx-auto">Sync your Lichess history or paste PGN files to start analyzing and improving.</p>
+                </div>
+                <div className="grid gap-6 lg:grid-cols-2">
+                    <div className="bg-panel border border-white/5 rounded-2xl p-8 shadow-2xl animate-fade-in relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500" />
 
-                    <div className="text-center mb-8">
-                        <h2 className="text-2xl font-bold text-primary mb-2">Sync Hero Games</h2>
-                        <p className="text-secondary text-sm">Connect your Lichess account to import your personal history.</p>
+                        <div className="text-center mb-8">
+                            <h2 className="text-2xl font-bold text-primary mb-2">Sync Hero Games</h2>
+                            <p className="text-secondary text-sm">Connect your Lichess account to import your personal history.</p>
+                        </div>
+
+                        {!userStats ? (
+                            <form onSubmit={handleFetchStats} className="flex flex-col gap-6 w-full">
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-xs font-semibold text-muted uppercase tracking-wider">Lichess Username</label>
+                                    <input
+                                        type="text"
+                                        value={username}
+                                        onChange={(e) => setUsername(e.target.value)}
+                                        placeholder="e.g. MagnusCarlsen"
+                                        className="input w-full bg-subtle focus:ring-2 focus:ring-blue-500/50"
+                                        required
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={status === 'loading'}
+                                    className="btn btn-primary w-full py-3 mt-2 shadow-lg shadow-blue-500/20"
+                                >
+                                    {status === 'loading' ? (
+                                        <span className="flex items-center gap-2 justify-center">
+                                            <Loader2 size={16} className="animate-spin" /> Fetching...
+                                        </span>
+                                    ) : (
+                                        <span className="flex items-center gap-2 justify-center">
+                                            Find User
+                                        </span>
+                                    )}
+                                </button>
+                            </form>
+                        ) : (
+                            <div className="flex flex-col gap-6 w-full animate-fade-in">
+                                <div style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 16,
+                                    borderBottom: '1px solid rgba(255,255,255,0.1)',
+                                    paddingBottom: 20
+                                }}>
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        gap: 12,
+                                        width: '100%'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                                            <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #9333ea)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                                                {userStats.username.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                                                <span className="text-primary" style={{ fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{userStats.username}</span>
+                                                <span className="text-secondary" style={{ fontSize: 11 }}>Joined {new Date(userStats.createdAt).toLocaleDateString()}</span>
+                                            </div>
+                                        </div>
+
+                                        <div style={{
+                                            textAlign: 'center',
+                                            padding: '4px 14px',
+                                            borderRadius: 10,
+                                            background: 'rgba(251,191,36,0.08)',
+                                            border: '1px solid rgba(251,191,36,0.2)',
+                                            marginLeft: isSmallScreen ? '0' : 'auto',
+                                            marginRight: isSmallScreen ? '0' : 'auto',
+                                            flexShrink: 0
+                                        }}>
+                                            <div style={{ fontSize: 18, fontWeight: 800, background: 'linear-gradient(90deg, #f59e0b, #f97316)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{userStats.count?.all || 0}</div>
+                                            <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'rgba(251,191,36,0.6)' }}>Total Games</div>
+                                        </div>
+
+                                        {!isSmallScreen && (
+                                            <button
+                                                onClick={() => {
+                                                    setUserStats(null);
+                                                    setLastSyncDate(null);
+                                                    setHasNewGames(null);
+                                                    setLastCheckedAt(null);
+                                                }}
+                                                className="btn btn-secondary"
+                                                style={{ padding: '6px 12px', fontSize: 12, flexShrink: 0 }}
+                                            >
+                                                <ArrowLeftRight size={14} style={{ marginRight: 6 }} />
+                                                Change User
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {isSmallScreen && (
+                                        <button
+                                            onClick={() => {
+                                                setUserStats(null);
+                                                setLastSyncDate(null);
+                                                setHasNewGames(null);
+                                                setLastCheckedAt(null);
+                                            }}
+                                            className="btn btn-secondary"
+                                            style={{ width: '100%', padding: '8px', fontSize: 12 }}
+                                        >
+                                            <ArrowLeftRight size={14} style={{ marginRight: 6 }} />
+                                            Change User
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-3 text-center mb-2">
+                                    <div className="bg-emerald-500/5 border border-emerald-500/10 p-3 rounded-xl flex flex-col gap-1">
+                                        <div className="text-emerald-400 font-bold text-xl">{userStats.count?.win || 0}</div>
+                                        <div className="text-[10px] text-emerald-400/70 font-bold uppercase tracking-wider">Wins</div>
+                                    </div>
+                                    <div className="bg-rose-500/5 border border-rose-500/10 p-3 rounded-xl flex flex-col gap-1">
+                                        <div className="text-rose-400 font-bold text-xl">{userStats.count?.loss || 0}</div>
+                                        <div className="text-[10px] text-rose-400/70 font-bold uppercase tracking-wider">Losses</div>
+                                    </div>
+                                    <div className="bg-blue-500/5 border border-blue-500/10 p-3 rounded-xl flex flex-col gap-1">
+                                        <div className="text-blue-400 font-bold text-xl">{userStats.count?.draw || 0}</div>
+                                        <div className="text-[10px] text-blue-400/70 font-bold uppercase tracking-wider">Draws</div>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-col gap-3">
+                                    {status === 'loading' ? (
+                                        <div className="bg-subtle/50 p-4 rounded-xl flex flex-col gap-3 border border-white/5">
+                                            <div className="flex items-center gap-3 text-sm text-primary">
+                                                <Loader2 size={16} className="animate-spin text-accent-primary" />
+                                                <span>{message || 'Syncing...'}</span>
+                                            </div>
+                                            {progress?.currentSince && (
+                                                <div className="w-full bg-black/50 h-1.5 rounded-full overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-accent-primary transition-all duration-300 relative overflow-hidden"
+                                                        style={{ width: `${Math.min(100, ((progress.currentSince - userStats.createdAt) / (Date.now() - userStats.createdAt)) * 100)}%` }}
+                                                    >
+                                                        <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {progress?.type === 'added' && (
+                                                <div className="flex justify-between items-center mt-1">
+                                                    <span className="text-xs text-muted uppercase tracking-wider">Imported</span>
+                                                    <span className="text-lg font-bold text-accent-primary">{progress.total}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <button
+                                                onClick={() => handleSync()}
+                                                disabled={status === 'loading'}
+                                                className="btn btn-primary w-full py-4 text-base font-medium shadow-lg shadow-blue-500/20"
+                                            >
+                                                <Download size={18} className="mr-2" />
+                                                {lastSyncDate ? 'Sync Latest Games' : 'Start Import'}
+                                            </button>
+                                            <div className="flex items-center justify-between text-xs text-muted px-1">
+                                                <div className="flex items-center gap-2">
+                                                    {checkingNew ? (
+                                                        <>
+                                                            <Loader2 size={12} className="animate-spin text-accent-primary" />
+                                                            <span>Checking for new games…</span>
+                                                        </>
+                                                    ) : hasNewGames === true ? (
+                                                        <>
+                                                            <RefreshCw size={12} className="text-emerald-400" />
+                                                            <span className="text-emerald-400">New games available</span>
+                                                        </>
+                                                    ) : hasNewGames === false ? (
+                                                        <span>Up to date</span>
+                                                    ) : (
+                                                        <span>New games check pending</span>
+                                                    )}
+                                                </div>
+                                                {lastCheckedAt && (
+                                                    <span>Checked {new Date(lastCheckedAt).toLocaleDateString()}</span>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="mt-6 min-h-[40px] flex justify-center">
+                            {status === 'success' && (
+                                <div className="flex items-center gap-3 text-emerald-400 justify-center animate-fade-in">
+                                    <CheckCircle size={18} />
+                                    <span className="font-medium text-sm">Sync Complete! Redirecting...</span>
+                                </div>
+                            )}
+
+                            {status === 'error' && (
+                                <div className="flex items-center gap-3 text-red-400 justify-center animate-fade-in">
+                                    <AlertCircle size={18} />
+                                    <span className="font-medium text-sm">{message}</span>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
-                    {!userStats ? (
-                        <form onSubmit={handleFetchStats} className="flex flex-col gap-6 w-full">
+                    <div className="bg-panel border border-white/5 rounded-2xl p-8 shadow-2xl animate-fade-in relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-blue-500" />
+
+                        <div className="text-center mb-8">
+                            <h2 className="text-2xl font-bold text-primary mb-2">Import PGN</h2>
+                            <p className="text-secondary text-sm">Analyze master games or any custom PGN without affecting hero analytics.</p>
+                        </div>
+
+                        <form onSubmit={handlePgnImport} className="flex flex-col gap-4">
                             <div className="flex flex-col gap-2">
-                                <label className="text-xs font-semibold text-muted uppercase tracking-wider">Lichess Username</label>
+                                <label className="text-xs font-semibold text-muted uppercase tracking-wider">Import Label (Optional)</label>
                                 <input
                                     type="text"
-                                    value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
-                                    placeholder="e.g. MagnusCarlsen"
-                                    className="input w-full bg-subtle focus:ring-2 focus:ring-blue-500/50"
-                                    required
+                                    value={pgnTag}
+                                    onChange={(e) => setPgnTag(e.target.value)}
+                                    placeholder="e.g. Tal vs Fischer"
+                                    className="input w-full bg-subtle focus:ring-2 focus:ring-emerald-500/50"
                                 />
                             </div>
+
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-semibold text-muted uppercase tracking-wider">PGN Content</label>
+                                <textarea
+                                    value={pgnText}
+                                    onChange={(e) => setPgnText(e.target.value)}
+                                    placeholder="Paste one or more PGNs here..."
+                                    rows={8}
+                                    className="input w-full bg-subtle focus:ring-2 focus:ring-emerald-500/50 resize-none"
+                                />
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                                <label className="text-xs font-semibold text-muted uppercase tracking-wider">Upload PGN File</label>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="file"
+                                        accept=".pgn"
+                                        onChange={handlePgnFile}
+                                        className="text-xs text-muted"
+                                    />
+                                    {pgnFileName && <span className="text-xs text-secondary">{pgnFileName}</span>}
+                                </div>
+                            </div>
+
                             <button
                                 type="submit"
-                                disabled={status === 'loading'}
-                                className="btn btn-primary w-full py-3 mt-2 shadow-lg shadow-blue-500/20"
+                                disabled={pgnStatus === 'loading'}
+                                className="btn btn-primary w-full py-4 text-base font-medium shadow-lg shadow-emerald-500/20"
                             >
-                                {status === 'loading' ? (
+                                {pgnStatus === 'loading' ? (
                                     <span className="flex items-center gap-2 justify-center">
-                                        <Loader2 size={16} className="animate-spin" /> Fetching...
+                                        <Loader2 size={16} className="animate-spin" /> Importing...
                                     </span>
                                 ) : (
                                     <span className="flex items-center gap-2 justify-center">
-                                        Find User
+                                        <FileUp size={18} /> Import PGN
                                     </span>
                                 )}
                             </button>
                         </form>
-                    ) : (
-                        <div className="flex flex-col gap-6 w-full animate-fade-in">
-                            <div className="flex items-center gap-4 border-b border-white/10 pb-6">
-                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xl font-bold text-white shadow-lg">
-                                    {userStats.username.charAt(0).toUpperCase()}
+
+                        <div className="mt-6 min-h-[40px] flex flex-col items-center gap-2">
+                            {pgnStatus === 'success' && (
+                                <div className="flex items-center gap-3 text-emerald-400 justify-center animate-fade-in">
+                                    <CheckCircle size={18} />
+                                    <span className="font-medium text-sm">{pgnMessage} Redirecting...</span>
                                 </div>
-                                <div className="flex flex-col">
-                                    <span className="text-lg font-bold text-primary">{userStats.username}</span>
-                                    <span className="text-xs text-secondary">Joined {new Date(userStats.createdAt).toLocaleDateString()}</span>
-                                </div>
-                                <div className="ml-auto flex items-center gap-4">
-                                    <div className="text-right">
-                                        <div className="text-2xl font-bold text-accent-primary">{userStats.count?.all || 0}</div>
-                                        <div className="text-xs text-muted">Total Games</div>
-                                    </div>
-                                    <button
-                                        onClick={() => {
-                                            setUserStats(null);
-                                            setLastSyncDate(null);
-                                            setHasNewGames(null);
-                                            setLastCheckedAt(null);
-                                        }}
-                                        className="btn btn-secondary px-3 py-2 text-xs"
-                                    >
-                                        <ArrowLeftRight size={14} className="mr-2" />
-                                        Change User
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-3 text-center mb-2">
-                                <div className="bg-emerald-500/5 border border-emerald-500/10 p-3 rounded-xl flex flex-col gap-1">
-                                    <div className="text-emerald-400 font-bold text-xl">{userStats.count?.win || 0}</div>
-                                    <div className="text-[10px] text-emerald-400/70 font-bold uppercase tracking-wider">Wins</div>
-                                </div>
-                                <div className="bg-rose-500/5 border border-rose-500/10 p-3 rounded-xl flex flex-col gap-1">
-                                    <div className="text-rose-400 font-bold text-xl">{userStats.count?.loss || 0}</div>
-                                    <div className="text-[10px] text-rose-400/70 font-bold uppercase tracking-wider">Losses</div>
-                                </div>
-                                <div className="bg-blue-500/5 border border-blue-500/10 p-3 rounded-xl flex flex-col gap-1">
-                                    <div className="text-blue-400 font-bold text-xl">{userStats.count?.draw || 0}</div>
-                                    <div className="text-[10px] text-blue-400/70 font-bold uppercase tracking-wider">Draws</div>
-                                </div>
-                            </div>
-
-                            <div className="flex flex-col gap-3">
-                                {status === 'loading' ? (
-                                    <div className="bg-subtle/50 p-4 rounded-xl flex flex-col gap-3 border border-white/5">
-                                        <div className="flex items-center gap-3 text-sm text-primary">
-                                            <Loader2 size={16} className="animate-spin text-accent-primary" />
-                                            <span>{message || 'Syncing...'}</span>
-                                        </div>
-                                        {progress?.currentSince && (
-                                            <div className="w-full bg-black/50 h-1.5 rounded-full overflow-hidden">
-                                                <div
-                                                    className="h-full bg-accent-primary transition-all duration-300 relative overflow-hidden"
-                                                    style={{ width: `${Math.min(100, ((progress.currentSince - userStats.createdAt) / (Date.now() - userStats.createdAt)) * 100)}%` }}
-                                                >
-                                                    <div className="absolute inset-0 bg-white/20 animate-pulse" />
-                                                </div>
-                                            </div>
-                                        )}
-                                        {progress?.type === 'added' && (
-                                            <div className="flex justify-between items-center mt-1">
-                                                <span className="text-xs text-muted uppercase tracking-wider">Imported</span>
-                                                <span className="text-lg font-bold text-accent-primary">{progress.total}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <>
-                                        <button
-                                            onClick={() => handleSync()}
-                                            disabled={status === 'loading'}
-                                            className="btn btn-primary w-full py-4 text-base font-medium shadow-lg shadow-blue-500/20"
-                                        >
-                                            <Download size={18} className="mr-2" />
-                                            {lastSyncDate ? 'Sync Latest Games' : 'Start Import'}
-                                        </button>
-                                        <div className="flex items-center justify-between text-xs text-muted px-1">
-                                            <div className="flex items-center gap-2">
-                                                {checkingNew ? (
-                                                    <>
-                                                        <Loader2 size={12} className="animate-spin text-accent-primary" />
-                                                        <span>Checking for new games…</span>
-                                                    </>
-                                                ) : hasNewGames === true ? (
-                                                    <>
-                                                        <RefreshCw size={12} className="text-emerald-400" />
-                                                        <span className="text-emerald-400">New games available</span>
-                                                    </>
-                                                ) : hasNewGames === false ? (
-                                                    <span>Up to date</span>
-                                                ) : (
-                                                    <span>New games check pending</span>
-                                                )}
-                                            </div>
-                                            {lastCheckedAt && (
-                                                <span>Checked {new Date(lastCheckedAt).toLocaleDateString()}</span>
-                                            )}
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="mt-6 min-h-[40px] flex justify-center">
-                        {status === 'success' && (
-                            <div className="flex items-center gap-3 text-emerald-400 justify-center animate-fade-in">
-                                <CheckCircle size={18} />
-                                <span className="font-medium text-sm">Sync Complete! Redirecting...</span>
-                            </div>
-                        )}
-
-                        {status === 'error' && (
-                            <div className="flex items-center gap-3 text-red-400 justify-center animate-fade-in">
-                                <AlertCircle size={18} />
-                                <span className="font-medium text-sm">{message}</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                <div className="bg-panel border border-white/5 rounded-2xl p-8 shadow-2xl animate-fade-in relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-blue-500" />
-
-                    <div className="text-center mb-8">
-                        <h2 className="text-2xl font-bold text-primary mb-2">Import PGN</h2>
-                        <p className="text-secondary text-sm">Analyze master games or any custom PGN without affecting hero analytics.</p>
-                    </div>
-
-                    <form onSubmit={handlePgnImport} className="flex flex-col gap-4">
-                        <div className="flex flex-col gap-2">
-                            <label className="text-xs font-semibold text-muted uppercase tracking-wider">Import Label (Optional)</label>
-                            <input
-                                type="text"
-                                value={pgnTag}
-                                onChange={(e) => setPgnTag(e.target.value)}
-                                placeholder="e.g. Tal vs Fischer"
-                                className="input w-full bg-subtle focus:ring-2 focus:ring-emerald-500/50"
-                            />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                            <label className="text-xs font-semibold text-muted uppercase tracking-wider">PGN Content</label>
-                            <textarea
-                                value={pgnText}
-                                onChange={(e) => setPgnText(e.target.value)}
-                                placeholder="Paste one or more PGNs here..."
-                                rows={8}
-                                className="input w-full bg-subtle focus:ring-2 focus:ring-emerald-500/50 resize-none"
-                            />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                            <label className="text-xs font-semibold text-muted uppercase tracking-wider">Upload PGN File</label>
-                            <div className="flex items-center gap-3">
-                                <input
-                                    type="file"
-                                    accept=".pgn"
-                                    onChange={handlePgnFile}
-                                    className="text-xs text-muted"
-                                />
-                                {pgnFileName && <span className="text-xs text-secondary">{pgnFileName}</span>}
-                            </div>
-                        </div>
-
-                        <button
-                            type="submit"
-                            disabled={pgnStatus === 'loading'}
-                            className="btn btn-primary w-full py-4 text-base font-medium shadow-lg shadow-emerald-500/20"
-                        >
-                            {pgnStatus === 'loading' ? (
-                                <span className="flex items-center gap-2 justify-center">
-                                    <Loader2 size={16} className="animate-spin" /> Importing...
-                                </span>
-                            ) : (
-                                <span className="flex items-center gap-2 justify-center">
-                                    <FileUp size={18} /> Import PGN
-                                </span>
                             )}
-                        </button>
-                    </form>
-
-                    <div className="mt-6 min-h-[40px] flex flex-col items-center gap-2">
-                        {pgnStatus === 'success' && (
-                            <div className="flex items-center gap-3 text-emerald-400 justify-center animate-fade-in">
-                                <CheckCircle size={18} />
-                                <span className="font-medium text-sm">{pgnMessage}</span>
-                            </div>
-                        )}
-                        {pgnStatus === 'error' && (
-                            <div className="flex items-center gap-3 text-red-400 justify-center animate-fade-in">
-                                <AlertCircle size={18} />
-                                <span className="font-medium text-sm">{pgnMessage}</span>
-                            </div>
-                        )}
-                        {pgnStats && (
-                            <div className="text-xs text-muted">
-                                {pgnStats.errors ? `${pgnStats.errors} invalid PGN(s) skipped.` : 'PGN import complete.'}
-                            </div>
-                        )}
+                            {pgnStatus === 'error' && (
+                                <div className="flex items-center gap-3 text-red-400 justify-center animate-fade-in">
+                                    <AlertCircle size={18} />
+                                    <span className="font-medium text-sm">{pgnMessage}</span>
+                                </div>
+                            )}
+                            {pgnStats && (
+                                <div className="text-xs text-muted">
+                                    {pgnStats.errors ? `${pgnStats.errors} invalid PGN(s) skipped.` : 'PGN import complete.'}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>

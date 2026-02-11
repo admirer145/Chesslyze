@@ -722,6 +722,10 @@ a {
   border-radius: 16px;
 }
 
+.rounded-2xl {
+  border-radius: 24px;
+}
+
 .rounded-full {
   border-radius: 9999px;
 }
