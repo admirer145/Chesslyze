@@ -231,7 +231,7 @@ export const Dashboard = () => {
                     const moves = chess.history({ verbose: true });
                     setHistory(moves);
 
-                    // Support deep-linking from Smart Reels: jump to the puzzle start position.
+                    // Support deep-linking from Smart Puzzles: jump to the puzzle start position.
                     let nextIndex = -1;
                     let usedJump = false;
                     const jumpGameIdRaw = Number(localStorage.getItem('activeGameJumpGameId'));

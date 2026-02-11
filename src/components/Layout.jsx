@@ -71,7 +71,7 @@ export const Layout = ({ children }) => {
                     <div className="flex-1 py-4 flex flex-col gap-1">
                         <NavItem to="/" icon={LayoutDashboard} label="Dashboard" collapsed={collapsed} />
                         <NavItem to="/library" icon={LayoutList} label="Games Library" collapsed={collapsed} />
-                        <NavItem to="/reels" icon={Zap} label="Smart Reels" collapsed={collapsed} />
+                        <NavItem to="/reels" icon={Zap} label="Smart Puzzles" collapsed={collapsed} />
                         <NavItem to="/openings" icon={BookOpen} label="Opening Explorer" collapsed={collapsed} />
                         <NavItem to="/profile" icon={User} label="Chess Journey" collapsed={collapsed} />
                         <div className="my-2 border-t mx-4" />
