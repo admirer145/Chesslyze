@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { db } from '../../services/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
-import { Filter, Search, RotateCcw, ChevronDown, Trophy, Brain, Calendar, X, Zap } from 'lucide-react';
+import { Filter, Search, RotateCcw, ChevronDown, ChevronUp, Trophy, Brain, Calendar, X, Zap, SlidersHorizontal } from 'lucide-react';
 import { ConfirmModal } from '../common/ConfirmModal';
 
 export const GamesLibrary = () => {
@@ -47,6 +47,15 @@ export const GamesLibrary = () => {
     const [activeFilterCount, setActiveFilterCount] = useState(0);
     const [queueing, setQueueing] = useState(false);
     const [confirmAnalyzeOpen, setConfirmAnalyzeOpen] = useState(false);
+    const [mobileFiltersExpanded, setMobileFiltersExpanded] = useState(false);
+    const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+
+    useEffect(() => {
+        const mq = window.matchMedia('(max-width: 768px)');
+        const handler = (e) => setIsMobile(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
     const [sortOrder, setSortOrder] = useState(() => {
         if (typeof window === 'undefined') return 'desc';
         return localStorage.getItem(SORT_ORDER_KEY) || 'desc';
@@ -404,104 +413,117 @@ export const GamesLibrary = () => {
                             ))}
                         </div>
 
-                        <div className="filter-group">
-                            {[
-                                { v: 'all', l: 'Any Color' },
-                                { v: 'white', l: 'White' },
-                                { v: 'black', l: 'Black' }
-                            ].map((o) => (
-                                <button
-                                    key={o.v}
-                                    className={`pill ${filters.color === o.v ? 'pill--active' : ''}`}
-                                    onClick={() => setFilters({ ...filters, color: o.v })}
-                                >
-                                    {o.l}
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="filter-group">
-                            {[
-                                { v: 'all', l: 'Any Speed' },
-                                { v: 'bullet', l: 'Bullet' },
-                                { v: 'blitz', l: 'Blitz' },
-                                { v: 'rapid', l: 'Rapid' },
-                                { v: 'classical', l: 'Classical' }
-                            ].map((o) => (
-                                <button
-                                    key={o.v}
-                                    className={`pill ${filters.perf === o.v ? 'pill--active' : ''}`}
-                                    onClick={() => setFilters({ ...filters, perf: o.v })}
-                                >
-                                    {o.l}
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="filter-group">
-                            {[
-                                { v: 'all', l: 'All Games' },
-                                { v: 'rated', l: 'Rated' },
-                                { v: 'unrated', l: 'Unrated' }
-                            ].map((o) => (
-                                <button
-                                    key={o.v}
-                                    className={`pill ${filters.rated === o.v ? 'pill--active' : ''}`}
-                                    onClick={() => setFilters({ ...filters, rated: o.v })}
-                                >
-                                    {o.l}
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="filter-group">
-                            {[
-                                { v: 'all', l: 'All Games' },
-                                { v: 'hero', l: 'Hero Only' },
-                                { v: 'others', l: 'Others' }
-                            ].map((o) => (
-                                <button
-                                    key={o.v}
-                                    className={`pill ${filters.scope === o.v ? 'pill--active' : ''}`}
-                                    onClick={() => setFilters({ ...filters, scope: o.v })}
-                                >
-                                    {o.l}
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="filter-group">
-                            {[
-                                { v: 'all', l: 'All Status' },
-                                { v: 'yes', l: 'Analyzed' },
-                                { v: 'no', l: 'Pending' },
-                                { v: 'idle', l: 'Idle' },
-                                { v: 'analyzing', l: 'Analyzing' },
-                                { v: 'failed', l: 'Failed' }
-                            ].map((o) => (
-                                <button
-                                    key={o.v}
-                                    className={`pill ${filters.analyzed === o.v ? 'pill--active' : ''}`}
-                                    onClick={() => setFilters({ ...filters, analyzed: o.v })}
-                                >
-                                    {o.l}
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="filter-group">
+                        {isMobile && (
                             <button
-                                className={`pill ${filters.titledOnly ? 'pill--active' : ''}`}
-                                onClick={() => setFilters({ ...filters, titledOnly: !filters.titledOnly })}
+                                className={`pill pill--more-filters ${mobileFiltersExpanded ? 'pill--active' : ''}`}
+                                onClick={() => setMobileFiltersExpanded(v => !v)}
                             >
-                                Titled Only
+                                <SlidersHorizontal size={13} />
+                                More{activeFilterCount > (filters.result !== 'all' ? 1 : 0) ? ` (${activeFilterCount - (filters.result !== 'all' ? 1 : 0)})` : ''}
+                                {mobileFiltersExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                             </button>
-                            <button
-                                className={`pill pill--bot ${filters.botOnly ? 'pill--active' : ''}`}
-                                onClick={() => setFilters({ ...filters, botOnly: !filters.botOnly })}
-                            >
-                                Bots
-                            </button>
+                        )}
+
+                        <div className={`quick-filters__secondary ${isMobile && !mobileFiltersExpanded ? 'is-collapsed' : ''}`}>
+                            <div className="filter-group">
+                                {[
+                                    { v: 'all', l: 'Any Color' },
+                                    { v: 'white', l: 'White' },
+                                    { v: 'black', l: 'Black' }
+                                ].map((o) => (
+                                    <button
+                                        key={o.v}
+                                        className={`pill ${filters.color === o.v ? 'pill--active' : ''}`}
+                                        onClick={() => setFilters({ ...filters, color: o.v })}
+                                    >
+                                        {o.l}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="filter-group">
+                                {[
+                                    { v: 'all', l: 'Any Speed' },
+                                    { v: 'bullet', l: 'Bullet' },
+                                    { v: 'blitz', l: 'Blitz' },
+                                    { v: 'rapid', l: 'Rapid' },
+                                    { v: 'classical', l: 'Classical' }
+                                ].map((o) => (
+                                    <button
+                                        key={o.v}
+                                        className={`pill ${filters.perf === o.v ? 'pill--active' : ''}`}
+                                        onClick={() => setFilters({ ...filters, perf: o.v })}
+                                    >
+                                        {o.l}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="filter-group">
+                                {[
+                                    { v: 'all', l: 'All Games' },
+                                    { v: 'rated', l: 'Rated' },
+                                    { v: 'unrated', l: 'Unrated' }
+                                ].map((o) => (
+                                    <button
+                                        key={o.v}
+                                        className={`pill ${filters.rated === o.v ? 'pill--active' : ''}`}
+                                        onClick={() => setFilters({ ...filters, rated: o.v })}
+                                    >
+                                        {o.l}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="filter-group">
+                                {[
+                                    { v: 'all', l: 'All Games' },
+                                    { v: 'hero', l: 'Hero Only' },
+                                    { v: 'others', l: 'Others' }
+                                ].map((o) => (
+                                    <button
+                                        key={o.v}
+                                        className={`pill ${filters.scope === o.v ? 'pill--active' : ''}`}
+                                        onClick={() => setFilters({ ...filters, scope: o.v })}
+                                    >
+                                        {o.l}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="filter-group">
+                                {[
+                                    { v: 'all', l: 'All Status' },
+                                    { v: 'yes', l: 'Analyzed' },
+                                    { v: 'no', l: 'Pending' },
+                                    { v: 'idle', l: 'Idle' },
+                                    { v: 'analyzing', l: 'Analyzing' },
+                                    { v: 'failed', l: 'Failed' }
+                                ].map((o) => (
+                                    <button
+                                        key={o.v}
+                                        className={`pill ${filters.analyzed === o.v ? 'pill--active' : ''}`}
+                                        onClick={() => setFilters({ ...filters, analyzed: o.v })}
+                                    >
+                                        {o.l}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="filter-group">
+                                <button
+                                    className={`pill ${filters.titledOnly ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, titledOnly: !filters.titledOnly })}
+                                >
+                                    Titled Only
+                                </button>
+                                <button
+                                    className={`pill pill--bot ${filters.botOnly ? 'pill--active' : ''}`}
+                                    onClick={() => setFilters({ ...filters, botOnly: !filters.botOnly })}
+                                >
+                                    Bots
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </section>

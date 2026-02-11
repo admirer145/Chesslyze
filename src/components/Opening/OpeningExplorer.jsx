@@ -149,7 +149,7 @@ const OpeningDetail = ({ opening }) => {
                 )}
             </div>
 
-            <div className="grid grid-cols-3 text-center text-sm mb-12 gap-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="opening-stats-grid-3 grid text-center text-sm mb-12 gap-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 <div>
                     <span className="block font-bold text-green-400 mr-2">{opening.wins}</span>
                     <span className="text-secondary">Wins</span>
@@ -164,7 +164,7 @@ const OpeningDetail = ({ opening }) => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4 text-sm mb-8 mt-8" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="opening-stats-grid-3 grid gap-4 text-sm mb-8 mt-8" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 <div className="p-4 rounded-lg border bg-panel text-center">
                     <div className="text-xs text-muted uppercase tracking-wider mb-1">Avg Accuracy</div>
                     <div className="text-2xl font-bold text-primary">{opening.avgAccuracy || 0}%</div>
@@ -179,7 +179,7 @@ const OpeningDetail = ({ opening }) => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-6 mb-8" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)' }}>
+            <div className="opening-stats-grid-2 grid gap-6 mb-8" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)' }}>
                 <div className="p-4 rounded-lg border bg-panel">
                     <h4 className="text-sm font-semibold text-primary mb-3">Typical Blunder Moves</h4>
                     <div className="flex flex-wrap gap-2 text-xs text-secondary">
@@ -200,7 +200,7 @@ const OpeningDetail = ({ opening }) => {
 
             <div className="p-6 rounded-lg border bg-panel mb-8">
                 <h4 className="text-sm font-semibold text-primary mb-3">Plans That Work vs Fail</h4>
-                <div className="grid grid-cols-2 gap-4 text-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)' }}>
+                <div className="opening-stats-grid-2 grid gap-4 text-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)' }}>
                     <div className="p-3 rounded bg-subtle">
                         <div className="text-xs text-muted uppercase tracking-wider mb-2">Winning Motif</div>
                         <div className="text-base font-semibold text-primary">{opening.winningMotif || 'N/A'}</div>
@@ -422,66 +422,94 @@ export const OpeningExplorer = () => {
     });
 
     const [selectedEco, setSelectedEco] = useState(null);
+    const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+
+    useEffect(() => {
+        const mq = window.matchMedia('(max-width: 768px)');
+        const handler = (e) => setIsMobile(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
 
     if (!openings) return <div className="p-8 text-secondary">Loading openings...</div>;
 
     const selectedOpening = openings.find(op => op.eco === selectedEco) || openings[0];
 
     return (
-        <div className="flex h-full bg-app overflow-hidden">
-            {/* List Panel */}
-            <div className="border-r bg-panel flex flex-col h-full" style={{ width: 300 }}>
-                <div className="p-4 border-b flex justify-between items-center">
-                    <h3 className="font-semibold text-xs uppercase tracking-wider text-muted">My Repertoire</h3>
-                    <button
-                        className="p-1 hover:bg-subtle rounded text-muted hover:text-primary transition-colors"
-                        title="Bulk Load Master Games (Slowly)"
-                        onClick={() => document.getElementById('bulk-load-trigger').click()}
-                    >
-                        <Zap size={14} />
-                    </button>
+        <div className="opening-explorer-shell flex h-full bg-app overflow-hidden">
+            {isMobile ? (
+                /* Mobile: horizontal chip scroller + full-height detail */
+                <div className="opening-mobile-layout flex flex-col h-full w-full">
+                    <div className="opening-chip-scroller">
+                        {openings.map(op => {
+                            const w = Math.round((op.wins / op.total) * 100);
+                            const isSelected = selectedOpening?.eco === op.eco;
+                            return (
+                                <button
+                                    key={op.eco}
+                                    onClick={() => setSelectedEco(op.eco)}
+                                    className={`opening-chip ${isSelected ? 'is-selected' : ''}`}
+                                >
+                                    <span className="opening-chip__eco">{op.eco}</span>
+                                    <span className="opening-chip__name">{op.name}</span>
+                                    <div className="opening-chip__bar">
+                                        <div className="opening-chip__bar-fill" style={{ width: `${w}%` }} />
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <div className="flex-1 overflow-y-auto">
+                        <OpeningDetail opening={selectedOpening} />
+                    </div>
                 </div>
-                <div className="flex-1 overflow-y-auto">
-                    {openings.map(op => {
-                        const w = (op.wins / op.total) * 100;
-                        const d = (op.draws / op.total) * 100;
-                        const l = (op.losses / op.total) * 100;
-                        const isSelected = selectedOpening?.eco === op.eco;
-
-                        return (
+            ) : (
+                /* Desktop: sidebar + detail */
+                <>
+                    <div className="opening-list-panel border-r bg-panel flex flex-col h-full">
+                        <div className="p-4 border-b flex justify-between items-center">
+                            <h3 className="font-semibold text-xs uppercase tracking-wider text-muted">My Repertoire</h3>
                             <button
-                                key={op.eco}
-                                onClick={() => setSelectedEco(op.eco)}
-                                className="w-full text-left p-4 border-b hover:bg-subtle transition-colors focus:outline-none"
-                                style={{ backgroundColor: isSelected ? 'var(--bg-subtle)' : 'transparent', borderLeft: isSelected ? '2px solid var(--accent-blue)' : '2px solid transparent' }}
+                                className="p-1 hover:bg-subtle rounded text-muted hover:text-primary transition-colors"
+                                title="Bulk Load Master Games (Slowly)"
+                                onClick={() => document.getElementById('bulk-load-trigger').click()}
                             >
-                                <div className="flex justify-between items-center mb-2">
-                                    <span className="font-mono font-medium text-primary">{op.eco}</span>
-                                    <span className="text-xs text-secondary">{op.total}</span>
-                                </div>
-                                <div className="text-xs text-muted mb-2">{op.name}</div>
-                                <div className="h-1.5 w-full bg-app rounded-full overflow-hidden flex">
-                                    <div style={{ width: `${w}%` }} className="bg-emerald-500" />
-                                    <div style={{ width: `${d}%` }} className="bg-zinc-500" />
-                                    <div style={{ width: `${l}%` }} className="bg-rose-500" />
-                                </div>
+                                <Zap size={14} />
                             </button>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* Detail Panel */}
-            <div className="flex-1 bg-app overflow-hidden relative">
-                <OpeningDetail opening={selectedOpening} />
-                {/* Hidden trigger for bulk load to passthrough to Detail component which has the logic, 
-                    OR better, lift state up. For now, let's keep it simple and lift the logic up in next refactor if needed.
-                    Actually, OpeningDetail has the logic. We need to pass the full list to it or move logic here.
-                    Let's move logic to OpeningDetail and expose a trigger? No, OpeningDetail is for ONE opening.
-                    
-                    Refactor: Move bulkLoadMasterGames to parent (OpeningExplorer) so it can iterate all openings.
-                */}
-            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto">
+                            {openings.map(op => {
+                                const w = (op.wins / op.total) * 100;
+                                const d = (op.draws / op.total) * 100;
+                                const l = (op.losses / op.total) * 100;
+                                const isSelected = selectedOpening?.eco === op.eco;
+                                return (
+                                    <button
+                                        key={op.eco}
+                                        onClick={() => setSelectedEco(op.eco)}
+                                        className="w-full text-left p-4 border-b hover:bg-subtle transition-colors focus:outline-none"
+                                        style={{ backgroundColor: isSelected ? 'var(--bg-subtle)' : 'transparent', borderLeft: isSelected ? '2px solid var(--accent-blue)' : '2px solid transparent' }}
+                                    >
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="font-mono font-medium text-primary">{op.eco}</span>
+                                            <span className="text-xs text-secondary">{op.total}</span>
+                                        </div>
+                                        <div className="text-xs text-muted mb-2">{op.name}</div>
+                                        <div className="h-1.5 w-full bg-app rounded-full overflow-hidden flex">
+                                            <div style={{ width: `${w}%` }} className="bg-emerald-500" />
+                                            <div style={{ width: `${d}%` }} className="bg-zinc-500" />
+                                            <div style={{ width: `${l}%` }} className="bg-rose-500" />
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                    <div className="opening-detail-panel bg-app overflow-hidden relative">
+                        <OpeningDetail opening={selectedOpening} />
+                    </div>
+                </>
+            )}
         </div>
     );
 };

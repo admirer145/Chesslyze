@@ -449,7 +449,7 @@ export const Settings = () => {
     };
 
     return (
-        <div className="h-full w-full bg-app p-8 overflow-y-auto">
+        <div className="settings-page h-full w-full bg-app p-4 md:p-8 overflow-y-auto">
             <div className="flex flex-col gap-6" style={{ maxWidth: 900, margin: '0 auto' }}>
                 <div className="flex items-center justify-between">
                     <div>

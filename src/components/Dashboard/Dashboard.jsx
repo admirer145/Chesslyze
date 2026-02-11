@@ -1,8 +1,8 @@
-import React, { useLayoutEffect, useState, useEffect, useMemo } from 'react';
+import React, { useLayoutEffect, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { Chessboard } from 'react-chessboard';
-import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, FastForward, Rewind, ChevronDown } from 'lucide-react';
+import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, FastForward, Rewind, ChevronDown, GripHorizontal } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { processGame } from '../../services/analyzer';
@@ -132,6 +132,87 @@ export const Dashboard = () => {
         if (typeof window === 'undefined') return true;
         return window.innerWidth >= 1100;
     });
+
+    // Mobile bottom sheet
+    const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+    const SHEET_MIN = 56; // px – collapsed (handle only)
+    const [sheetHeight, setSheetHeight] = useState(SHEET_MIN);
+    const sheetRef = useRef(null);
+    const dragRef = useRef({ startY: 0, startH: SHEET_MIN, dragging: false });
+
+    useEffect(() => {
+        const mq = window.matchMedia('(max-width: 768px)');
+        const handler = (e) => setIsMobile(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
+
+    // Persist active tab
+    useEffect(() => {
+        if (isMobile) {
+            const saved = localStorage.getItem('dashboardSheetTab');
+            if (saved && ['moves', 'analysis', 'ai'].includes(saved)) {
+                setActiveTab(saved);
+            }
+        }
+    }, [isMobile]);
+
+    const saveTab = useCallback((tab) => {
+        setActiveTab(tab);
+        localStorage.setItem('dashboardSheetTab', tab);
+    }, []);
+
+    // Continuous drag handler — use state for handle node so effect re-runs when DOM mounts
+    const [handleNode, setHandleNode] = useState(null);
+
+    useEffect(() => {
+        if (!handleNode || !isMobile) return;
+
+        const getMaxH = () => window.innerHeight * 0.85;
+
+        const onTouchStart = (e) => {
+            const sheet = sheetRef.current;
+            dragRef.current = {
+                startY: e.touches[0].clientY,
+                startH: sheet ? sheet.offsetHeight : SHEET_MIN,
+                dragging: true,
+            };
+            if (sheet) sheet.style.transition = 'none';
+        };
+
+        const onTouchMove = (e) => {
+            if (!dragRef.current.dragging) return;
+            if (e.cancelable) e.preventDefault();
+            const deltaY = dragRef.current.startY - e.touches[0].clientY;
+            const newH = Math.min(getMaxH(), Math.max(SHEET_MIN, dragRef.current.startH + deltaY));
+            setSheetHeight(newH);
+        };
+
+        const onTouchEnd = () => {
+            if (!dragRef.current.dragging) return;
+            dragRef.current.dragging = false;
+            const sheet = sheetRef.current;
+            if (sheet) sheet.style.transition = '';
+        };
+
+        handleNode.addEventListener('touchstart', onTouchStart, { passive: true });
+        handleNode.addEventListener('touchmove', onTouchMove, { passive: false });
+        handleNode.addEventListener('touchend', onTouchEnd, { passive: true });
+
+        return () => {
+            handleNode.removeEventListener('touchstart', onTouchStart);
+            handleNode.removeEventListener('touchmove', onTouchMove);
+            handleNode.removeEventListener('touchend', onTouchEnd);
+        };
+    }, [handleNode, isMobile]);
+
+    const handleSheetTabClick = useCallback((tab) => {
+        saveTab(tab);
+        setSheetHeight((h) => {
+            const halfH = window.innerHeight * 0.45;
+            return h < halfH ? halfH : h;
+        });
+    }, [saveTab]);
 
     const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false);
     const [lastAnalyzeMode, setLastAnalyzeMode] = useState(() => localStorage.getItem('dashboardAnalyzeMode') || 'stockfish');
@@ -678,13 +759,15 @@ export const Dashboard = () => {
                                         )}
                                     </div>
                                 )}
-                                <button
-                                    onClick={() => setRightPanelOpen((v) => !v)}
-                                    className="panel-toggle"
-                                >
-                                    {rightPanelOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-                                    {rightPanelOpen ? 'Hide Panel' : 'Show Panel'}
-                                </button>
+                                {!isMobile && (
+                                    <button
+                                        onClick={() => setRightPanelOpen((v) => !v)}
+                                        className="panel-toggle"
+                                    >
+                                        {rightPanelOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+                                        {rightPanelOpen ? 'Hide Panel' : 'Show Panel'}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
@@ -759,7 +842,7 @@ export const Dashboard = () => {
                         <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
                     </div>
 
-                    {!rightPanelOpen && (
+                    {!isMobile && !rightPanelOpen && (
                         <button className="panel-toggle panel-toggle--floating" onClick={() => setRightPanelOpen(true)}>
                             <ChevronLeft size={16} />
                             Show Panel
@@ -782,155 +865,194 @@ export const Dashboard = () => {
 
 
 
-            {/* RIGHT: Context Panel (Move List + Stats) */}
-            <div className="dashboard-side bg-panel border-l flex flex-col shrink-0 overflow-hidden">
-
-                {/* 1. Right Panel Content (Moves or Analytics) */}
-                <div className="flex-1 flex flex-col min-h-0 relative">
-                    {/* Tab Header */}
-                    <div className="flex items-center border-b bg-subtle/50 shrink-0">
-                        <button
-                            onClick={() => setActiveTab('moves')}
-                            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'moves' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary'}`}
-                        >
-                            Moves
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('analysis')}
-                            disabled={!(analysisLog && analysisLog.length > 0)}
-                            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'analysis' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
-                        >
-                            Analytics
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('ai')}
-                            disabled={!aiAnalysis}
-                            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'ai' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
-                        >
-                            <span className={!aiAnalysis ? 'opacity-50' : 'text-purple-400'}>AI Coach</span>
-                        </button>
+            {/* RIGHT: Context Panel — Desktop: side panel, Mobile: bottom sheet */}
+            {isMobile ? (
+                <div
+                    ref={sheetRef}
+                    className="dashboard-bottom-sheet"
+                    style={{ height: `${sheetHeight}px` }}
+                >
+                    {/* Drag Handle */}
+                    <div
+                        ref={setHandleNode}
+                        className="bottom-sheet__handle"
+                    >
+                        <div className="bottom-sheet__grip"><GripHorizontal size={20} /></div>
+                        <div className="bottom-sheet__tabs">
+                            <button
+                                onClick={() => handleSheetTabClick('moves')}
+                                className={`bottom-sheet__tab ${activeTab === 'moves' ? 'is-active' : ''}`}
+                            >Moves</button>
+                            <button
+                                onClick={() => handleSheetTabClick('analysis')}
+                                className={`bottom-sheet__tab ${activeTab === 'analysis' ? 'is-active' : ''}`}
+                            >Analytics</button>
+                            <button
+                                onClick={() => handleSheetTabClick('ai')}
+                                className={`bottom-sheet__tab ${activeTab === 'ai' ? 'is-active' : ''}`}
+                            >
+                                <span className={aiAnalysis ? 'text-purple-400' : ''}>AI</span>
+                            </button>
+                        </div>
                     </div>
 
-                    {/* Scrollable Content Area */}
-                    <div className="flex-1 overflow-y-auto min-h-0 bg-panel relative">
+                    {/* Scrollable Content */}
+                    <div className="bottom-sheet__content">
                         {activeTab === 'ai' ? (
-                            <AIInsightsView
-                                analysis={aiAnalysis}
-                                onJumpToMove={(moveIdx) => {
-                                    /* 
-                                      The prompt asks for move_number (1-based). 
-                                      However, the history array is 0-based ply.
-                                      Wait, history is 0-based *move objects*.
-                                      Let's assume onJumpToMove from View passes 0-based full-move index.
-                                      Actually, let's verify what `handleJumpTo` expects. 
-                                      handleJumpTo(index) sets moveIndex. 
-                                      history array length = ply count.
-                                      So if we click "White Move 1", that is ply 0.
-                                      If we click "Black Move 1", that is ply 1.
-                                      
-                                      The AIInsightsView implementation I wrote earlier: 
-                                      onClick={() => onJumpToMove && onJumpToMove(moment.move_number - 1)}
-                                      BUT wait, move_number 1 (White) is ply 0.
-                                      move_number 1 (Black) is ply 1.
-                                      The view needs to differentiate side.
-                                      Correct, my view implementation: 
-                                      onClick={() => onJumpToMove && onJumpToMove(move.side === 'white' ? (move.move_number - 1)*2 : (move.move_number - 1)*2 + 1)}
-                                      This seems correct for mapping to ply index.
-                                    */
-                                    handleJumpTo(moveIdx);
-                                }}
-                            />
+                            aiAnalysis ? (
+                                <AIInsightsView
+                                    analysis={aiAnalysis}
+                                    onJumpToMove={(moveIdx) => handleJumpTo(moveIdx)}
+                                />
+                            ) : (
+                                <div className="bottom-sheet__empty">
+                                    <span className="text-purple-400" style={{ fontSize: 28 }}>✦</span>
+                                    <p className="font-medium text-primary">AI Coach</p>
+                                    <p className="text-muted text-xs">Tap the AI analysis button above the board to get personalized insights, blunder explanations, and improvement tips for this game.</p>
+                                </div>
+                            )
                         ) : activeTab === 'analysis' ? (
                             (analysisLog && analysisLog.length > 0) ? (
                                 <AnalyticsPanel
                                     game={{ ...activeGame, analysisLog }}
                                     onJumpToMove={handleJumpTo}
                                     activeIndex={moveIndex}
-                                    onBestHover={(uci, fen) => {
-                                        if (!uci || typeof uci !== 'string' || uci.length < 4) {
-                                            setHoverArrow(null);
-                                            return;
-                                        }
-                                        const from = uci.substring(0, 2);
-                                        const to = uci.substring(2, 4);
-                                        setHoverArrow({ from, to });
+                                    onBestHover={(uci) => {
+                                        if (!uci || typeof uci !== 'string' || uci.length < 4) { setHoverArrow(null); return; }
+                                        setHoverArrow({ from: uci.substring(0, 2), to: uci.substring(2, 4) });
                                     }}
                                     onPreviewFen={(fen) => setPreviewFen(fen)}
                                 />
                             ) : (
-                                <div className="p-8 text-center text-muted">
-                                    Analysis not available yet. Run analysis to unlock move quality and evaluation insights.
+                                <div className="bottom-sheet__empty">
+                                    <span style={{ fontSize: 28 }}>📊</span>
+                                    <p className="font-medium text-primary">Move Analytics</p>
+                                    <p className="text-muted text-xs">Run the engine analysis using the button above the board to see accuracy scores, blunder detection, and move-by-move evaluation.</p>
                                 </div>
                             )
                         ) : (
-                            /* Move List Grid */
-                            <div className="move-list text-sm">
-                                <div className="move-row move-header">
-                                    <div className="move-num text-muted">#</div>
-                                    <div className="move-cell move-cell-white text-muted">White</div>
-                                    <div className="move-cell move-cell-black text-muted">Black</div>
+                            <>
+                                <div className="move-list text-sm">
+                                    <div className="move-row move-header">
+                                        <div className="move-num text-muted">#</div>
+                                        <div className="move-cell move-cell-white text-muted">White</div>
+                                        <div className="move-cell move-cell-black text-muted">Black</div>
+                                    </div>
+                                    {history.reduce((rows, move, i) => {
+                                        if (i % 2 === 0) rows.push([move]);
+                                        else rows[rows.length - 1].push(move);
+                                        return rows;
+                                    }, []).map((pair, rowIdx) => {
+                                        const wm = pair[0], bm = pair[1];
+                                        const wi = rowIdx * 2, bi = rowIdx * 2 + 1;
+                                        return (
+                                            <div key={rowIdx} className={`move-row ${rowIdx % 2 === 0 ? 'move-row-even' : 'move-row-odd'}`}>
+                                                <div className="move-num text-muted">{rowIdx + 1}</div>
+                                                <button id={`move-${wi}`} onClick={() => handleJumpTo(wi)} className={`move-cell move-cell-white ${moveIndex === wi ? 'move-cell-active' : ''}`}>{wm?.san || '-'}</button>
+                                                <button id={`move-${bi}`} onClick={() => handleJumpTo(bi)} disabled={!bm} className={`move-cell move-cell-black ${moveIndex === bi ? 'move-cell-active' : ''}`}>{bm?.san || '-'}</button>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
-                                {history.reduce((rows, move, i) => {
-                                    if (i % 2 === 0) {
-                                        rows.push([move]);
-                                    } else {
-                                        rows[rows.length - 1].push(move);
-                                    }
-                                    return rows;
-                                }, []).map((pair, rowIdx) => {
-                                    const whiteMove = pair[0];
-                                    const blackMove = pair[1];
-                                    const whiteIndex = rowIdx * 2;
-                                    const blackIndex = rowIdx * 2 + 1;
-                                    return (
-                                        <div key={rowIdx} className={`move-row ${rowIdx % 2 === 0 ? 'move-row-even' : 'move-row-odd'}`}>
-                                            <div className="move-num text-muted">{rowIdx + 1}</div>
-                                            <button
-                                                id={`move-${whiteIndex}`}
-                                                onClick={() => handleJumpTo(whiteIndex)}
-                                                className={`move-cell move-cell-white ${moveIndex === whiteIndex ? 'move-cell-active' : ''}`}
-                                            >
-                                                {whiteMove?.san || '-'}
-                                            </button>
-                                            <button
-                                                id={`move-${blackIndex}`}
-                                                onClick={() => handleJumpTo(blackIndex)}
-                                                disabled={!blackMove}
-                                                className={`move-cell move-cell-black ${moveIndex === blackIndex ? 'move-cell-active' : ''}`}
-                                            >
-                                                {blackMove?.san || '-'}
-                                            </button>
-                                        </div>
-                                    );
-                                })}
-                            </div>
+                                {activeTab === 'moves' && moveInsight && (
+                                    <div className="p-4 border-t flex flex-col gap-2">
+                                        <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">Move Insights</h3>
+                                        <StatRow label="Classification" value={moveInsight.classification || '-'} subtext="Move quality" icon={Target} color="blue" />
+                                        <StatRow label="Eval Swing" value={typeof moveInsight.evalDiff === 'number' ? `${Math.round(moveInsight.evalDiff)}cp` : '-'} subtext="Centipawn loss" icon={Activity} color="orange" />
+                                        <StatRow label="Best Move" value={uciToSan(moveInsight.fen, moveInsight.bestMove) || '-'} subtext="Engine recommendation" icon={Zap} color="yellow" />
+                                        <StatRow label="Your Move" value={uciToSan(moveInsight.fen, moveInsight.move) || '-'} subtext="Played move" icon={ArrowUpRight} color="green" />
+                                    </div>
+                                )}
+                            </>
                         )}
                     </div>
                 </div>
-
-                {/* 2. Stats (Bottom Half) - Only show in Moves view */}
-                {activeTab === 'moves' && (
-                    <div className="dashboard-performance flex flex-col bg-panel/50 border-t shrink-0">
-                        <div className="p-4 border-b sticky top-0 bg-panel z-10">
-                            <h2 className="text-sm font-semibold text-primary">Move Insights</h2>
+            ) : (
+                <div className="dashboard-side bg-panel border-l flex flex-col shrink-0 overflow-hidden">
+                    <div className="flex-1 flex flex-col min-h-0 relative">
+                        <div className="flex items-center border-b bg-subtle/50 shrink-0">
+                            <button
+                                onClick={() => setActiveTab('moves')}
+                                className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'moves' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary'}`}
+                            >Moves</button>
+                            <button
+                                onClick={() => setActiveTab('analysis')}
+                                disabled={!(analysisLog && analysisLog.length > 0)}
+                                className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'analysis' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
+                            >Analytics</button>
+                            <button
+                                onClick={() => setActiveTab('ai')}
+                                disabled={!aiAnalysis}
+                                className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'ai' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
+                            >
+                                <span className={!aiAnalysis ? 'opacity-50' : 'text-purple-400'}>AI Coach</span>
+                            </button>
                         </div>
-
-                        <div className="performance-scroll p-4 flex flex-col gap-2">
-                            {moveInsight ? (
-                                <>
-                                    <StatRow label="Classification" value={moveInsight.classification || '-'} subtext="Move quality" icon={Target} color="blue" />
-                                    <StatRow label="Eval Swing" value={typeof moveInsight.evalDiff === 'number' ? `${Math.round(moveInsight.evalDiff)}cp` : '-'} subtext="Centipawn loss" icon={Activity} color="orange" />
-                                    <StatRow label="Best Move" value={uciToSan(moveInsight.fen, moveInsight.bestMove) || '-'} subtext="Engine recommendation" icon={Zap} color="yellow" />
-                                    <StatRow label="Your Move" value={uciToSan(moveInsight.fen, moveInsight.move) || '-'} subtext="Played move" icon={ArrowUpRight} color="green" />
-                                </>
+                        <div className="flex-1 overflow-y-auto min-h-0 bg-panel relative">
+                            {activeTab === 'ai' ? (
+                                <AIInsightsView analysis={aiAnalysis} onJumpToMove={(moveIdx) => handleJumpTo(moveIdx)} />
+                            ) : activeTab === 'analysis' ? (
+                                (analysisLog && analysisLog.length > 0) ? (
+                                    <AnalyticsPanel
+                                        game={{ ...activeGame, analysisLog }}
+                                        onJumpToMove={handleJumpTo}
+                                        activeIndex={moveIndex}
+                                        onBestHover={(uci) => {
+                                            if (!uci || typeof uci !== 'string' || uci.length < 4) { setHoverArrow(null); return; }
+                                            setHoverArrow({ from: uci.substring(0, 2), to: uci.substring(2, 4) });
+                                        }}
+                                        onPreviewFen={(fen) => setPreviewFen(fen)}
+                                    />
+                                ) : (
+                                    <div className="p-8 text-center text-muted">Analysis not available yet. Run analysis to unlock move quality and evaluation insights.</div>
+                                )
                             ) : (
-                                <div className="text-sm text-muted">Move analysis not available yet.</div>
+                                <div className="move-list text-sm">
+                                    <div className="move-row move-header">
+                                        <div className="move-num text-muted">#</div>
+                                        <div className="move-cell move-cell-white text-muted">White</div>
+                                        <div className="move-cell move-cell-black text-muted">Black</div>
+                                    </div>
+                                    {history.reduce((rows, move, i) => {
+                                        if (i % 2 === 0) rows.push([move]);
+                                        else rows[rows.length - 1].push(move);
+                                        return rows;
+                                    }, []).map((pair, rowIdx) => {
+                                        const wm = pair[0], bm = pair[1];
+                                        const wi = rowIdx * 2, bi = rowIdx * 2 + 1;
+                                        return (
+                                            <div key={rowIdx} className={`move-row ${rowIdx % 2 === 0 ? 'move-row-even' : 'move-row-odd'}`}>
+                                                <div className="move-num text-muted">{rowIdx + 1}</div>
+                                                <button id={`move-${wi}`} onClick={() => handleJumpTo(wi)} className={`move-cell move-cell-white ${moveIndex === wi ? 'move-cell-active' : ''}`}>{wm?.san || '-'}</button>
+                                                <button id={`move-${bi}`} onClick={() => handleJumpTo(bi)} disabled={!bm} className={`move-cell move-cell-black ${moveIndex === bi ? 'move-cell-active' : ''}`}>{bm?.san || '-'}</button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             )}
                         </div>
-
                     </div>
-                )}
-            </div>
+                    {activeTab === 'moves' && (
+                        <div className="dashboard-performance flex flex-col bg-panel/50 border-t shrink-0">
+                            <div className="p-4 border-b sticky top-0 bg-panel z-10">
+                                <h2 className="text-sm font-semibold text-primary">Move Insights</h2>
+                            </div>
+                            <div className="performance-scroll p-4 flex flex-col gap-2">
+                                {moveInsight ? (
+                                    <>
+                                        <StatRow label="Classification" value={moveInsight.classification || '-'} subtext="Move quality" icon={Target} color="blue" />
+                                        <StatRow label="Eval Swing" value={typeof moveInsight.evalDiff === 'number' ? `${Math.round(moveInsight.evalDiff)}cp` : '-'} subtext="Centipawn loss" icon={Activity} color="orange" />
+                                        <StatRow label="Best Move" value={uciToSan(moveInsight.fen, moveInsight.bestMove) || '-'} subtext="Engine recommendation" icon={Zap} color="yellow" />
+                                        <StatRow label="Your Move" value={uciToSan(moveInsight.fen, moveInsight.move) || '-'} subtext="Played move" icon={ArrowUpRight} color="green" />
+                                    </>
+                                ) : (
+                                    <div className="text-sm text-muted">Move analysis not available yet.</div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };
