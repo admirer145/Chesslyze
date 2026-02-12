@@ -4,6 +4,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Set base path for GitHub Pages - change to '/Chesslyze/' if deploying to github.io/username/Chesslyze
+  // Use '/' for custom domain
+  base: process.env.GITHUB_PAGES ? '/Chesslyze/' : '/',
   plugins: [
     react(),
     VitePWA({

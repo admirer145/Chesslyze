@@ -86,6 +86,31 @@ Chesslyze is a Progressive Web App that provides deep, move-by-move analysis of 
    npm run preview
    ```
 
+## 🌐 Deployment
+
+### Deploy to GitHub Pages
+
+The project is configured for automatic deployment to GitHub Pages:
+
+1. **Update base path** in `vite.config.js`:
+   ```javascript
+   base: '/YOUR-REPO-NAME/',  // Change to your repo name
+   ```
+
+2. **Push to GitHub:**
+   ```bash
+   git push origin main
+   ```
+
+3. **Enable GitHub Pages** in repo Settings → Pages → Source: GitHub Actions
+
+4. **Access your site** at: `https://username.github.io/YOUR-REPO-NAME/`
+
+See [DEPLOY.md](./DEPLOY.md) for detailed instructions.
+
+**Live Demo:** _[Coming soon]_
+<!-- Update with your GitHub Pages URL after deployment -->
+
 ## 🛠️ Tech Stack
 
 ### Core
