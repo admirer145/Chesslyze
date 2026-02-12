@@ -1,6 +1,6 @@
 import Dexie from 'dexie';
 
-export const db = new Dexie('ReelChessDB');
+export const db = new Dexie('ChesslyzeDB');
 
 db.version(1).stores({
     games: '++id, site, date, white, black, result, eco, [white+result], [black+result], timestamp',
