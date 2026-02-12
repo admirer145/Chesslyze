@@ -1,0 +1,2 @@
+# Prevent custom domain redirect
+# This file ensures no CNAME is created during build
