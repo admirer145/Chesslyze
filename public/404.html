@@ -7,13 +7,15 @@
     <title>Redirecting...</title>
     <script>
         // SPA redirect for GitHub Pages
-        // This captures the URL path and redirects to index.html with the path as a query parameter
-        const path = window.location.pathname.replace(/\/Chesslyze/, '');
-        const query = window.location.search;
+        // Extract the path after /Chesslyze/ and redirect to index.html with it
+        const pathName = window.location.pathname;
+        // Remove /Chesslyze from path (e.g., /Chesslyze/import -> /import)
+        const path = pathName.replace('/Chesslyze', '');
+        const search = window.location.search;
         const hash = window.location.hash;
 
         // Redirect to index.html with the path encoded
-        const redirect = '/Chesslyze/' + '?p=' + encodeURIComponent(path) + query + hash;
+        const redirect = '/Chesslyze/?p=' + encodeURIComponent(path) + (search.replace('?', '&') || '') + hash;
         window.location.replace(redirect);
     </script>
 </head>

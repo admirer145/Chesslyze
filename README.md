@@ -108,8 +108,7 @@ The project is configured for automatic deployment to GitHub Pages:
 
 See [DEPLOY.md](./DEPLOY.md) for detailed instructions.
 
-**Live Demo:** _[Coming soon]_
-<!-- Update with your GitHub Pages URL after deployment -->
+**Live Demo:** `https://admirer145.github.io/Chesslyze/`
 
 ## 🛠️ Tech Stack
 

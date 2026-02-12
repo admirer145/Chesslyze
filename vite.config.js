@@ -3,10 +3,9 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
-export default defineConfig({
-  // Base path for GitHub Pages deployment
-  // Change to '/' if using custom domain
-  base: '/Chesslyze/',
+export default defineConfig(({ command }) => ({
+  // Use /Chesslyze/ for production (GitHub Pages), / for development
+  base: command === 'build' ? '/Chesslyze/' : '/',
   plugins: [
     react(),
     VitePWA({
@@ -96,4 +95,4 @@ export default defineConfig({
       "Cross-Origin-Opener-Policy": "same-origin",
     },
   },
-})
+}))
