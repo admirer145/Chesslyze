@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redirecting...</title>
+    <script>
+        // SPA redirect for GitHub Pages
+        // This captures the URL path and redirects to index.html with the path as a query parameter
+        const path = window.location.pathname.replace(/\/Chesslyze/, '');
+        const query = window.location.search;
+        const hash = window.location.hash;
+
+        // Redirect to index.html with the path encoded
+        const redirect = '/Chesslyze/' + '?p=' + encodeURIComponent(path) + query + hash;
+        window.location.replace(redirect);
+    </script>
+</head>
+
+<body>
+    <p>Redirecting...</p>
+</body>
+
+</html>
