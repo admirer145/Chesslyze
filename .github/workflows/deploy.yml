@@ -34,11 +34,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Remove CNAME file (force github.io domain)
-        run: |
-          rm -f dist/CNAME
-          echo "Removed CNAME to prevent custom domain redirect"
-
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
