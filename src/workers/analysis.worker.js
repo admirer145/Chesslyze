@@ -116,9 +116,12 @@ const initEngine = (version) => {
         rawPostMessage({ type: 'WARNING', message: "Multi-threaded engine requires secure context (COOP/COEP Headers)." });
     }
 
+    // Use import.meta.url to resolve paths relative to the current module
+    // This ensures paths work correctly with Vite's base path configuration (e.g., /Chesslyze/)
+    const baseUrl = new URL('.', import.meta.url).href;
     const scriptPath = version === '17.1-multi'
-        ? '/stockfish-engine.worker.js#/stockfish-17-multi.wasm'
-        : '/stockfish-17-single.js';
+        ? new URL('../../public/stockfish-engine.worker.js#/stockfish-17-multi.wasm', import.meta.url).href
+        : new URL('../../public/stockfish-17-single.js', import.meta.url).href;
 
     try {
         log(`Worker: Spawning engine worker ${scriptPath}...`);
