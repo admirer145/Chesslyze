@@ -122,6 +122,14 @@ db.version(16).stores({
     });
 });
 
+db.version(17).stores({
+    games: '++id, lichessId, pgnHash, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority, rated, variant, whiteTitle, blackTitle, isHero, source, importTag',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt',
+    importProgress: 'username, currentSince, targetUntil, totalImported, lastUpdated, status, mode, failedChunks'
+});
+
 export const saveAIAnalysis = async (gameId, analysisData, promptVersion = '1.0') => {
     const existing = await db.ai_analyses.where('gameId').equals(gameId).first();
     const record = {
@@ -212,6 +220,50 @@ export const getLatestGameTimestamp = async (username) => {
     return latest.length > 0 ? latest[0].timestamp : 0;
 };
 
+// Count local games for a username within a timestamp range
+export const getLocalGameCountInRange = async (username, since, until) => {
+    const lowerUser = username.toLowerCase();
+    const count = await db.games
+        .filter(g => {
+            if (g.source !== 'lichess') return false;
+            if (g.timestamp < since || g.timestamp >= until) return false;
+            const isHero = g.white?.toLowerCase() === lowerUser || g.black?.toLowerCase() === lowerUser;
+            return isHero;
+        })
+        .count();
+    return count;
+};
+
 export const getGame = async (id) => {
     return await db.games.get(id);
+};
+
+// Import Progress Management
+export const saveImportProgress = async (username, progress) => {
+    await db.importProgress.put({
+        username: username.toLowerCase(),
+        currentSince: progress.currentSince,
+        targetUntil: progress.targetUntil,
+        totalImported: progress.totalImported || 0,
+        lastUpdated: Date.now(),
+        status: progress.status, // 'in-progress', 'paused', 'completed', 'failed'
+        mode: progress.mode || 'smart',
+        failedChunks: JSON.stringify(progress.failedChunks || [])
+    });
+};
+
+export const loadImportProgress = async (username) => {
+    const progress = await db.importProgress.get(username.toLowerCase());
+    if (progress && progress.failedChunks) {
+        try {
+            progress.failedChunks = JSON.parse(progress.failedChunks);
+        } catch {
+            progress.failedChunks = [];
+        }
+    }
+    return progress;
+};
+
+export const clearImportProgress = async (username) => {
+    await db.importProgress.delete(username.toLowerCase());
 };

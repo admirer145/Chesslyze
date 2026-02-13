@@ -1,4 +1,4 @@
-import { bulkUpsertGames, getLatestGameTimestamp } from './db';
+import { bulkUpsertGames, getLatestGameTimestamp, getLocalGameCountInRange, saveImportProgress, loadImportProgress, clearImportProgress } from './db';
 
 const constructPgn = (game) => {
     const headers = [
@@ -53,6 +53,74 @@ const mapLichessGame = (game) => {
         analysisStatus: 'idle'
     };
 };
+
+// Proactive rate limiter to prevent hitting API limits
+class RateLimiter {
+    constructor(requestsPerMinute = 20) {
+        this.requestsPerMinute = requestsPerMinute;
+        this.minDelay = (60 * 1000) / requestsPerMinute; // milliseconds between requests
+        this.lastRequest = 0;
+    }
+
+    async throttle() {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.lastRequest;
+
+        if (timeSinceLastRequest < this.minDelay) {
+            const waitTime = this.minDelay - timeSinceLastRequest;
+            await new Promise(r => setTimeout(r, waitTime));
+        }
+
+        this.lastRequest = Date.now();
+    }
+}
+
+// Circuit breaker to prevent rapid-fire rate limit errors
+class RateLimitCircuitBreaker {
+    constructor() {
+        this.failureCount = 0;
+        this.lastFailure = 0;
+        this.state = 'closed'; // 'closed', 'open', 'half-open'
+        this.threshold = 3;
+        this.cooldownMs = 120000; // 2 minutes
+    }
+
+    async execute(fn) {
+        if (this.state === 'open') {
+            if (Date.now() - this.lastFailure > this.cooldownMs) {
+                this.state = 'half-open';
+            } else {
+                throw new Error('Too many rate limit errors. Please wait 2 minutes before retrying.');
+            }
+        }
+
+        try {
+            const result = await fn();
+            if (this.state === 'half-open') {
+                this.reset();
+            }
+            return result;
+        } catch (err) {
+            if (err.message.includes('Rate Limit') || err.message.includes('429')) {
+                this.recordFailure();
+            }
+            throw err;
+        }
+    }
+
+    recordFailure() {
+        this.failureCount++;
+        this.lastFailure = Date.now();
+        if (this.failureCount >= this.threshold) {
+            this.state = 'open';
+        }
+    }
+
+    reset() {
+        this.failureCount = 0;
+        this.state = 'closed';
+    }
+}
 
 export const fetchLichessGames = async (username, max = 50, filters = {}) => {
     const params = new URLSearchParams({
@@ -150,72 +218,233 @@ export const fetchLichessGames = async (username, max = 50, filters = {}) => {
     return games;
 };
 
-export const syncUserGames = async (username, onProgress, options = {}) => {
-    let currentSince = 0;
+// Get smart default import range — last 7 days
+export const getDefaultImportRange = (username) => {
     const now = Date.now();
-    // Quarterly chunks (90 days) as requested to reduce request count
-    const CHUNK_MS = 90 * 24 * 60 * 60 * 1000;
+    const last7Days = now - (7 * 24 * 60 * 60 * 1000);
+    return {
+        since: last7Days,
+        until: now,
+        reason: 'last-7-days'
+    };
+};
 
-    if (options.fullSync) {
-        // Start from account creation time if available, otherwise default to 0 (all history)
-        // But 0 is dangerous (1970), so let's default to a reasonable fallback like 2010 (1262304000000) if no startTime provided
-        // or just use 0 if we really must. Better to use options.startTime.
-        currentSince = options.startTime || 0;
-    } else {
-        const latestTimestamp = await getLatestGameTimestamp(username);
-        // If we have no latest timestamp, we might be in a "first sync" scenario without fullSync flag?
-        // No, usually ImportGames passes fullSync=true for fresh import.
-        // If incremental, existing logic holds.
-        currentSince = latestTimestamp ? latestTimestamp + 1 : (options.startTime || 0);
+export const syncUserGames = async (username, onProgress, options = {}) => {
+    const {
+        mode = 'smart',
+        since: optionsSince,
+        until: optionsUntil,
+        resumeFrom = null,
+        signal = null // AbortController signal for cancellation
+    } = options;
+
+    const now = Date.now();
+    let targetSince, targetUntil;
+
+    // Determine date range based on mode
+    if (mode === 'smart') {
+        const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
+        const latestLocal = await getLatestGameTimestamp(username);
+        // Start from whichever is more recent: 7 days ago or right after our latest local game
+        // This avoids re-fetching days we already have
+        targetSince = latestLocal > sevenDaysAgo ? latestLocal + 1 : sevenDaysAgo;
+        targetUntil = now;
+        onProgress({
+            type: 'range-determined',
+            message: latestLocal > sevenDaysAgo
+                ? `Quick import: fetching from ${new Date(targetSince).toLocaleDateString()} to today`
+                : `Quick import: last 7 days`,
+            since: targetSince,
+            until: targetUntil,
+            total: 0,
+            percentage: 0
+        });
+    } else if (mode === 'custom') {
+        targetSince = optionsSince;
+        targetUntil = optionsUntil;
+    } else if (mode === 'full') {
+        // Fetch entire history from account creation — per-chunk skip handles already-synced ranges
+        targetSince = options.startTime || 0;
+        targetUntil = now;
     }
+
+    // Check for resumable import
+    let currentSince = targetSince;
     let totalImported = 0;
+    let failedChunks = [];
 
-    onProgress({ type: 'start', message: 'Starting sync...' });
+    if (resumeFrom) {
+        currentSince = resumeFrom.currentSince;
+        totalImported = resumeFrom.totalImported || 0;
+        failedChunks = resumeFrom.failedChunks || [];
+        onProgress({
+            type: 'resume',
+            message: `Resuming from ${new Date(currentSince).toLocaleDateString()}... (${totalImported} already imported)`,
+            total: totalImported,
+            percentage: ((currentSince - targetSince) / (targetUntil - targetSince)) * 100
+        });
+    }
 
-    while (currentSince < now) {
-        let currentUntil = currentSince + CHUNK_MS;
-        if (currentUntil > now) currentUntil = now;
+    // Use fixed 7-day chunks (simple and reliable)
+    const CHUNK_MS = 7 * 24 * 60 * 60 * 1000;
 
+    onProgress({
+        type: 'start',
+        message: `Starting import...`,
+        total: totalImported,
+        percentage: 0
+    });
+
+    // Initialize rate limiter and circuit breaker
+    const rateLimiter = new RateLimiter(20);
+    const circuitBreaker = new RateLimitCircuitBreaker();
+
+    // Main sync loop
+    while (currentSince < targetUntil) {
+        // Yield to event loop to keep UI responsive (essential for cancel button)
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        // Check for cancellation
+        if (signal?.aborted) {
+            await saveImportProgress(username, {
+                currentSince,
+                targetUntil,
+                totalImported,
+                status: 'paused',
+                mode,
+                failedChunks
+            });
+            onProgress({
+                type: 'cancelled',
+                message: `Import cancelled. ${totalImported} games saved.`,
+                total: totalImported,
+                percentage: ((currentSince - targetSince) / (targetUntil - targetSince)) * 100
+            });
+            return { totalImported, failedChunks, success: false, cancelled: true };
+        }
+
+        const currentUntil = Math.min(currentSince + CHUNK_MS, targetUntil);
         const dateFromStr = new Date(currentSince).toLocaleDateString();
         const dateToStr = new Date(currentUntil).toLocaleDateString();
+        const pct = ((currentSince - targetSince) / (targetUntil - targetSince)) * 100;
 
         onProgress({
             type: 'progress',
-            message: `Fetching games from ${dateFromStr} to ${dateToStr}...`,
-            currentSince,
-            currentUntil
+            message: `Checking ${dateFromStr} to ${dateToStr}...`,
+            total: totalImported,
+            percentage: pct
         });
 
-        // Add retry logic handling inside fetchLichessGames, so here we just call it.
-        // But we should probably add a small delay here too.
-
         try {
-            const rawGames = await fetchLichessGames(username, 100000, {
-                since: currentSince,
-                until: currentUntil
+            // Check if we already have games for this date range locally
+            // Never skip the chunk that includes today — user may have played more games
+            const chunkIncludesToday = currentUntil >= now;
+            const localCount = await getLocalGameCountInRange(username, currentSince, currentUntil);
+            if (localCount > 0 && !chunkIncludesToday) {
+                // Skip this chunk — already synced
+                const skipPct = ((currentUntil - targetSince) / (targetUntil - targetSince)) * 100;
+                onProgress({
+                    type: 'chunk-complete',
+                    message: `Skipped ${dateFromStr} – ${dateToStr} (${localCount} games already local)`,
+                    count: 0,
+                    total: totalImported,
+                    percentage: skipPct
+                });
+                currentSince = currentUntil;
+                continue;
+            }
+
+            await rateLimiter.throttle();
+
+            await circuitBreaker.execute(async () => {
+                const rawGames = await fetchLichessGames(username, 1000, {
+                    since: currentSince,
+                    until: currentUntil
+                });
+
+                if (rawGames.length > 0) {
+                    const mappedGames = rawGames.map(mapLichessGame);
+                    await bulkUpsertGames(mappedGames);
+                    totalImported += mappedGames.length;
+                }
+
+                const newPct = ((currentUntil - targetSince) / (targetUntil - targetSince)) * 100;
+                onProgress({
+                    type: 'chunk-complete',
+                    message: `Imported ${rawGames.length} games (${dateFromStr} – ${dateToStr})`,
+                    count: rawGames.length,
+                    total: totalImported,
+                    percentage: newPct
+                });
             });
 
-            if (rawGames.length > 0) {
-                const mappedGames = rawGames.map(mapLichessGame);
-                await bulkUpsertGames(mappedGames);
-                totalImported += mappedGames.length;
-                onProgress({ type: 'added', count: mappedGames.length, total: totalImported });
-            }
+            // Save progress after each successful chunk
+            await saveImportProgress(username, {
+                currentSince: currentUntil,
+                targetUntil,
+                totalImported,
+                status: 'in-progress',
+                mode,
+                failedChunks
+            });
+
         } catch (err) {
-            console.error(`Error fetching chunk ${dateFromStr}-${dateToStr}:`, err);
-            onProgress({ type: 'error', message: `Failed chunk ${dateFromStr}: ${err.message}` });
-            throw err; // Stop sync on error? Or continue? For rate limits, we should probably stop.
+            console.error(`Chunk failed (${dateFromStr} - ${dateToStr}):`, err);
+
+            failedChunks.push({
+                since: currentSince,
+                until: currentUntil,
+                error: err.message,
+                timestamp: Date.now()
+            });
+
+            onProgress({
+                type: 'chunk-error',
+                message: `Failed: ${dateFromStr} - ${dateToStr} (${err.message})`,
+                error: err.message,
+                total: totalImported,
+                percentage: ((currentSince - targetSince) / (targetUntil - targetSince)) * 100
+            });
+
+            if (err.message.includes('Too many rate limit errors')) {
+                await saveImportProgress(username, {
+                    currentSince,
+                    targetUntil,
+                    totalImported,
+                    status: 'paused',
+                    mode,
+                    failedChunks
+                });
+
+                onProgress({
+                    type: 'paused',
+                    message: `Rate limited. ${totalImported} games saved. Resume in 2 minutes.`,
+                    total: totalImported,
+                    percentage: ((currentSince - targetSince) / (targetUntil - targetSince)) * 100
+                });
+
+                throw err;
+            }
         }
 
-        if (currentUntil >= now) break;
-        currentSince = currentUntil; // Move to next chunk
-
-        // Increased delay to 1s to be safer against rate limits
-        await new Promise(r => setTimeout(r, 1000));
+        currentSince = currentUntil;
     }
 
-    onProgress({ type: 'success', message: `Sync complete! Imported ${totalImported} games.` });
-    return totalImported;
+    // Import complete
+    await clearImportProgress(username);
+
+    onProgress({
+        type: 'success',
+        message: `Import complete! ${totalImported} games imported.`,
+        total: totalImported,
+        percentage: 100
+    });
+
+    return {
+        totalImported,
+        failedChunks,
+        success: failedChunks.length === 0
+    };
 };
 
 export const fetchLichessUser = async (username) => {
