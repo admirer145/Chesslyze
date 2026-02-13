@@ -1,4 +1,4 @@
-import { bulkUpsertGames, getLatestGameTimestamp, getLocalGameCountInRange, saveImportProgress, loadImportProgress, clearImportProgress } from './db';
+import { bulkUpsertGames, getLatestGameTimestamp, getDistinctGameDaysInRange, saveImportProgress, loadImportProgress, clearImportProgress } from './db';
 
 const constructPgn = (game) => {
     const headers = [
@@ -286,6 +286,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
     }
 
     // Use fixed 7-day chunks (simple and reliable)
+    // We check for "distinct active days" to skip fully synced weeks
     const CHUNK_MS = 7 * 24 * 60 * 60 * 1000;
 
     onProgress({
@@ -337,15 +338,18 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
 
         try {
             // Check if we already have games for this date range locally
-            // Never skip the chunk that includes today — user may have played more games
+            // Heuristic: If we have games for >= 5 distinct days in a 7-day chunk, assume it's fully synced.
+            // If < 5 days, fetch the whole chunk to fill any potential gaps (safe due to upsert).
             const chunkIncludesToday = currentUntil >= now;
-            const localCount = await getLocalGameCountInRange(username, currentSince, currentUntil);
-            if (localCount > 0 && !chunkIncludesToday) {
-                // Skip this chunk — already synced
+            const distinctDays = await getDistinctGameDaysInRange(username, currentSince, currentUntil);
+            const isHeuristicallyFull = distinctDays >= 5;
+
+            if (isHeuristicallyFull && !chunkIncludesToday) {
+                // Skip this chunk — likely already synced
                 const skipPct = ((currentUntil - targetSince) / (targetUntil - targetSince)) * 100;
                 onProgress({
                     type: 'chunk-complete',
-                    message: `Skipped ${dateFromStr} – ${dateToStr} (${localCount} games already local)`,
+                    message: `Skipped ${dateFromStr} – ${dateToStr} (${distinctDays} active days found locally)`,
                     count: 0,
                     total: totalImported,
                     percentage: skipPct

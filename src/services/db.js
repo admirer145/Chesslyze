@@ -220,18 +220,20 @@ export const getLatestGameTimestamp = async (username) => {
     return latest.length > 0 ? latest[0].timestamp : 0;
 };
 
-// Count local games for a username within a timestamp range
-export const getLocalGameCountInRange = async (username, since, until) => {
+// Count distinct days with activity for a username within a timestamp range
+export const getDistinctGameDaysInRange = async (username, since, until) => {
     const lowerUser = username.toLowerCase();
-    const count = await db.games
+    const games = await db.games
         .filter(g => {
             if (g.source !== 'lichess') return false;
             if (g.timestamp < since || g.timestamp >= until) return false;
             const isHero = g.white?.toLowerCase() === lowerUser || g.black?.toLowerCase() === lowerUser;
             return isHero;
         })
-        .count();
-    return count;
+        .toArray();
+
+    const uniqueDays = new Set(games.map(g => new Date(g.timestamp).toDateString()));
+    return uniqueDays.size;
 };
 
 export const getGame = async (id) => {
