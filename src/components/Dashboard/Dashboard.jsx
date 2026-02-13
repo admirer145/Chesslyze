@@ -28,8 +28,24 @@ const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
 
 export const Dashboard = () => {
     const DASHBOARD_STATE_PREFIX = 'dashboardState:';
+    const BOARD_LIGHT_KEY = 'boardLightSquare';
+    const BOARD_DARK_KEY = 'boardDarkSquare';
+    const BOARD_FLASH_WHITE_KEY = 'boardFlashWhite';
+    const BOARD_FLASH_BLACK_KEY = 'boardFlashBlack';
+    const DEFAULT_BOARD_LIGHT = '#e2e8f0';
+    const DEFAULT_BOARD_DARK = '#475569';
+    const DEFAULT_FLASH_WHITE = '#D9C64A';
+    const DEFAULT_FLASH_BLACK = '#D9C64A';
     const latestGame = useLiveQuery(() => db.games.orderBy('date').reverse().first());
     const [selectedGameId, setSelectedGameId] = useState(() => localStorage.getItem('activeGameId'));
+    const [boardColors, setBoardColors] = useState(() => ({
+        light: localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT,
+        dark: localStorage.getItem(BOARD_DARK_KEY) || DEFAULT_BOARD_DARK
+    }));
+    const [flashColors, setFlashColors] = useState(() => ({
+        white: localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE,
+        black: localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK
+    }));
 
     useEffect(() => {
         const handleActiveChange = () => {
@@ -37,6 +53,30 @@ export const Dashboard = () => {
         };
         window.addEventListener('activeGameChanged', handleActiveChange);
         return () => window.removeEventListener('activeGameChanged', handleActiveChange);
+    }, []);
+
+    useEffect(() => {
+        const normalize = (value, fallback) => {
+            if (typeof value !== 'string') return fallback;
+            return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value) ? value : fallback;
+        };
+        const updateColors = () => {
+            setBoardColors({
+                light: normalize(localStorage.getItem(BOARD_LIGHT_KEY), DEFAULT_BOARD_LIGHT),
+                dark: normalize(localStorage.getItem(BOARD_DARK_KEY), DEFAULT_BOARD_DARK)
+            });
+            setFlashColors({
+                white: normalize(localStorage.getItem(BOARD_FLASH_WHITE_KEY), DEFAULT_FLASH_WHITE),
+                black: normalize(localStorage.getItem(BOARD_FLASH_BLACK_KEY), DEFAULT_FLASH_BLACK)
+            });
+        };
+        updateColors();
+        window.addEventListener('boardColorsChanged', updateColors);
+        window.addEventListener('storage', updateColors);
+        return () => {
+            window.removeEventListener('boardColorsChanged', updateColors);
+            window.removeEventListener('storage', updateColors);
+        };
     }, []);
 
     const selectedGame = useLiveQuery(async () => {
@@ -474,6 +514,36 @@ export const Dashboard = () => {
         return { from: move.from, to: move.to, color: move.color };
     }, [history, moveIndex]);
 
+    const flashPalette = useMemo(() => {
+        const moveTone = lastMove?.color === 'b' ? 'black' : 'white';
+        const base = moveTone === 'black' ? flashColors.black : flashColors.white;
+        const hexToRgb = (hex) => {
+            if (!hex) return null;
+            const raw = hex.replace('#', '');
+            if (raw.length === 3) {
+                const r = parseInt(raw[0] + raw[0], 16);
+                const g = parseInt(raw[1] + raw[1], 16);
+                const b = parseInt(raw[2] + raw[2], 16);
+                return { r, g, b };
+            }
+            if (raw.length === 6) {
+                const r = parseInt(raw.slice(0, 2), 16);
+                const g = parseInt(raw.slice(2, 4), 16);
+                const b = parseInt(raw.slice(4, 6), 16);
+                return { r, g, b };
+            }
+            return null;
+        };
+        const rgb = hexToRgb(base) || { r: 245, g: 200, b: 75 };
+        const rgba = (a) => `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`;
+        return {
+            fromFill: rgba(0.22),
+            fromRing: rgba(0.7),
+            toFill: rgba(0.4),
+            toRing: rgba(0.95)
+        };
+    }, [lastMove?.color, flashColors]);
+
     useEffect(() => {
         if (!lastMove) return;
         setLastMoveFlash((v) => v + 1);
@@ -632,20 +702,7 @@ export const Dashboard = () => {
         const arrow = hoverArrow || defaultArrow;
         const flashVariant = lastMoveFlash % 2 === 0 ? 'a' : 'b';
         const showLastMove = !previewFen && lastMove;
-        const moveTone = lastMove?.color === 'b' ? 'black' : 'white';
-        const palette = moveTone === 'black'
-            ? {
-                fromFill: 'rgba(129, 140, 248, 0.28)',
-                fromRing: 'rgba(129, 140, 248, 0.7)',
-                toFill: 'rgba(244, 114, 182, 0.35)',
-                toRing: 'rgba(244, 114, 182, 0.9)'
-            }
-            : {
-                fromFill: 'rgba(94, 234, 212, 0.28)',
-                fromRing: 'rgba(94, 234, 212, 0.7)',
-                toFill: 'rgba(34, 197, 94, 0.35)',
-                toRing: 'rgba(34, 197, 94, 0.9)'
-            };
+        const palette = flashPalette;
         const fromStyle = {
             backgroundImage: `radial-gradient(circle at 50% 50%, ${palette.fromFill}, rgba(0, 0, 0, 0) 70%)`,
             boxShadow: `inset 0 0 0 2px ${palette.fromRing}`
@@ -668,14 +725,14 @@ export const Dashboard = () => {
             allowDragging: false,
             animationDurationInMs: 300,
             arrows: arrow ? [{ startSquare: arrow.from, endSquare: arrow.to, color: 'rgba(245, 200, 75, 0.95)' }] : [],
-            darkSquareStyle: { backgroundColor: '#475569' },
-            lightSquareStyle: { backgroundColor: '#e2e8f0' },
+            darkSquareStyle: { backgroundColor: boardColors.dark },
+            lightSquareStyle: { backgroundColor: boardColors.light },
             squareStyles: showLastMove ? {
                 [lastMove.from]: { ...fromStyle, ...flashFrom },
                 [lastMove.to]: { ...toStyle, ...flashTo }
             } : {}
         };
-    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow, lastMove, lastMoveFlash]);
+    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow, lastMove, lastMoveFlash, boardColors, flashPalette]);
 
     const evalCp = useMemo(() => {
         if (!analysisLog || analysisLog.length === 0) return 0;
@@ -944,22 +1001,26 @@ export const Dashboard = () => {
                                         <>
                                             <div
                                                 key={`last-move-from-${lastMoveFlash}`}
-                                                className={`last-move-flash last-move-flash--from ${lastMove?.color === 'b' ? 'is-black' : 'is-white'}`}
+                                                className="last-move-flash last-move-flash--from"
                                                 style={{
                                                     left: lastMoveRects.from.left,
                                                     top: lastMoveRects.from.top,
                                                     width: lastMoveRects.from.size,
-                                                    height: lastMoveRects.from.size
+                                                    height: lastMoveRects.from.size,
+                                                    background: `radial-gradient(circle at 50% 50%, ${flashPalette.fromFill}, rgba(0, 0, 0, 0) 70%)`,
+                                                    boxShadow: `0 0 18px ${flashPalette.fromRing}`
                                                 }}
                                             />
                                             <div
                                                 key={`last-move-to-${lastMoveFlash}`}
-                                                className={`last-move-flash last-move-flash--to ${lastMove?.color === 'b' ? 'is-black' : 'is-white'}`}
+                                                className="last-move-flash last-move-flash--to"
                                                 style={{
                                                     left: lastMoveRects.to.left,
                                                     top: lastMoveRects.to.top,
                                                     width: lastMoveRects.to.size,
-                                                    height: lastMoveRects.to.size
+                                                    height: lastMoveRects.to.size,
+                                                    background: `radial-gradient(circle at 50% 50%, ${flashPalette.toFill}, rgba(0, 0, 0, 0) 70%)`,
+                                                    boxShadow: `0 0 24px ${flashPalette.toRing}`
                                                 }}
                                             />
                                         </>

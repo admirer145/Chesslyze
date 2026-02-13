@@ -7,6 +7,14 @@ import { ConfirmModal } from '../common/ConfirmModal';
 
 const ENGINE_PROFILES_KEY = 'engineProfiles';
 const ENGINE_ACTIVE_KEY = 'activeEngineProfileId';
+const BOARD_LIGHT_KEY = 'boardLightSquare';
+const BOARD_DARK_KEY = 'boardDarkSquare';
+const BOARD_FLASH_WHITE_KEY = 'boardFlashWhite';
+const BOARD_FLASH_BLACK_KEY = 'boardFlashBlack';
+const DEFAULT_BOARD_LIGHT = '#e2e8f0';
+const DEFAULT_BOARD_DARK = '#475569';
+const DEFAULT_FLASH_WHITE = '#D9C64A';
+const DEFAULT_FLASH_BLACK = '#D9C64A';
 
 const clampInt = (value, min, max, fallback) => {
     const parsed = parseInt(value, 10);
@@ -86,6 +94,10 @@ export const Settings = () => {
     const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
     const [status, setStatus] = useState(null);
     const [engineInfo, setEngineInfo] = useState(() => engine.getInfo());
+    const [boardLight, setBoardLight] = useState(() => localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT);
+    const [boardDark, setBoardDark] = useState(() => localStorage.getItem(BOARD_DARK_KEY) || DEFAULT_BOARD_DARK);
+    const [flashWhite, setFlashWhite] = useState(() => localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE);
+    const [flashBlack, setFlashBlack] = useState(() => localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK);
     const initialEngineState = useMemo(() => getInitialEngineState(), []);
     const [profiles, setProfiles] = useState(initialEngineState.profiles);
     const [activeProfileId, setActiveProfileId] = useState(initialEngineState.activeId);
@@ -141,6 +153,18 @@ export const Settings = () => {
             // Ignore persistence failures
         }
     }, [profiles, activeProfileId]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(BOARD_LIGHT_KEY, boardLight);
+            localStorage.setItem(BOARD_DARK_KEY, boardDark);
+            localStorage.setItem(BOARD_FLASH_WHITE_KEY, flashWhite);
+            localStorage.setItem(BOARD_FLASH_BLACK_KEY, flashBlack);
+            window.dispatchEvent(new Event('boardColorsChanged'));
+        } catch {
+            // Ignore persistence failures
+        }
+    }, [boardLight, boardDark, flashWhite, flashBlack]);
 
     useEffect(() => {
         if (!activeProfile) return;
@@ -508,6 +532,91 @@ export const Settings = () => {
                             <option value="custom">Custom</option>
                         </select>
                         <div className="text-xs text-muted">Applies to new analysis runs for {activeProfile?.name || 'this profile'}.</div>
+                    </div>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Board Colors</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Customize light and dark square colors for the dashboard board.
+                    </p>
+                    <div className="board-color-grid">
+                        <div className="board-color-controls">
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Light Square</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={boardLight}
+                                        onChange={(e) => setBoardLight(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{boardLight.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Dark Square</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={boardDark}
+                                        onChange={(e) => setBoardDark(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{boardDark.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">White Move Flash</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={flashWhite}
+                                        onChange={(e) => setFlashWhite(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{flashWhite.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Black Move Flash</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={flashBlack}
+                                        onChange={(e) => setFlashBlack(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{flashBlack.toUpperCase()}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="board-preview board-preview--large">
+                            {Array.from({ length: 16 }).map((_, idx) => {
+                                const isLight = (Math.floor(idx / 4) + (idx % 4)) % 2 === 0;
+                                return (
+                                    <div
+                                        key={idx}
+                                        className="board-preview__cell"
+                                        style={{ background: isLight ? boardLight : boardDark }}
+                                    />
+                                );
+                            })}
+                        </div>
+                    </div>
+                    <div className="mt-4 flex items-center gap-3">
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                                setBoardLight(DEFAULT_BOARD_LIGHT);
+                                setBoardDark(DEFAULT_BOARD_DARK);
+                                setFlashWhite(DEFAULT_FLASH_WHITE);
+                                setFlashBlack(DEFAULT_FLASH_BLACK);
+                            }}
+                        >
+                            Reset to Default
+                        </button>
+                        <div className="text-xs text-muted">Applies immediately to the dashboard board.</div>
                     </div>
                 </div>
 
