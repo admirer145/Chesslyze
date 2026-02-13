@@ -61,7 +61,7 @@ Chesslyze is a Progressive Web App that provides deep, move-by-move analysis of 
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd ReelChess
+   cd Chesslyze
    ```
 
 2. **Install dependencies**
@@ -137,7 +137,7 @@ See [DEPLOY.md](./DEPLOY.md) for detailed instructions.
 ## 📁 Project Structure
 
 ```
-ReelChess/
+Chesslyze/
 ├── public/               # Static assets
 │   ├── icon.png         # App icon (PWA)
 │   ├── manifest.json    # PWA manifest
