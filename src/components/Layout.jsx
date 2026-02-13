@@ -4,6 +4,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAnalysisQueue } from '../hooks/useAnalysisQueue';
 import { db } from '../services/db';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { PWAInstallPrompt } from './common/PWAInstallPrompt';
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -56,9 +57,13 @@ export const Layout = ({ children }) => {
 
     return (
         <div className="app-shell flex flex-col h-screen bg-app text-primary overflow-hidden">
+            <PWAInstallPrompt />
 
             {/* Top Bar */}
-            <header className={`app-header border-b bg-panel flex items-center justify-between shrink-0 z-20 ${isMobile ? 'px-3' : 'px-6'}`} style={{ height: 56 }}>
+            <header
+                className={`app-header border-b bg-panel flex items-center justify-between shrink-0 z-20 ${isMobile ? 'px-3' : 'px-6'}`}
+                style={{ height: 'calc(56px + var(--safe-top))', paddingTop: 'var(--safe-top)' }}
+            >
                 <div className="flex items-center gap-3">
                     {/* Mobile Hamburger */}
                     {isMobile && (

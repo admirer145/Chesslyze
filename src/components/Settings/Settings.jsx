@@ -446,6 +446,91 @@ export const Settings = () => {
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Board Colors</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Customize light and dark square colors for the dashboard board.
+                    </p>
+                    <div className="board-color-grid">
+                        <div className="board-color-controls">
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Light Square</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={boardLight}
+                                        onChange={(e) => setBoardLight(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{boardLight.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Dark Square</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={boardDark}
+                                        onChange={(e) => setBoardDark(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{boardDark.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">White Move Flash</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={flashWhite}
+                                        onChange={(e) => setFlashWhite(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{flashWhite.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Black Move Flash</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={flashBlack}
+                                        onChange={(e) => setFlashBlack(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{flashBlack.toUpperCase()}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="board-preview board-preview--large">
+                            {Array.from({ length: 16 }).map((_, idx) => {
+                                const isLight = (Math.floor(idx / 4) + (idx % 4)) % 2 === 0;
+                                return (
+                                    <div
+                                        key={idx}
+                                        className="board-preview__cell"
+                                        style={{ background: isLight ? boardLight : boardDark }}
+                                    />
+                                );
+                            })}
+                        </div>
+                    </div>
+                    <div className="mt-4 flex items-center gap-3">
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                                setBoardLight(DEFAULT_BOARD_LIGHT);
+                                setBoardDark(DEFAULT_BOARD_DARK);
+                                setFlashWhite(DEFAULT_FLASH_WHITE);
+                                setFlashBlack(DEFAULT_FLASH_BLACK);
+                            }}
+                        >
+                            Reset to Default
+                        </button>
+                        <div className="text-xs text-muted">Applies immediately to the dashboard board.</div>
+                    </div>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
                     <h3 className="text-sm font-semibold text-primary mb-3">Engine Profiles</h3>
                     <p className="text-sm text-secondary mb-4">
                         Group engine settings by profile so you can switch between fast and deep analysis modes.
@@ -532,91 +617,6 @@ export const Settings = () => {
                             <option value="custom">Custom</option>
                         </select>
                         <div className="text-xs text-muted">Applies to new analysis runs for {activeProfile?.name || 'this profile'}.</div>
-                    </div>
-                </div>
-
-                <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Board Colors</h3>
-                    <p className="text-sm text-secondary mb-4">
-                        Customize light and dark square colors for the dashboard board.
-                    </p>
-                    <div className="board-color-grid">
-                        <div className="board-color-controls">
-                            <div className="board-color-card">
-                                <label className="text-xs text-muted uppercase tracking-wider">Light Square</label>
-                                <div className="board-color-row">
-                                    <input
-                                        type="color"
-                                        value={boardLight}
-                                        onChange={(e) => setBoardLight(e.target.value)}
-                                        className="color-input"
-                                    />
-                                    <span className="text-sm text-primary">{boardLight.toUpperCase()}</span>
-                                </div>
-                            </div>
-                            <div className="board-color-card">
-                                <label className="text-xs text-muted uppercase tracking-wider">Dark Square</label>
-                                <div className="board-color-row">
-                                    <input
-                                        type="color"
-                                        value={boardDark}
-                                        onChange={(e) => setBoardDark(e.target.value)}
-                                        className="color-input"
-                                    />
-                                    <span className="text-sm text-primary">{boardDark.toUpperCase()}</span>
-                                </div>
-                            </div>
-                            <div className="board-color-card">
-                                <label className="text-xs text-muted uppercase tracking-wider">White Move Flash</label>
-                                <div className="board-color-row">
-                                    <input
-                                        type="color"
-                                        value={flashWhite}
-                                        onChange={(e) => setFlashWhite(e.target.value)}
-                                        className="color-input"
-                                    />
-                                    <span className="text-sm text-primary">{flashWhite.toUpperCase()}</span>
-                                </div>
-                            </div>
-                            <div className="board-color-card">
-                                <label className="text-xs text-muted uppercase tracking-wider">Black Move Flash</label>
-                                <div className="board-color-row">
-                                    <input
-                                        type="color"
-                                        value={flashBlack}
-                                        onChange={(e) => setFlashBlack(e.target.value)}
-                                        className="color-input"
-                                    />
-                                    <span className="text-sm text-primary">{flashBlack.toUpperCase()}</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="board-preview board-preview--large">
-                            {Array.from({ length: 16 }).map((_, idx) => {
-                                const isLight = (Math.floor(idx / 4) + (idx % 4)) % 2 === 0;
-                                return (
-                                    <div
-                                        key={idx}
-                                        className="board-preview__cell"
-                                        style={{ background: isLight ? boardLight : boardDark }}
-                                    />
-                                );
-                            })}
-                        </div>
-                    </div>
-                    <div className="mt-4 flex items-center gap-3">
-                        <button
-                            className="btn btn-secondary"
-                            onClick={() => {
-                                setBoardLight(DEFAULT_BOARD_LIGHT);
-                                setBoardDark(DEFAULT_BOARD_DARK);
-                                setFlashWhite(DEFAULT_FLASH_WHITE);
-                                setFlashBlack(DEFAULT_FLASH_BLACK);
-                            }}
-                        >
-                            Reset to Default
-                        </button>
-                        <div className="text-xs text-muted">Applies immediately to the dashboard board.</div>
                     </div>
                 </div>
 
