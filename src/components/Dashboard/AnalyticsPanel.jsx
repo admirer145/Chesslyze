@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { TrendingUp } from 'lucide-react';
 import { Chess } from 'chess.js';
 
@@ -73,6 +73,20 @@ const pvToSanSteps = (fen, pv, maxPlies = 10) => {
 
 export const AnalyticsPanel = ({ game, onJumpToMove, activeIndex = -1, onBestHover, onPreviewFen }) => {
     if (!game || !game.analysisLog) return <div className="p-8 text-center text-muted">No analysis data available.</div>;
+
+    const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+    const [showEvalGraph, setShowEvalGraph] = useState(() => (typeof window !== 'undefined' ? window.innerWidth >= 768 : true));
+
+    useEffect(() => {
+        const mq = window.matchMedia('(max-width: 768px)');
+        const handler = (e) => setIsMobile(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
+
+    useEffect(() => {
+        setShowEvalGraph(!isMobile);
+    }, [isMobile]);
 
     const { analysisLog, accuracy } = game;
     const activeEntry = activeIndex >= 0 ? analysisLog[activeIndex] : null;
@@ -174,7 +188,7 @@ export const AnalyticsPanel = ({ game, onJumpToMove, activeIndex = -1, onBestHov
     ];
 
     return (
-        <div className="flex flex-col h-full bg-panel">
+        <div className="analytics-panel flex flex-col h-full bg-panel">
 
             {/* Active Move Details */}
             {activeEntry && (
@@ -290,7 +304,7 @@ export const AnalyticsPanel = ({ game, onJumpToMove, activeIndex = -1, onBestHov
             </div>
 
             {/* Classification List */}
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="analytics-panel__list p-4">
                 <div className="flex justify-between items-center mb-4 px-2">
                     <span className="text-xs font-bold text-muted uppercase tracking-wider w-12 text-center">White</span>
                     <span className="text-xs font-bold text-center text-muted uppercase tracking-wider flex-1">Move Quality</span>
@@ -329,65 +343,77 @@ export const AnalyticsPanel = ({ game, onJumpToMove, activeIndex = -1, onBestHov
 
             {/* Evaluation Graph */}
             <div className="p-4 border-t">
-                <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-bold text-muted uppercase tracking-wider">Evaluation</h4>
-                    <TrendingUp size={14} className="text-secondary" />
-                </div>
-                <div
-                    className="eval-graph"
-                    onMouseLeave={() => setHoverIndex(null)}
-                    onMouseMove={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const x = e.clientX - rect.left;
-                        const ratio = x / rect.width;
-                        const idx = Math.max(0, Math.min(analysisLog.length - 1, Math.round(ratio * (analysisLog.length - 1))));
-                        setHoverIndex(idx);
-                    }}
-                    onClick={() => {
-                        if (typeof hoverIndex === 'number') onJumpToMove && onJumpToMove(hoverIndex);
-                    }}
-                >
-                    <div className="eval-y-axis">
-                        <span style={{ top: '6%' }}>+3</span>
-                        <span style={{ top: '28%' }}>+1</span>
-                        <span style={{ top: '50%' }}>0</span>
-                        <span style={{ top: '72%' }}>-1</span>
-                        <span style={{ top: '94%' }}>-3</span>
+                <div className="analytics-eval__header">
+                    <div className="flex items-center gap-2">
+                        <h4 className="text-xs font-bold text-muted uppercase tracking-wider">Evaluation</h4>
+                        <TrendingUp size={14} className="text-secondary" />
                     </div>
-                    <div className="eval-midline" />
-                    <svg width="100%" height="100%" viewBox={`0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}`} preserveAspectRatio="none" className="overflow-visible">
-                        <defs>
-                            <linearGradient id="scoreGradient" x1="0" x2="0" y1="0" y2="1">
-                                <stop offset="0%" stopColor="#e2e8f0" stopOpacity="0.65" />
-                                <stop offset="50%" stopColor="#f5c84b" stopOpacity="0.2" />
-                                <stop offset="100%" stopColor="#1e293b" stopOpacity="0.65" />
-                            </linearGradient>
-                        </defs>
-                        <path
-                            d={`M0,${GRAPH_HEIGHT / 2} L${points}`}
-                            fill="none"
-                            stroke="url(#scoreGradient)"
-                            strokeWidth="2.2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className="drop-shadow-sm"
-                        />
-                        {typeof hoverX === 'number' && hoverEntry && (
-                            <>
-                                <line x1={hoverX} x2={hoverX} y1={0} y2={GRAPH_HEIGHT} stroke="rgba(226,232,240,0.35)" strokeDasharray="3 3" />
-                                <circle cx={hoverX} cy={scoreToY(hoverEntry.score)} r="3.5" fill="#f5c84b" stroke="rgba(15,23,42,0.8)" strokeWidth="2" />
-                            </>
-                        )}
-                    </svg>
-                    {hoverEntry && (
-                        <div className="eval-tooltip" style={{ left: `${hoverPct}%` }}>
-                            <div className="eval-tooltip__title">Ply {hoverEntry.ply || hoverIndex + 1}</div>
-                            <div className={`eval-tooltip__value ${whiteScore(hoverEntry) >= 0 ? 'is-white' : 'is-black'}`}>
-                                {getEvalLabel(hoverEntry)}
-                            </div>
-                        </div>
+                    {isMobile && (
+                        <button
+                            className="analytics-eval__toggle"
+                            onClick={() => setShowEvalGraph((v) => !v)}
+                        >
+                            {showEvalGraph ? 'Hide graph' : 'Show graph'}
+                        </button>
                     )}
                 </div>
+                {(!isMobile || showEvalGraph) && (
+                    <div
+                        className="eval-graph"
+                        onMouseLeave={() => setHoverIndex(null)}
+                        onMouseMove={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const x = e.clientX - rect.left;
+                            const ratio = x / rect.width;
+                            const idx = Math.max(0, Math.min(analysisLog.length - 1, Math.round(ratio * (analysisLog.length - 1))));
+                            setHoverIndex(idx);
+                        }}
+                        onClick={() => {
+                            if (typeof hoverIndex === 'number') onJumpToMove && onJumpToMove(hoverIndex);
+                        }}
+                    >
+                        <div className="eval-y-axis">
+                            <span style={{ top: '6%' }}>+3</span>
+                            <span style={{ top: '28%' }}>+1</span>
+                            <span style={{ top: '50%' }}>0</span>
+                            <span style={{ top: '72%' }}>-1</span>
+                            <span style={{ top: '94%' }}>-3</span>
+                        </div>
+                        <div className="eval-midline" />
+                        <svg width="100%" height="100%" viewBox={`0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}`} preserveAspectRatio="none" className="overflow-visible">
+                            <defs>
+                                <linearGradient id="scoreGradient" x1="0" x2="0" y1="0" y2="1">
+                                    <stop offset="0%" stopColor="#e2e8f0" stopOpacity="0.65" />
+                                    <stop offset="50%" stopColor="#f5c84b" stopOpacity="0.2" />
+                                    <stop offset="100%" stopColor="#1e293b" stopOpacity="0.65" />
+                                </linearGradient>
+                            </defs>
+                            <path
+                                d={`M0,${GRAPH_HEIGHT / 2} L${points}`}
+                                fill="none"
+                                stroke="url(#scoreGradient)"
+                                strokeWidth="2.2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="drop-shadow-sm"
+                            />
+                            {typeof hoverX === 'number' && hoverEntry && (
+                                <>
+                                    <line x1={hoverX} x2={hoverX} y1={0} y2={GRAPH_HEIGHT} stroke="rgba(226,232,240,0.35)" strokeDasharray="3 3" />
+                                    <circle cx={hoverX} cy={scoreToY(hoverEntry.score)} r="3.5" fill="#f5c84b" stroke="rgba(15,23,42,0.8)" strokeWidth="2" />
+                                </>
+                            )}
+                        </svg>
+                        {hoverEntry && (
+                            <div className="eval-tooltip" style={{ left: `${hoverPct}%` }}>
+                                <div className="eval-tooltip__title">Ply {hoverEntry.ply || hoverIndex + 1}</div>
+                                <div className={`eval-tooltip__value ${whiteScore(hoverEntry) >= 0 ? 'is-white' : 'is-black'}`}>
+                                    {getEvalLabel(hoverEntry)}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
         </div>

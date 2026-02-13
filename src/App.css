@@ -1805,13 +1805,42 @@ a {
 
 .eval-graph {
   position: relative;
-  height: 140px;
+  height: 180px;
   width: 100%;
   background: linear-gradient(180deg, rgba(226, 232, 240, 0.08) 0%, rgba(226, 232, 240, 0.02) 50%, rgba(2, 6, 23, 0.78) 50%, rgba(2, 6, 23, 0.9) 100%);
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   overflow: hidden;
   cursor: pointer;
+}
+
+.analytics-eval__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.analytics-eval__toggle {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.analytics-eval__toggle:hover {
+  border-color: rgba(245, 200, 75, 0.4);
+  color: var(--text-primary);
+}
+
+.analytics-panel__list {
+  flex: none;
+  overflow: visible;
 }
 
 .eval-midline {
@@ -5000,6 +5029,10 @@ a {
     left: 24px;
     font-size: 9px;
     padding: 1px 5px;
+  }
+
+  .eval-graph {
+    height: 140px;
   }
 
   .split-button__main {
