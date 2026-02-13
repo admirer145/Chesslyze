@@ -442,32 +442,32 @@ export const ImportGames = () => {
                                     <div className="grid grid-cols-3 gap-2">
                                         <button
                                             onClick={() => setImportMode('smart')}
-                                            className={`btn ${importMode === 'smart' ? 'btn-primary' : 'btn-secondary'} py-3 flex flex-col items-center gap-1`}
+                                            className={`btn ${importMode === 'smart' ? 'bg-blue-600 text-white ring-2 ring-blue-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
                                             type="button"
                                         >
                                             <Zap size={16} />
                                             <span className="text-[11px] font-semibold">Quick</span>
-                                            <span className="text-[9px] text-muted">Last 7 days</span>
+                                            <span className={`text-[9px] ${importMode === 'smart' ? 'text-blue-100' : 'text-muted'}`}>Last 7 days</span>
                                         </button>
 
                                         <button
                                             onClick={() => setImportMode('custom')}
-                                            className={`btn ${importMode === 'custom' ? 'btn-primary' : 'btn-secondary'} py-3 flex flex-col items-center gap-1`}
+                                            className={`btn ${importMode === 'custom' ? 'bg-blue-600 text-white ring-2 ring-blue-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
                                             type="button"
                                         >
                                             <Calendar size={16} />
                                             <span className="text-[11px] font-semibold">Custom</span>
-                                            <span className="text-[9px] text-muted">Date range</span>
+                                            <span className={`text-[9px] ${importMode === 'custom' ? 'text-blue-100' : 'text-muted'}`}>Date range</span>
                                         </button>
 
                                         <button
                                             onClick={() => setImportMode('full')}
-                                            className={`btn ${importMode === 'full' ? 'btn-primary' : 'btn-secondary'} py-3 flex flex-col items-center gap-1`}
+                                            className={`btn ${importMode === 'full' ? 'bg-blue-600 text-white ring-2 ring-blue-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
                                             type="button"
                                         >
                                             <Archive size={16} />
                                             <span className="text-[11px] font-semibold">Full</span>
-                                            <span className="text-[9px] text-muted">All history</span>
+                                            <span className={`text-[9px] ${importMode === 'full' ? 'text-blue-100' : 'text-muted'}`}>All history</span>
                                         </button>
                                     </div>
 
