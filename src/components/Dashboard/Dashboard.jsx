@@ -116,6 +116,7 @@ export const Dashboard = () => {
     const [moveIndex, setMoveIndex] = useState(-1); // -1 = start
     const [history, setHistory] = useState([]);
     const [startFen, setStartFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+    const [lastMoveFlash, setLastMoveFlash] = useState(0);
 
     // Track loaded game ID to prevent resetting when analysis updates the record
     const loadedGameIdRef = React.useRef(null);
@@ -128,6 +129,8 @@ export const Dashboard = () => {
     const [hoverArrow, setHoverArrow] = useState(null); // { from, to }
     const [previewFen, setPreviewFen] = useState(null);
     const [badgeStyle, setBadgeStyle] = useState(null); // { left, top }
+    const [lastMoveRects, setLastMoveRects] = useState(null);
+    const [kingResultBadges, setKingResultBadges] = useState(null);
     const [rightPanelOpen, setRightPanelOpen] = useState(() => {
         if (typeof window === 'undefined') return true;
         return window.innerWidth >= 1100;
@@ -464,6 +467,115 @@ export const Dashboard = () => {
         }
     }, [moveIndex]);
 
+    const lastMove = useMemo(() => {
+        if (!history || moveIndex < 0 || moveIndex >= history.length) return null;
+        const move = history[moveIndex];
+        if (!move?.from || !move?.to) return null;
+        return { from: move.from, to: move.to, color: move.color };
+    }, [history, moveIndex]);
+
+    useEffect(() => {
+        if (!lastMove) return;
+        setLastMoveFlash((v) => v + 1);
+    }, [lastMove?.from, lastMove?.to, activeGame?.id]);
+
+    useLayoutEffect(() => {
+        if (!lastMove || previewFen) {
+            setLastMoveRects(null);
+            return;
+        }
+        const root = boardContainerRef.current;
+        if (!root) return;
+        const fromEl = root.querySelector(`[data-square="${lastMove.from}"]`);
+        const toEl = root.querySelector(`[data-square="${lastMove.to}"]`);
+        if (!fromEl || !toEl) return;
+
+        const rootRect = root.getBoundingClientRect();
+        const getRect = (el) => {
+            const rect = el.getBoundingClientRect();
+            return {
+                left: Math.round(rect.left - rootRect.left),
+                top: Math.round(rect.top - rootRect.top),
+                size: Math.round(rect.width)
+            };
+        };
+        setLastMoveRects({
+            from: getRect(fromEl),
+            to: getRect(toEl)
+        });
+    }, [lastMove?.from, lastMove?.to, boardWidth, boardOrientation, previewFen, lastMoveFlash]);
+
+    const resultInfo = useMemo(() => {
+        const result = activeGame?.result || '';
+        if (!['1-0', '0-1', '1/2-1/2'].includes(result)) return null;
+        if (previewFen) return null;
+        if (!history?.length) return null;
+        if (moveIndex < history.length - 1) return null;
+        if (result === '1/2-1/2') {
+            return { white: 'draw', black: 'draw' };
+        }
+        if (result === '1-0') {
+            return { white: 'win', black: 'lose' };
+        }
+        return { white: 'lose', black: 'win' };
+    }, [activeGame?.result, previewFen, history?.length, moveIndex]);
+
+    useLayoutEffect(() => {
+        if (!resultInfo || !currentFen) {
+            setKingResultBadges(null);
+            return;
+        }
+        const root = boardContainerRef.current;
+        if (!root) return;
+        try {
+            const chess = new Chess(currentFen);
+            const board = chess.board();
+            let whiteSquare = null;
+            let blackSquare = null;
+            for (let rank = 0; rank < 8; rank++) {
+                for (let file = 0; file < 8; file++) {
+                    const piece = board[rank][file];
+                    if (!piece || piece.type !== 'k') continue;
+                    const fileChar = String.fromCharCode(97 + file);
+                    const rankNum = 8 - rank;
+                    const square = `${fileChar}${rankNum}`;
+                    if (piece.color === 'w') whiteSquare = square;
+                    else blackSquare = square;
+                }
+            }
+            if (!whiteSquare || !blackSquare) {
+                setKingResultBadges(null);
+                return;
+            }
+
+            const rootRect = root.getBoundingClientRect();
+            const getPos = (square) => {
+                const el = root.querySelector(`[data-square="${square}"]`);
+                if (!el) return null;
+                const rect = el.getBoundingClientRect();
+                return {
+                    left: Math.round(rect.left - rootRect.left + rect.width - 20),
+                    top: Math.round(rect.top - rootRect.top + 4)
+                };
+            };
+
+            const whitePos = getPos(whiteSquare);
+            const blackPos = getPos(blackSquare);
+            if (!whitePos || !blackPos) {
+                setKingResultBadges(null);
+                return;
+            }
+
+            setKingResultBadges({
+                white: { ...whitePos, status: resultInfo.white },
+                black: { ...blackPos, status: resultInfo.black }
+            });
+        } catch (err) {
+            console.warn('Failed to compute king result badges', err);
+            setKingResultBadges(null);
+        }
+    }, [resultInfo, currentFen, boardWidth, boardOrientation]);
+
     const getMeta = (key) => {
         if (!activeGame) return '?';
         if (activeGame[key]) return getSafeName(activeGame[key]);
@@ -518,6 +630,36 @@ export const Dashboard = () => {
 
     const chessboardOptions = useMemo(() => {
         const arrow = hoverArrow || defaultArrow;
+        const flashVariant = lastMoveFlash % 2 === 0 ? 'a' : 'b';
+        const showLastMove = !previewFen && lastMove;
+        const moveTone = lastMove?.color === 'b' ? 'black' : 'white';
+        const palette = moveTone === 'black'
+            ? {
+                fromFill: 'rgba(129, 140, 248, 0.28)',
+                fromRing: 'rgba(129, 140, 248, 0.7)',
+                toFill: 'rgba(244, 114, 182, 0.35)',
+                toRing: 'rgba(244, 114, 182, 0.9)'
+            }
+            : {
+                fromFill: 'rgba(94, 234, 212, 0.28)',
+                fromRing: 'rgba(94, 234, 212, 0.7)',
+                toFill: 'rgba(34, 197, 94, 0.35)',
+                toRing: 'rgba(34, 197, 94, 0.9)'
+            };
+        const fromStyle = {
+            backgroundImage: `radial-gradient(circle at 50% 50%, ${palette.fromFill}, rgba(0, 0, 0, 0) 70%)`,
+            boxShadow: `inset 0 0 0 2px ${palette.fromRing}`
+        };
+        const toStyle = {
+            backgroundImage: `radial-gradient(circle at 50% 50%, ${palette.toFill}, rgba(0, 0, 0, 0) 70%)`,
+            boxShadow: `inset 0 0 0 2px ${palette.toRing}, 0 0 12px ${palette.toFill}`
+        };
+        const flashFrom = {
+            animation: `last-move-flash-from-${flashVariant} 0.45s cubic-bezier(0.2, 0.9, 0.2, 1)`
+        };
+        const flashTo = {
+            animation: `last-move-flash-to-${flashVariant} 0.45s cubic-bezier(0.2, 0.9, 0.2, 1)`
+        };
         return {
             id: "dashboard-board",
             position: previewFen || currentFen,
@@ -527,9 +669,13 @@ export const Dashboard = () => {
             animationDurationInMs: 300,
             arrows: arrow ? [{ startSquare: arrow.from, endSquare: arrow.to, color: 'rgba(245, 200, 75, 0.95)' }] : [],
             darkSquareStyle: { backgroundColor: '#475569' },
-            lightSquareStyle: { backgroundColor: '#e2e8f0' }
+            lightSquareStyle: { backgroundColor: '#e2e8f0' },
+            squareStyles: showLastMove ? {
+                [lastMove.from]: { ...fromStyle, ...flashFrom },
+                [lastMove.to]: { ...toStyle, ...flashTo }
+            } : {}
         };
-    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow]);
+    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow, lastMove, lastMoveFlash]);
 
     const evalCp = useMemo(() => {
         if (!analysisLog || analysisLog.length === 0) return 0;
@@ -794,6 +940,30 @@ export const Dashboard = () => {
                                     className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
                                 >
                                     <Chessboard options={chessboardOptions} />
+                                    {lastMoveRects && !previewFen && (
+                                        <>
+                                            <div
+                                                key={`last-move-from-${lastMoveFlash}`}
+                                                className={`last-move-flash last-move-flash--from ${lastMove?.color === 'b' ? 'is-black' : 'is-white'}`}
+                                                style={{
+                                                    left: lastMoveRects.from.left,
+                                                    top: lastMoveRects.from.top,
+                                                    width: lastMoveRects.from.size,
+                                                    height: lastMoveRects.from.size
+                                                }}
+                                            />
+                                            <div
+                                                key={`last-move-to-${lastMoveFlash}`}
+                                                className={`last-move-flash last-move-flash--to ${lastMove?.color === 'b' ? 'is-black' : 'is-white'}`}
+                                                style={{
+                                                    left: lastMoveRects.to.left,
+                                                    top: lastMoveRects.to.top,
+                                                    width: lastMoveRects.to.size,
+                                                    height: lastMoveRects.to.size
+                                                }}
+                                            />
+                                        </>
+                                    )}
                                     {badgeStyle && classificationBadge && (
                                         <div
                                             className={`board-badge badge-${classificationBadge.tone}`}
@@ -801,6 +971,22 @@ export const Dashboard = () => {
                                         >
                                             {classificationBadge.label}
                                         </div>
+                                    )}
+                                    {kingResultBadges && (
+                                        <>
+                                            <div
+                                                className={`king-result-badge king-result-badge--${kingResultBadges.white.status}`}
+                                                style={{ left: kingResultBadges.white.left, top: kingResultBadges.white.top }}
+                                            >
+                                                {kingResultBadges.white.status === 'win' ? 'WIN' : kingResultBadges.white.status === 'lose' ? 'LOSE' : 'DRAW'}
+                                            </div>
+                                            <div
+                                                className={`king-result-badge king-result-badge--${kingResultBadges.black.status}`}
+                                                style={{ left: kingResultBadges.black.left, top: kingResultBadges.black.top }}
+                                            >
+                                                {kingResultBadges.black.status === 'win' ? 'WIN' : kingResultBadges.black.status === 'lose' ? 'LOSE' : 'DRAW'}
+                                            </div>
+                                        </>
                                     )}
                                 </div>
                                 <div className="eval-rail eval-rail--interactive" title={`Evaluation: ${evalText}`} aria-hidden="true">
