@@ -92,6 +92,7 @@ export const Settings = () => {
     const [newProfileName, setNewProfileName] = useState('');
     const [confirmAnalyzeAllOpen, setConfirmAnalyzeAllOpen] = useState(false);
     const [confirmStopOpen, setConfirmStopOpen] = useState(false);
+    const [confirmDeleteProfileOpen, setConfirmDeleteProfileOpen] = useState(false);
 
     // Get system thread count
     const maxThreads = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 16) : 16;
@@ -284,6 +285,15 @@ export const Settings = () => {
         setProfiles((prev) => prev.map((p) => (p.id === activeProfileId ? { ...p, ...patch } : p)));
     };
 
+    const canDeleteProfile = profiles.length > 1;
+    const handleDeleteProfile = () => {
+        if (!activeProfile || !canDeleteProfile) return;
+        const remaining = profiles.filter((p) => p.id !== activeProfileId);
+        if (!remaining.length) return;
+        setProfiles(remaining);
+        setActiveProfileId(remaining[0].id);
+    };
+
     const handleDepthChange = (value) => {
         updateActiveProfile({ depth: value, preset: 'custom' });
     };
@@ -469,6 +479,21 @@ export const Settings = () => {
                                 </button>
                             </div>
                         </div>
+                        <div>
+                            <label className="text-xs text-muted uppercase tracking-wider">Delete Profile</label>
+                            <div className="flex items-center gap-2 mt-2">
+                                <button
+                                    className="btn-danger"
+                                    onClick={() => setConfirmDeleteProfileOpen(true)}
+                                    disabled={!canDeleteProfile}
+                                >
+                                    Delete Active
+                                </button>
+                                {!canDeleteProfile && (
+                                    <span className="text-xs text-muted">Keep at least one profile.</span>
+                                )}
+                            </div>
+                        </div>
                     </div>
 
                     <div className="flex items-center gap-3 mt-4">
@@ -647,6 +672,20 @@ export const Settings = () => {
                 onConfirm={async () => {
                     setConfirmStopOpen(false);
                     await handleStopAnalysis();
+                }}
+            />
+            <ConfirmModal
+                open={confirmDeleteProfileOpen}
+                title={`Delete ${activeProfile?.name || 'this profile'}?`}
+                description="This removes the profile and its saved settings. This can't be undone."
+                confirmText="Delete Profile"
+                cancelText="Cancel"
+                confirmClassName="btn-danger"
+                confirmDisabled={!canDeleteProfile}
+                onCancel={() => setConfirmDeleteProfileOpen(false)}
+                onConfirm={() => {
+                    setConfirmDeleteProfileOpen(false);
+                    handleDeleteProfile();
                 }}
             />
         </div>

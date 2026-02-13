@@ -1195,7 +1195,7 @@ export const ReelFeed = () => {
                     </div>
                 </div>
 
-                <div className="puzzle-stage">
+                <div className={`puzzle-stage ${noData ? 'puzzle-stage--solo' : ''}`}>
                     <div className="puzzle-board">
                         {quizActive ? (
                             quizSet.length > 0 ? (
@@ -1295,10 +1295,11 @@ export const ReelFeed = () => {
                         )}
                     </div>
 
-                    <aside className="puzzle-panel puzzle-panel--right">
-                        <div className="puzzle-panel__section">
-                            <div className="puzzle-panel__title">Coach Notes</div>
-                            {displayPosition ? (
+                    {!noData && (
+                        <aside className="puzzle-panel puzzle-panel--right">
+                            <div className="puzzle-panel__section">
+                                <div className="puzzle-panel__title">Coach Notes</div>
+                                {displayPosition ? (
                                 <>
                                     <div className="puzzle-note">
                                         <strong>{deriveLessonRule(displayPosition)}</strong>
@@ -1366,25 +1367,26 @@ export const ReelFeed = () => {
                             </div>
                         </div>
 
-                        <div className="puzzle-panel__section">
-                            <div className="puzzle-panel__title">Side Filter</div>
-                            <div className="puzzle-button-list">
-                                {[
-                                    { id: 'all', label: 'Both Sides' },
-                                    { id: 'hero', label: 'Your Turn' },
-                                    { id: 'opponent', label: 'Opponent Turn' }
-                                ].map((opt) => (
-                                    <button
-                                        key={opt.id}
-                                        onClick={() => setSideFilter(opt.id)}
-                                        className={`puzzle-button ${sideFilter === opt.id ? 'puzzle-button--active' : ''}`}
-                                    >
-                                        <span>{opt.label}</span>
-                                    </button>
-                                ))}
+                            <div className="puzzle-panel__section">
+                                <div className="puzzle-panel__title">Side Filter</div>
+                                <div className="puzzle-button-list">
+                                    {[
+                                        { id: 'all', label: 'Both Sides' },
+                                        { id: 'hero', label: 'Your Turn' },
+                                        { id: 'opponent', label: 'Opponent Turn' }
+                                    ].map((opt) => (
+                                        <button
+                                            key={opt.id}
+                                            onClick={() => setSideFilter(opt.id)}
+                                            className={`puzzle-button ${sideFilter === opt.id ? 'puzzle-button--active' : ''}`}
+                                        >
+                                            <span>{opt.label}</span>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    </aside>
+                        </aside>
+                    )}
                 </div>
             </div>
         </div>

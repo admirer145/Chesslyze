@@ -1233,6 +1233,10 @@ a {
   align-items: stretch;
 }
 
+.puzzle-stage--solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .puzzle-panel {
   display: flex;
   flex-direction: column;
@@ -2160,6 +2164,7 @@ a {
 }
 
 .dashboard-center {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-x: visible;
@@ -2168,6 +2173,34 @@ a {
 .dashboard-board-area {
   padding-top: 12px;
   padding-bottom: 24px;
+}
+
+.dashboard-board-area.is-empty {
+  justify-content: center;
+  padding-top: 32px;
+  padding-bottom: 56px;
+}
+
+.dashboard-empty {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px 56px;
+}
+
+.dashboard-empty__card {
+  width: min(560px, 92vw);
+  padding: 32px 30px;
+  border-radius: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.65);
+  box-shadow: 0 20px 40px rgba(2, 6, 23, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 .dashboard-side {

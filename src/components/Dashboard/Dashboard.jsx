@@ -686,6 +686,9 @@ export const Dashboard = () => {
 
     if (!stats) return <div className="p-8 text-secondary">Loading dashboard...</div>;
 
+    const hasGames = stats.total > 0;
+    const showContextPanel = hasGames && !!activeGame;
+
     return (
         <div className={`dashboard-shell bg-app ${rightPanelOpen ? '' : 'dashboard-shell--collapsed'}`}>
 
@@ -693,7 +696,7 @@ export const Dashboard = () => {
             <div className="dashboard-center flex flex-col min-w-0 relative">
                 {/* Added w-full to ensure this container takes width */}
                 {/* Main Board Area */}
-                <div className="dashboard-board-area flex-1 flex flex-col items-center justify-start min-h-0 w-full p-4">
+                <div className={`dashboard-board-area flex-1 flex flex-col items-center justify-start min-h-0 w-full p-4 ${!activeGame ? 'is-empty' : ''}`}>
 
                     {activeGame && (
                         <div className="board-header">
@@ -824,25 +827,40 @@ export const Dashboard = () => {
                             </div>
                         </div>
                     ) : (
-                        <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-white/10 rounded-xl">
-                            <Activity size={48} className="text-muted mb-4" />
-                            <h3 className="text-lg font-medium text-primary">No game selected</h3>
-                            <p className="text-secondary text-center mb-6 max-w-xs">Import a game PGN to start analyzing your moves.</p>
-                            <Link to="/import" className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-medium transition-colors">
-                                Import Game
-                            </Link>
+                        <div className="dashboard-empty">
+                            <div className="dashboard-empty__card">
+                                <Activity size={56} className="text-muted mb-4" />
+                                <h3 className="text-xl font-semibold text-primary mb-2">
+                                    {hasGames ? 'No game selected' : 'No games yet'}
+                                </h3>
+                                <p className="text-secondary text-center mb-6 max-w-sm">
+                                    {hasGames
+                                        ? 'Pick a game from your library or import a PGN to start analyzing.'
+                                        : 'Import a game PGN to start analyzing your moves and unlock insights.'}
+                                </p>
+                                <div className="flex items-center gap-3">
+                                    <Link to="/import" className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-medium transition-colors">
+                                        Import Game
+                                    </Link>
+                                    <Link to="/library" className="px-6 py-2 bg-subtle hover:bg-subtle text-primary rounded-full font-medium transition-colors border border-white/10">
+                                        View Library
+                                    </Link>
+                                </div>
+                            </div>
                         </div>
                     )}
 
                     {/* Controls */}
-                    <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
-                        <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
-                        <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
-                        <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
-                        <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
-                    </div>
+                    {activeGame && (
+                        <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
+                            <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
+                            <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
+                            <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
+                            <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
+                        </div>
+                    )}
 
-                    {!isMobile && !rightPanelOpen && (
+                    {!isMobile && !rightPanelOpen && showContextPanel && (
                         <button className="panel-toggle panel-toggle--floating" onClick={() => setRightPanelOpen(true)}>
                             <ChevronLeft size={16} />
                             Show Panel
@@ -866,7 +884,8 @@ export const Dashboard = () => {
 
 
             {/* RIGHT: Context Panel — Desktop: side panel, Mobile: bottom sheet */}
-            {isMobile ? (
+            {showContextPanel ? (
+                isMobile ? (
                 <div
                     ref={sheetRef}
                     className="dashboard-bottom-sheet"
@@ -967,7 +986,7 @@ export const Dashboard = () => {
                         )}
                     </div>
                 </div>
-            ) : (
+                ) : (
                 <div className="dashboard-side bg-panel border-l flex flex-col shrink-0 overflow-hidden">
                     <div className="flex-1 flex flex-col min-h-0 relative">
                         <div className="flex items-center border-b bg-subtle/50 shrink-0">
@@ -1052,7 +1071,8 @@ export const Dashboard = () => {
                         </div>
                     )}
                 </div>
-            )}
+                )
+            ) : null}
         </div>
     );
 };
