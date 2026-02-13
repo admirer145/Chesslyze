@@ -5,6 +5,8 @@
   --bg-app: rgba(10, 13, 18, 0.92);
   --bg-panel: rgba(15, 23, 42, 0.78);
   --bg-subtle: rgba(30, 41, 59, 0.78);
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
 
   --border-subtle: rgba(148, 163, 184, 0.18);
   --border-focus: rgba(245, 200, 75, 0.55);
@@ -4334,6 +4336,101 @@ a {
   border-color: rgba(45, 212, 191, 0.6);
   background: rgba(45, 212, 191, 0.16);
   color: var(--accent-teal);
+}
+
+.pwa-install {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 125;
+}
+
+.pwa-install__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.pwa-install__panel {
+  position: relative;
+  width: min(520px, 92vw);
+  background: rgba(9, 14, 22, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 24px 50px rgba(2, 6, 23, 0.7);
+  z-index: 1;
+}
+
+.pwa-install__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pwa-install__title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.pwa-install__desc {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pwa-install__close {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pwa-install__ios {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.pwa-install__ios-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.pwa-install__ios-steps {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pwa-install__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+@media (min-width: 768px) {
+  .pwa-install {
+    align-items: center;
+  }
 }
 
 .confirm-modal {

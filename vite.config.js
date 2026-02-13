@@ -10,7 +10,7 @@ export default defineConfig(({ command }) => ({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['icon.png', 'vite.svg'],
+      includeAssets: ['icon.png', 'favicon.ico', 'vite.svg'],
       manifest: {
         name: 'Chesslyze',
         short_name: 'Chesslyze',
@@ -18,15 +18,17 @@ export default defineConfig(({ command }) => ({
         theme_color: '#6366f1',
         background_color: '#0f172a',
         display: 'standalone',
+        start_url: '.',
+        scope: '.',
         icons: [
           {
-            src: '/icon.png',
+            src: 'icon.png',
             sizes: '1024x1024',
             type: 'image/png',
             purpose: 'any'
           },
           {
-            src: '/icon.png',
+            src: 'icon.png',
             sizes: '1024x1024',
             type: 'image/png',
             purpose: 'maskable'
