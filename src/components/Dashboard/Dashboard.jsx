@@ -28,8 +28,24 @@ const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
 
 export const Dashboard = () => {
     const DASHBOARD_STATE_PREFIX = 'dashboardState:';
+    const BOARD_LIGHT_KEY = 'boardLightSquare';
+    const BOARD_DARK_KEY = 'boardDarkSquare';
+    const BOARD_FLASH_WHITE_KEY = 'boardFlashWhite';
+    const BOARD_FLASH_BLACK_KEY = 'boardFlashBlack';
+    const DEFAULT_BOARD_LIGHT = '#e2e8f0';
+    const DEFAULT_BOARD_DARK = '#475569';
+    const DEFAULT_FLASH_WHITE = '#D9C64A';
+    const DEFAULT_FLASH_BLACK = '#D9C64A';
     const latestGame = useLiveQuery(() => db.games.orderBy('date').reverse().first());
     const [selectedGameId, setSelectedGameId] = useState(() => localStorage.getItem('activeGameId'));
+    const [boardColors, setBoardColors] = useState(() => ({
+        light: localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT,
+        dark: localStorage.getItem(BOARD_DARK_KEY) || DEFAULT_BOARD_DARK
+    }));
+    const [flashColors, setFlashColors] = useState(() => ({
+        white: localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE,
+        black: localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK
+    }));
 
     useEffect(() => {
         const handleActiveChange = () => {
@@ -37,6 +53,30 @@ export const Dashboard = () => {
         };
         window.addEventListener('activeGameChanged', handleActiveChange);
         return () => window.removeEventListener('activeGameChanged', handleActiveChange);
+    }, []);
+
+    useEffect(() => {
+        const normalize = (value, fallback) => {
+            if (typeof value !== 'string') return fallback;
+            return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value) ? value : fallback;
+        };
+        const updateColors = () => {
+            setBoardColors({
+                light: normalize(localStorage.getItem(BOARD_LIGHT_KEY), DEFAULT_BOARD_LIGHT),
+                dark: normalize(localStorage.getItem(BOARD_DARK_KEY), DEFAULT_BOARD_DARK)
+            });
+            setFlashColors({
+                white: normalize(localStorage.getItem(BOARD_FLASH_WHITE_KEY), DEFAULT_FLASH_WHITE),
+                black: normalize(localStorage.getItem(BOARD_FLASH_BLACK_KEY), DEFAULT_FLASH_BLACK)
+            });
+        };
+        updateColors();
+        window.addEventListener('boardColorsChanged', updateColors);
+        window.addEventListener('storage', updateColors);
+        return () => {
+            window.removeEventListener('boardColorsChanged', updateColors);
+            window.removeEventListener('storage', updateColors);
+        };
     }, []);
 
     const selectedGame = useLiveQuery(async () => {
@@ -116,6 +156,7 @@ export const Dashboard = () => {
     const [moveIndex, setMoveIndex] = useState(-1); // -1 = start
     const [history, setHistory] = useState([]);
     const [startFen, setStartFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+    const [lastMoveFlash, setLastMoveFlash] = useState(0);
 
     // Track loaded game ID to prevent resetting when analysis updates the record
     const loadedGameIdRef = React.useRef(null);
@@ -128,6 +169,8 @@ export const Dashboard = () => {
     const [hoverArrow, setHoverArrow] = useState(null); // { from, to }
     const [previewFen, setPreviewFen] = useState(null);
     const [badgeStyle, setBadgeStyle] = useState(null); // { left, top }
+    const [lastMoveRects, setLastMoveRects] = useState(null);
+    const [kingResultBadges, setKingResultBadges] = useState(null);
     const [rightPanelOpen, setRightPanelOpen] = useState(() => {
         if (typeof window === 'undefined') return true;
         return window.innerWidth >= 1100;
@@ -464,6 +507,145 @@ export const Dashboard = () => {
         }
     }, [moveIndex]);
 
+    const lastMove = useMemo(() => {
+        if (!history || moveIndex < 0 || moveIndex >= history.length) return null;
+        const move = history[moveIndex];
+        if (!move?.from || !move?.to) return null;
+        return { from: move.from, to: move.to, color: move.color };
+    }, [history, moveIndex]);
+
+    const flashPalette = useMemo(() => {
+        const moveTone = lastMove?.color === 'b' ? 'black' : 'white';
+        const base = moveTone === 'black' ? flashColors.black : flashColors.white;
+        const hexToRgb = (hex) => {
+            if (!hex) return null;
+            const raw = hex.replace('#', '');
+            if (raw.length === 3) {
+                const r = parseInt(raw[0] + raw[0], 16);
+                const g = parseInt(raw[1] + raw[1], 16);
+                const b = parseInt(raw[2] + raw[2], 16);
+                return { r, g, b };
+            }
+            if (raw.length === 6) {
+                const r = parseInt(raw.slice(0, 2), 16);
+                const g = parseInt(raw.slice(2, 4), 16);
+                const b = parseInt(raw.slice(4, 6), 16);
+                return { r, g, b };
+            }
+            return null;
+        };
+        const rgb = hexToRgb(base) || { r: 245, g: 200, b: 75 };
+        const rgba = (a) => `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`;
+        return {
+            fromFill: rgba(0.22),
+            fromRing: rgba(0.7),
+            toFill: rgba(0.4),
+            toRing: rgba(0.95)
+        };
+    }, [lastMove?.color, flashColors]);
+
+    useEffect(() => {
+        if (!lastMove) return;
+        setLastMoveFlash((v) => v + 1);
+    }, [lastMove?.from, lastMove?.to, activeGame?.id]);
+
+    useLayoutEffect(() => {
+        if (!lastMove || previewFen) {
+            setLastMoveRects(null);
+            return;
+        }
+        const root = boardContainerRef.current;
+        if (!root) return;
+        const fromEl = root.querySelector(`[data-square="${lastMove.from}"]`);
+        const toEl = root.querySelector(`[data-square="${lastMove.to}"]`);
+        if (!fromEl || !toEl) return;
+
+        const rootRect = root.getBoundingClientRect();
+        const getRect = (el) => {
+            const rect = el.getBoundingClientRect();
+            return {
+                left: Math.round(rect.left - rootRect.left),
+                top: Math.round(rect.top - rootRect.top),
+                size: Math.round(rect.width)
+            };
+        };
+        setLastMoveRects({
+            from: getRect(fromEl),
+            to: getRect(toEl)
+        });
+    }, [lastMove?.from, lastMove?.to, boardWidth, boardOrientation, previewFen, lastMoveFlash]);
+
+    const resultInfo = useMemo(() => {
+        const result = activeGame?.result || '';
+        if (!['1-0', '0-1', '1/2-1/2'].includes(result)) return null;
+        if (previewFen) return null;
+        if (!history?.length) return null;
+        if (moveIndex < history.length - 1) return null;
+        if (result === '1/2-1/2') {
+            return { white: 'draw', black: 'draw' };
+        }
+        if (result === '1-0') {
+            return { white: 'win', black: 'lose' };
+        }
+        return { white: 'lose', black: 'win' };
+    }, [activeGame?.result, previewFen, history?.length, moveIndex]);
+
+    useLayoutEffect(() => {
+        if (!resultInfo || !currentFen) {
+            setKingResultBadges(null);
+            return;
+        }
+        const root = boardContainerRef.current;
+        if (!root) return;
+        try {
+            const chess = new Chess(currentFen);
+            const board = chess.board();
+            let whiteSquare = null;
+            let blackSquare = null;
+            for (let rank = 0; rank < 8; rank++) {
+                for (let file = 0; file < 8; file++) {
+                    const piece = board[rank][file];
+                    if (!piece || piece.type !== 'k') continue;
+                    const fileChar = String.fromCharCode(97 + file);
+                    const rankNum = 8 - rank;
+                    const square = `${fileChar}${rankNum}`;
+                    if (piece.color === 'w') whiteSquare = square;
+                    else blackSquare = square;
+                }
+            }
+            if (!whiteSquare || !blackSquare) {
+                setKingResultBadges(null);
+                return;
+            }
+
+            const rootRect = root.getBoundingClientRect();
+            const getPos = (square) => {
+                const el = root.querySelector(`[data-square="${square}"]`);
+                if (!el) return null;
+                const rect = el.getBoundingClientRect();
+                return {
+                    left: Math.round(rect.left - rootRect.left + rect.width - 20),
+                    top: Math.round(rect.top - rootRect.top + 4)
+                };
+            };
+
+            const whitePos = getPos(whiteSquare);
+            const blackPos = getPos(blackSquare);
+            if (!whitePos || !blackPos) {
+                setKingResultBadges(null);
+                return;
+            }
+
+            setKingResultBadges({
+                white: { ...whitePos, status: resultInfo.white },
+                black: { ...blackPos, status: resultInfo.black }
+            });
+        } catch (err) {
+            console.warn('Failed to compute king result badges', err);
+            setKingResultBadges(null);
+        }
+    }, [resultInfo, currentFen, boardWidth, boardOrientation]);
+
     const getMeta = (key) => {
         if (!activeGame) return '?';
         if (activeGame[key]) return getSafeName(activeGame[key]);
@@ -518,6 +700,23 @@ export const Dashboard = () => {
 
     const chessboardOptions = useMemo(() => {
         const arrow = hoverArrow || defaultArrow;
+        const flashVariant = lastMoveFlash % 2 === 0 ? 'a' : 'b';
+        const showLastMove = !previewFen && lastMove;
+        const palette = flashPalette;
+        const fromStyle = {
+            backgroundImage: `radial-gradient(circle at 50% 50%, ${palette.fromFill}, rgba(0, 0, 0, 0) 70%)`,
+            boxShadow: `inset 0 0 0 2px ${palette.fromRing}`
+        };
+        const toStyle = {
+            backgroundImage: `radial-gradient(circle at 50% 50%, ${palette.toFill}, rgba(0, 0, 0, 0) 70%)`,
+            boxShadow: `inset 0 0 0 2px ${palette.toRing}, 0 0 12px ${palette.toFill}`
+        };
+        const flashFrom = {
+            animation: `last-move-flash-from-${flashVariant} 0.45s cubic-bezier(0.2, 0.9, 0.2, 1)`
+        };
+        const flashTo = {
+            animation: `last-move-flash-to-${flashVariant} 0.45s cubic-bezier(0.2, 0.9, 0.2, 1)`
+        };
         return {
             id: "dashboard-board",
             position: previewFen || currentFen,
@@ -526,10 +725,14 @@ export const Dashboard = () => {
             allowDragging: false,
             animationDurationInMs: 300,
             arrows: arrow ? [{ startSquare: arrow.from, endSquare: arrow.to, color: 'rgba(245, 200, 75, 0.95)' }] : [],
-            darkSquareStyle: { backgroundColor: '#475569' },
-            lightSquareStyle: { backgroundColor: '#e2e8f0' }
+            darkSquareStyle: { backgroundColor: boardColors.dark },
+            lightSquareStyle: { backgroundColor: boardColors.light },
+            squareStyles: showLastMove ? {
+                [lastMove.from]: { ...fromStyle, ...flashFrom },
+                [lastMove.to]: { ...toStyle, ...flashTo }
+            } : {}
         };
-    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow]);
+    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow, lastMove, lastMoveFlash, boardColors, flashPalette]);
 
     const evalCp = useMemo(() => {
         if (!analysisLog || analysisLog.length === 0) return 0;
@@ -686,6 +889,9 @@ export const Dashboard = () => {
 
     if (!stats) return <div className="p-8 text-secondary">Loading dashboard...</div>;
 
+    const hasGames = stats.total > 0;
+    const showContextPanel = hasGames && !!activeGame;
+
     return (
         <div className={`dashboard-shell bg-app ${rightPanelOpen ? '' : 'dashboard-shell--collapsed'}`}>
 
@@ -693,7 +899,7 @@ export const Dashboard = () => {
             <div className="dashboard-center flex flex-col min-w-0 relative">
                 {/* Added w-full to ensure this container takes width */}
                 {/* Main Board Area */}
-                <div className="dashboard-board-area flex-1 flex flex-col items-center justify-start min-h-0 w-full p-4">
+                <div className={`dashboard-board-area flex-1 flex flex-col items-center justify-start min-h-0 w-full p-4 ${!activeGame ? 'is-empty' : ''}`}>
 
                     {activeGame && (
                         <div className="board-header">
@@ -791,6 +997,34 @@ export const Dashboard = () => {
                                     className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
                                 >
                                     <Chessboard options={chessboardOptions} />
+                                    {lastMoveRects && !previewFen && (
+                                        <>
+                                            <div
+                                                key={`last-move-from-${lastMoveFlash}`}
+                                                className="last-move-flash last-move-flash--from"
+                                                style={{
+                                                    left: lastMoveRects.from.left,
+                                                    top: lastMoveRects.from.top,
+                                                    width: lastMoveRects.from.size,
+                                                    height: lastMoveRects.from.size,
+                                                    background: `radial-gradient(circle at 50% 50%, ${flashPalette.fromFill}, rgba(0, 0, 0, 0) 70%)`,
+                                                    boxShadow: `0 0 18px ${flashPalette.fromRing}`
+                                                }}
+                                            />
+                                            <div
+                                                key={`last-move-to-${lastMoveFlash}`}
+                                                className="last-move-flash last-move-flash--to"
+                                                style={{
+                                                    left: lastMoveRects.to.left,
+                                                    top: lastMoveRects.to.top,
+                                                    width: lastMoveRects.to.size,
+                                                    height: lastMoveRects.to.size,
+                                                    background: `radial-gradient(circle at 50% 50%, ${flashPalette.toFill}, rgba(0, 0, 0, 0) 70%)`,
+                                                    boxShadow: `0 0 24px ${flashPalette.toRing}`
+                                                }}
+                                            />
+                                        </>
+                                    )}
                                     {badgeStyle && classificationBadge && (
                                         <div
                                             className={`board-badge badge-${classificationBadge.tone}`}
@@ -798,6 +1032,22 @@ export const Dashboard = () => {
                                         >
                                             {classificationBadge.label}
                                         </div>
+                                    )}
+                                    {kingResultBadges && (
+                                        <>
+                                            <div
+                                                className={`king-result-badge king-result-badge--${kingResultBadges.white.status}`}
+                                                style={{ left: kingResultBadges.white.left, top: kingResultBadges.white.top }}
+                                            >
+                                                {kingResultBadges.white.status === 'win' ? 'WIN' : kingResultBadges.white.status === 'lose' ? 'LOSE' : 'DRAW'}
+                                            </div>
+                                            <div
+                                                className={`king-result-badge king-result-badge--${kingResultBadges.black.status}`}
+                                                style={{ left: kingResultBadges.black.left, top: kingResultBadges.black.top }}
+                                            >
+                                                {kingResultBadges.black.status === 'win' ? 'WIN' : kingResultBadges.black.status === 'lose' ? 'LOSE' : 'DRAW'}
+                                            </div>
+                                        </>
                                     )}
                                 </div>
                                 <div className="eval-rail eval-rail--interactive" title={`Evaluation: ${evalText}`} aria-hidden="true">
@@ -824,25 +1074,40 @@ export const Dashboard = () => {
                             </div>
                         </div>
                     ) : (
-                        <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-white/10 rounded-xl">
-                            <Activity size={48} className="text-muted mb-4" />
-                            <h3 className="text-lg font-medium text-primary">No game selected</h3>
-                            <p className="text-secondary text-center mb-6 max-w-xs">Import a game PGN to start analyzing your moves.</p>
-                            <Link to="/import" className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-medium transition-colors">
-                                Import Game
-                            </Link>
+                        <div className="dashboard-empty">
+                            <div className="dashboard-empty__card">
+                                <Activity size={56} className="text-muted mb-4" />
+                                <h3 className="text-xl font-semibold text-primary mb-2">
+                                    {hasGames ? 'No game selected' : 'No games yet'}
+                                </h3>
+                                <p className="text-secondary text-center mb-6 max-w-sm">
+                                    {hasGames
+                                        ? 'Pick a game from your library or import a PGN to start analyzing.'
+                                        : 'Import a game PGN to start analyzing your moves and unlock insights.'}
+                                </p>
+                                <div className="flex items-center gap-3">
+                                    <Link to="/import" className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-medium transition-colors">
+                                        Import Game
+                                    </Link>
+                                    <Link to="/library" className="px-6 py-2 bg-subtle hover:bg-subtle text-primary rounded-full font-medium transition-colors border border-white/10">
+                                        View Library
+                                    </Link>
+                                </div>
+                            </div>
                         </div>
                     )}
 
                     {/* Controls */}
-                    <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
-                        <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
-                        <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
-                        <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
-                        <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
-                    </div>
+                    {activeGame && (
+                        <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
+                            <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
+                            <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
+                            <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
+                            <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
+                        </div>
+                    )}
 
-                    {!isMobile && !rightPanelOpen && (
+                    {!isMobile && !rightPanelOpen && showContextPanel && (
                         <button className="panel-toggle panel-toggle--floating" onClick={() => setRightPanelOpen(true)}>
                             <ChevronLeft size={16} />
                             Show Panel
@@ -866,7 +1131,8 @@ export const Dashboard = () => {
 
 
             {/* RIGHT: Context Panel — Desktop: side panel, Mobile: bottom sheet */}
-            {isMobile ? (
+            {showContextPanel ? (
+                isMobile ? (
                 <div
                     ref={sheetRef}
                     className="dashboard-bottom-sheet"
@@ -967,7 +1233,7 @@ export const Dashboard = () => {
                         )}
                     </div>
                 </div>
-            ) : (
+                ) : (
                 <div className="dashboard-side bg-panel border-l flex flex-col shrink-0 overflow-hidden">
                     <div className="flex-1 flex flex-col min-h-0 relative">
                         <div className="flex items-center border-b bg-subtle/50 shrink-0">
@@ -1052,7 +1318,8 @@ export const Dashboard = () => {
                         </div>
                     )}
                 </div>
-            )}
+                )
+            ) : null}
         </div>
     );
 };

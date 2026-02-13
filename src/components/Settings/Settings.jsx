@@ -3,11 +3,18 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../services/db';
 import { engine } from '../../services/engine';
 import { AlertCircle, CheckCircle } from 'lucide-react';
-import { Chess } from 'chess.js';
 import { ConfirmModal } from '../common/ConfirmModal';
 
 const ENGINE_PROFILES_KEY = 'engineProfiles';
 const ENGINE_ACTIVE_KEY = 'activeEngineProfileId';
+const BOARD_LIGHT_KEY = 'boardLightSquare';
+const BOARD_DARK_KEY = 'boardDarkSquare';
+const BOARD_FLASH_WHITE_KEY = 'boardFlashWhite';
+const BOARD_FLASH_BLACK_KEY = 'boardFlashBlack';
+const DEFAULT_BOARD_LIGHT = '#e2e8f0';
+const DEFAULT_BOARD_DARK = '#475569';
+const DEFAULT_FLASH_WHITE = '#D9C64A';
+const DEFAULT_FLASH_BLACK = '#D9C64A';
 
 const clampInt = (value, min, max, fallback) => {
     const parsed = parseInt(value, 10);
@@ -86,15 +93,18 @@ const getInitialEngineState = () => {
 export const Settings = () => {
     const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
     const [status, setStatus] = useState(null);
-    const [bookStatus, setBookStatus] = useState(null);
     const [engineInfo, setEngineInfo] = useState(() => engine.getInfo());
+    const [boardLight, setBoardLight] = useState(() => localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT);
+    const [boardDark, setBoardDark] = useState(() => localStorage.getItem(BOARD_DARK_KEY) || DEFAULT_BOARD_DARK);
+    const [flashWhite, setFlashWhite] = useState(() => localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE);
+    const [flashBlack, setFlashBlack] = useState(() => localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK);
     const initialEngineState = useMemo(() => getInitialEngineState(), []);
     const [profiles, setProfiles] = useState(initialEngineState.profiles);
     const [activeProfileId, setActiveProfileId] = useState(initialEngineState.activeId);
     const [newProfileName, setNewProfileName] = useState('');
     const [confirmAnalyzeAllOpen, setConfirmAnalyzeAllOpen] = useState(false);
     const [confirmStopOpen, setConfirmStopOpen] = useState(false);
-    const [confirmBookOpen, setConfirmBookOpen] = useState(false);
+    const [confirmDeleteProfileOpen, setConfirmDeleteProfileOpen] = useState(false);
 
     // Get system thread count
     const maxThreads = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 16) : 16;
@@ -143,6 +153,18 @@ export const Settings = () => {
             // Ignore persistence failures
         }
     }, [profiles, activeProfileId]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(BOARD_LIGHT_KEY, boardLight);
+            localStorage.setItem(BOARD_DARK_KEY, boardDark);
+            localStorage.setItem(BOARD_FLASH_WHITE_KEY, flashWhite);
+            localStorage.setItem(BOARD_FLASH_BLACK_KEY, flashBlack);
+            window.dispatchEvent(new Event('boardColorsChanged'));
+        } catch {
+            // Ignore persistence failures
+        }
+    }, [boardLight, boardDark, flashWhite, flashBlack]);
 
     useEffect(() => {
         if (!activeProfile) return;
@@ -282,113 +304,18 @@ export const Settings = () => {
         }
     };
 
-    const fetchMasterGames = async (fen) => {
-        const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('Failed to fetch master games');
-        return await res.json();
-    };
-
-    const fenKey = (fen) => {
-        if (!fen || typeof fen !== 'string') return '';
-        return fen.split(' ').slice(0, 4).join(' ');
-    };
-
-    const syncBookMoves = async () => {
-        if (!games) return;
-        setBookStatus({ type: 'loading', message: 'Starting sync...' });
-        try {
-            const openings = {};
-            games.forEach((game) => {
-                if (!game.eco) return;
-                if (!openings[game.eco]) {
-                    openings[game.eco] = {
-                        eco: game.eco,
-                        name: game.openingName || 'Unknown Opening',
-                        sampleGameId: game.id
-                    };
-                }
-            });
-
-            const ecoList = Object.values(openings);
-            for (let i = 0; i < ecoList.length; i++) {
-                const opening = ecoList[i];
-                setBookStatus({ type: 'loading', message: `Syncing ${opening.eco} (${i + 1}/${ecoList.length})...` });
-
-                // 1. Load existing cache
-                const cachedEntry = await db.openings.get(opening.eco);
-                const masterMoveByFen = cachedEntry?.masterMoveByFen || {};
-                const masterMovesAll = new Set(cachedEntry?.masterMoves || []);
-
-                const game = await db.games.get(opening.sampleGameId);
-                if (!game?.pgn) continue;
-
-                const base = new Chess();
-                base.loadPgn(game.pgn);
-                const header = base.header();
-                const initFen = header['FEN'] || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-                const moves = base.history({ verbose: true });
-
-                const walk = new Chess(initFen);
-                const seenKeys = new Set();
-                let didFetch = false;
-
-                // Fetch book moves for early positions
-                const plyTarget = Math.min(14, moves.length);
-                for (let j = 0; j <= plyTarget; j++) {
-                    const fen = walk.fen();
-                    const key = fenKey(fen);
-
-                    if (key && !seenKeys.has(key)) {
-                        // Check if we already have this position cached
-                        if (!masterMoveByFen[key]) {
-                            try {
-                                const data = await fetchMasterGames(fen);
-                                const masterMoves = (data.moves || [])
-                                    .map((m) => (typeof m === 'string' ? m : m.uci))
-                                    .filter(Boolean);
-                                masterMoveByFen[key] = masterMoves;
-                                didFetch = true;
-                                await new Promise((r) => setTimeout(r, 1200)); // Rate limit 1.2s
-                            } catch (e) {
-                                console.warn(`Failed to fetch for ${opening.eco} position ${j}`, e);
-                            }
-                        }
-
-                        // Add found moves to the set
-                        if (masterMoveByFen[key]) {
-                            masterMoveByFen[key].forEach((m) => masterMovesAll.add(m));
-                        }
-                        seenKeys.add(key);
-                    }
-
-                    const nextMove = moves[j];
-                    if (!nextMove) break;
-                    walk.move({ from: nextMove.from, to: nextMove.to, promotion: nextMove.promotion });
-                }
-
-                if (didFetch || !cachedEntry) {
-                    await db.openings.put({
-                        ...cachedEntry,
-                        eco: opening.eco,
-                        name: opening.name,
-                        masterMoves: Array.from(masterMovesAll),
-                        masterMoveByFen,
-                        updatedAt: new Date().toISOString()
-                    });
-                }
-            }
-
-            setBookStatus({ type: 'success', message: 'Book moves synced for all openings.' });
-        } catch (err) {
-            console.error(err);
-            setBookStatus({ type: 'error', message: 'Failed to sync book moves.' });
-        }
-    };
-
     const updateActiveProfile = (patch) => {
         if (!activeProfile) return;
         setProfiles((prev) => prev.map((p) => (p.id === activeProfileId ? { ...p, ...patch } : p)));
+    };
+
+    const canDeleteProfile = profiles.length > 1;
+    const handleDeleteProfile = () => {
+        if (!activeProfile || !canDeleteProfile) return;
+        const remaining = profiles.filter((p) => p.id !== activeProfileId);
+        if (!remaining.length) return;
+        setProfiles(remaining);
+        setActiveProfileId(remaining[0].id);
     };
 
     const handleDepthChange = (value) => {
@@ -456,7 +383,7 @@ export const Settings = () => {
                         <h2 className="text-2xl font-semibold text-primary">Settings</h2>
                         <p className="text-secondary">Manage analysis runs and local data.</p>
                     </div>
-                    <div className="text-xs text-muted">Hero: {heroUser || 'Not set'}</div>
+                    <div className="text-s text-muted">Hero: {heroUser || 'Not set'}</div>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -576,6 +503,21 @@ export const Settings = () => {
                                 </button>
                             </div>
                         </div>
+                        <div>
+                            <label className="text-xs text-muted uppercase tracking-wider">Delete Profile</label>
+                            <div className="flex items-center gap-2 mt-2">
+                                <button
+                                    className="btn-danger"
+                                    onClick={() => setConfirmDeleteProfileOpen(true)}
+                                    disabled={!canDeleteProfile}
+                                >
+                                    Delete Active
+                                </button>
+                                {!canDeleteProfile && (
+                                    <span className="text-xs text-muted">Keep at least one profile.</span>
+                                )}
+                            </div>
+                        </div>
                     </div>
 
                     <div className="flex items-center gap-3 mt-4">
@@ -590,6 +532,91 @@ export const Settings = () => {
                             <option value="custom">Custom</option>
                         </select>
                         <div className="text-xs text-muted">Applies to new analysis runs for {activeProfile?.name || 'this profile'}.</div>
+                    </div>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Board Colors</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Customize light and dark square colors for the dashboard board.
+                    </p>
+                    <div className="board-color-grid">
+                        <div className="board-color-controls">
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Light Square</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={boardLight}
+                                        onChange={(e) => setBoardLight(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{boardLight.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Dark Square</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={boardDark}
+                                        onChange={(e) => setBoardDark(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{boardDark.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">White Move Flash</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={flashWhite}
+                                        onChange={(e) => setFlashWhite(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{flashWhite.toUpperCase()}</span>
+                                </div>
+                            </div>
+                            <div className="board-color-card">
+                                <label className="text-xs text-muted uppercase tracking-wider">Black Move Flash</label>
+                                <div className="board-color-row">
+                                    <input
+                                        type="color"
+                                        value={flashBlack}
+                                        onChange={(e) => setFlashBlack(e.target.value)}
+                                        className="color-input"
+                                    />
+                                    <span className="text-sm text-primary">{flashBlack.toUpperCase()}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="board-preview board-preview--large">
+                            {Array.from({ length: 16 }).map((_, idx) => {
+                                const isLight = (Math.floor(idx / 4) + (idx % 4)) % 2 === 0;
+                                return (
+                                    <div
+                                        key={idx}
+                                        className="board-preview__cell"
+                                        style={{ background: isLight ? boardLight : boardDark }}
+                                    />
+                                );
+                            })}
+                        </div>
+                    </div>
+                    <div className="mt-4 flex items-center gap-3">
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                                setBoardLight(DEFAULT_BOARD_LIGHT);
+                                setBoardDark(DEFAULT_BOARD_DARK);
+                                setFlashWhite(DEFAULT_FLASH_WHITE);
+                                setFlashBlack(DEFAULT_FLASH_BLACK);
+                            }}
+                        >
+                            Reset to Default
+                        </button>
+                        <div className="text-xs text-muted">Applies immediately to the dashboard board.</div>
                     </div>
                 </div>
 
@@ -729,22 +756,6 @@ export const Settings = () => {
                     </div>
                 </div>
 
-                <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Book Moves (Master Database)</h3>
-                    <p className="text-sm text-secondary mb-4">
-                        Sync master book moves for all your openings to enrich analytics and book move detection.
-                    </p>
-                    <button className="btn btn-secondary" onClick={() => setConfirmBookOpen(true)}>
-                        Sync Book Moves
-                    </button>
-                    {bookStatus && (
-                        <div className="mt-4 flex items-center gap-2 text-sm">
-                            {bookStatus.type === 'success' && <CheckCircle size={16} className="text-green-400" />}
-                            {bookStatus.type === 'error' && <AlertCircle size={16} className="text-red-400" />}
-                            <span className="text-secondary">{bookStatus.message}</span>
-                        </div>
-                    )}
-                </div>
             </div>
 
             <ConfirmModal
@@ -773,15 +784,17 @@ export const Settings = () => {
                 }}
             />
             <ConfirmModal
-                open={confirmBookOpen}
-                title="Sync book moves now?"
-                description="This fetches master database moves for your openings. It can take a few minutes and uses rate-limited requests."
-                confirmText="Start Sync"
+                open={confirmDeleteProfileOpen}
+                title={`Delete ${activeProfile?.name || 'this profile'}?`}
+                description="This removes the profile and its saved settings. This can't be undone."
+                confirmText="Delete Profile"
                 cancelText="Cancel"
-                onCancel={() => setConfirmBookOpen(false)}
-                onConfirm={async () => {
-                    setConfirmBookOpen(false);
-                    await syncBookMoves();
+                confirmClassName="btn-danger"
+                confirmDisabled={!canDeleteProfile}
+                onCancel={() => setConfirmDeleteProfileOpen(false)}
+                onConfirm={() => {
+                    setConfirmDeleteProfileOpen(false);
+                    handleDeleteProfile();
                 }}
             />
         </div>

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useNavigate } from 'react-router-dom';
 import { db } from '../../services/db';
-import { BookOpen, Trophy, XCircle, Minus, ChevronRight, Zap } from 'lucide-react';
+import { BookOpen, ChevronRight } from 'lucide-react';
 import { Chess } from 'chess.js';
+import { parsePGN } from '../../services/pgn';
 
 const fetchMasterGames = async (fen) => {
     const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}`;
@@ -11,13 +13,107 @@ const fetchMasterGames = async (fen) => {
     return await res.json();
 };
 
+const DEFAULT_START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+const fenKey = (fen) => {
+    if (!fen || typeof fen !== 'string') return '';
+    return fen.split(' ').slice(0, 4).join(' ');
+};
+
+const deriveOpeningFen = (pgn, plyTarget = 10) => {
+    if (!pgn) return '';
+    const base = new Chess();
+    base.loadPgn(pgn, { sloppy: true });
+    const header = base.header();
+    const initFen = header['FEN'] || DEFAULT_START_FEN;
+    const moves = base.history({ verbose: true });
+    const walk = new Chess(initFen);
+    const target = Math.min(plyTarget, moves.length);
+    for (let i = 0; i < target; i++) {
+        const m = moves[i];
+        if (m) walk.move({ from: m.from, to: m.to, promotion: m.promotion });
+    }
+    return walk.fen();
+};
+
+const hashPgn = (pgn) => {
+    let hash = 5381;
+    for (let i = 0; i < pgn.length; i++) {
+        hash = (hash * 33) ^ pgn.charCodeAt(i);
+    }
+    return `pgn_${(hash >>> 0).toString(16)}`;
+};
+
+const normalizePgnPayload = (raw) => {
+    const trimmed = (raw || '').trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('{')) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed?.pgn) return String(parsed.pgn).trim();
+        } catch {
+            // Fall through to raw payload
+        }
+    }
+    return trimmed;
+};
+
+const fetchMasterPgn = async (gameId) => {
+    const candidates = [
+        `https://explorer.lichess.ovh/masters/pgn/${encodeURIComponent(gameId)}`,
+        `https://explorer.lichess.ovh/master/pgn/${encodeURIComponent(gameId)}`
+    ];
+
+    let lastError = null;
+    for (const url of candidates) {
+        try {
+            const res = await fetch(url);
+            if (!res.ok) {
+                lastError = new Error(`Failed to fetch master PGN (${res.status})`);
+                continue;
+            }
+            const text = await res.text();
+            const pgn = normalizePgnPayload(text);
+            if (pgn) return pgn;
+            lastError = new Error('Empty master PGN response.');
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    throw lastError || new Error('Failed to fetch master PGN.');
+};
+
+const findFenMoveIndex = (pgn, targetKey) => {
+    if (!pgn || !targetKey) return -1;
+    try {
+        const base = new Chess();
+        base.loadPgn(pgn, { sloppy: true });
+        const header = base.header();
+        const initFen = header['FEN'] || DEFAULT_START_FEN;
+        const moves = base.history({ verbose: true });
+        const walk = new Chess(initFen);
+        for (let i = 0; i < moves.length; i++) {
+            const m = moves[i];
+            if (!m) continue;
+            walk.move({ from: m.from, to: m.to, promotion: m.promotion });
+            if (fenKey(walk.fen()) === targetKey) return i;
+        }
+    } catch (err) {
+        console.warn('Failed to derive jump index', err);
+    }
+    return -1;
+};
+
 const OpeningDetail = ({ opening }) => {
+    const navigate = useNavigate();
     const [masterData, setMasterData] = useState(null);
     const [masterLoading, setMasterLoading] = useState(false);
     const [masterError, setMasterError] = useState(null);
-    const [bulkProgress, setBulkProgress] = useState(null); // { current, total, eco }
+    const [masterGameLoadingId, setMasterGameLoadingId] = useState(null);
+    const [openingFen, setOpeningFen] = useState('');
+    const [openingFenKey, setOpeningFenKey] = useState('');
 
-    const cachedBook = useLiveQuery(async () => {
+    const cachedEntry = useLiveQuery(async () => {
         if (!opening?.eco) return null;
         const entry = await db.openings.get(opening.eco);
         if (entry?.masterData) {
@@ -42,20 +138,34 @@ const OpeningDetail = ({ opening }) => {
         setMasterLoading(true);
         setMasterError(null);
         try {
-            const game = await db.games.get(opening.sampleGameId);
-            if (!game?.pgn) throw new Error('No PGN for sample game');
-            const chess = new Chess();
-            chess.loadPgn(game.pgn);
-            const moves = chess.history({ verbose: true });
-            chess.reset();
-            const plyTarget = Math.min(10, moves.length);
-            for (let i = 0; i < plyTarget; i++) {
-                const m = moves[i];
-                chess.move({ from: m.from, to: m.to, promotion: m.promotion });
+            let fen = openingFen;
+            if (!fen) {
+                const game = await db.games.get(opening.sampleGameId);
+                if (!game?.pgn) throw new Error('No PGN for sample game');
+                fen = deriveOpeningFen(game.pgn);
+                if (fen) {
+                    setOpeningFen(fen);
+                    setOpeningFenKey(fenKey(fen));
+                }
             }
-            const fen = chess.fen();
+            if (!fen) throw new Error('No opening position found');
             const data = await fetchMasterGames(fen);
             setMasterData(data);
+
+            const cached = await db.openings.get(opening.eco);
+            const masterMoves = (data.moves || [])
+                .map((m) => (typeof m === 'string' ? m : (m.san || m.uci)))
+                .filter(Boolean)
+                .slice(0, 10);
+
+            await db.openings.put({
+                ...cached,
+                eco: opening.eco,
+                name: opening.name || cached?.name || 'Unknown Opening',
+                masterData: data,
+                masterMoves,
+                updatedAt: new Date().toISOString()
+            });
         } catch (err) {
             console.error(err);
             setMasterError('Failed to load master games.');
@@ -64,64 +174,105 @@ const OpeningDetail = ({ opening }) => {
         }
     };
 
-    const bulkLoadMasterGames = async (openingsList) => {
-        if (!openingsList || openingsList.length === 0) return;
-        setBulkProgress({ current: 0, total: openingsList.length, eco: 'Starting...' });
-
-        for (let i = 0; i < openingsList.length; i++) {
-            const op = openingsList[i];
-            setBulkProgress({ current: i + 1, total: openingsList.length, eco: op.eco });
-
+    useEffect(() => {
+        let active = true;
+        const loadFen = async () => {
+            setOpeningFen('');
+            setOpeningFenKey('');
+            if (!opening?.sampleGameId) return;
             try {
-                // 1. Check cache first
-                const cached = await db.openings.get(op.eco);
-                if (cached && cached.masterData) {
-                    // Already have data, skip
-                    continue;
-                }
-
-                // 2. Load game to get FEN
-                if (!op.sampleGameId) continue;
-                const game = await db.games.get(op.sampleGameId);
-                if (!game?.pgn) continue;
-
-                const chess = new Chess();
-                chess.loadPgn(game.pgn);
-                const moves = chess.history({ verbose: true });
-                chess.reset();
-                const plyTarget = Math.min(10, moves.length);
-                for (let k = 0; k < plyTarget; k++) {
-                    const m = moves[k];
-                    chess.move({ from: m.from, to: m.to, promotion: m.promotion });
-                }
-                const fen = chess.fen();
-
-                // 3. Fetch from API
-                const data = await fetchMasterGames(fen);
-
-                // 4. Save to DB
-                await db.openings.put({
-                    eco: op.eco,
-                    masterData: data,
-                    masterMoves: (data.moves || []).slice(0, 10).map(m => m.san || m.uci),
-                    updatedAt: new Date().toISOString()
-                });
-
-                // 5. Rate Limit
-                await new Promise(r => setTimeout(r, 1200)); // 1.2s delay to be safe
-
-            } catch (e) {
-                console.error(`Failed to load master games for ${op.eco}`, e);
-                // Continue to next opening even if one fails
+                const game = await db.games.get(opening.sampleGameId);
+                if (!game?.pgn) return;
+                const fen = deriveOpeningFen(game.pgn);
+                if (!active) return;
+                setOpeningFen(fen);
+                setOpeningFenKey(fenKey(fen));
+            } catch (err) {
+                console.warn('Failed to derive opening FEN', err);
             }
-        }
-        setBulkProgress(null);
-    };
+        };
+        loadFen();
+        return () => {
+            active = false;
+        };
+    }, [opening?.sampleGameId]);
 
     useEffect(() => {
         setMasterData(null);
         setMasterError(null);
+        setMasterGameLoadingId(null);
     }, [opening?.eco]);
+
+    const upsertMasterGame = async (pgn) => {
+        const pgnHash = hashPgn(pgn);
+        const existing = await db.games.where('pgnHash').equals(pgnHash).first();
+        if (existing?.id) return existing.id;
+
+        const parsed = parsePGN(pgn);
+        if (!parsed) throw new Error('Invalid PGN');
+
+        const date = parsed.date || new Date(parsed.timestamp || Date.now()).toISOString();
+        const record = {
+            ...parsed,
+            date,
+            pgn,
+            pgnHash,
+            isHero: false,
+            source: 'master',
+            importTag: opening?.eco ? `master:${opening.eco}` : 'master'
+        };
+
+        if (!record.eco && opening?.eco) record.eco = opening.eco;
+        if ((!record.openingName || record.openingName === 'Unknown Opening') && opening?.name) {
+            record.openingName = opening.name;
+        }
+
+        return await db.games.add(record);
+    };
+
+    const ensureOpeningFenKey = async () => {
+        if (openingFenKey) return openingFenKey;
+        if (!opening?.sampleGameId) return '';
+        try {
+            const game = await db.games.get(opening.sampleGameId);
+            if (!game?.pgn) return '';
+            const fen = deriveOpeningFen(game.pgn);
+            const key = fenKey(fen);
+            setOpeningFen(fen);
+            setOpeningFenKey(key);
+            return key;
+        } catch (err) {
+            console.warn('Failed to derive opening FEN key', err);
+            return '';
+        }
+    };
+
+    const handleOpenMasterGame = async (game) => {
+        if (!game?.id) return;
+        if (masterGameLoadingId) return;
+        setMasterGameLoadingId(game.id);
+        setMasterError(null);
+        try {
+            const pgn = await fetchMasterPgn(game.id);
+            const storedGameId = await upsertMasterGame(pgn);
+
+            const key = await ensureOpeningFenKey();
+            const jumpIndex = key ? findFenMoveIndex(pgn, key) : -1;
+
+            localStorage.setItem('activeGameId', String(storedGameId));
+            if (jumpIndex >= 0) {
+                localStorage.setItem('activeGameJumpGameId', String(storedGameId));
+                localStorage.setItem('activeGameJumpMoveIndex', String(jumpIndex));
+            }
+            window.dispatchEvent(new Event('activeGameChanged'));
+            navigate('/');
+        } catch (err) {
+            console.error(err);
+            setMasterError('Failed to load master game.');
+        } finally {
+            setMasterGameLoadingId(null);
+        }
+    };
 
     return (
         <div className="p-8 h-full overflow-y-auto w-full">
@@ -232,18 +383,16 @@ const OpeningDetail = ({ opening }) => {
             <div className="p-6 rounded-lg border bg-panel mb-8">
                 <div className="flex items-center justify-between mb-3">
                     <h4 className="text-sm font-semibold text-primary">Master Games & Book Moves</h4>
-                    <div className="flex gap-2">
-                        {bulkProgress ? (
-                            <div className="flex items-center gap-2 text-xs text-secondary bg-subtle px-3 py-1.5 rounded">
-                                <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                                <span>{bulkProgress.eco} ({bulkProgress.current}/{bulkProgress.total})</span>
-                            </div>
+                    <button className="btn btn-secondary text-xs" onClick={loadMasterGames} disabled={masterLoading}>
+                        {masterLoading ? (
+                            <span className="flex items-center gap-2">
+                                <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                                Fetching...
+                            </span>
                         ) : (
-                            <button className="btn btn-secondary text-xs" onClick={() => bulkLoadMasterGames([opening])} disabled={masterLoading}>
-                                Refresh
-                            </button>
+                            'Refresh'
                         )}
-                    </div>
+                    </button>
                 </div>
                 {masterError && <div className="text-sm text-red-400 mb-3">{masterError}</div>}
                 {masterData ? (
@@ -256,33 +405,82 @@ const OpeningDetail = ({ opening }) => {
                                 );
                             })}
                         </div>
-                        <div className="flex flex-col gap-2">
-                            {(masterData.topGames || []).slice(0, 5).map((g, idx) => {
-                                const whiteName = g?.white?.name || g?.white || 'White';
-                                const blackName = g?.black?.name || g?.black || 'Black';
-                                return (
-                                    <div key={`${g.id || idx}`} className="p-3 rounded bg-subtle flex items-center justify-between text-sm">
-                                        <div>
-                                            <div className="text-primary font-semibold">{whiteName} vs {blackName}</div>
-                                            <div className="text-xs text-muted">{g.year || ''} {g.month || ''}</div>
-                                        </div>
-                                        <div className="text-xs text-secondary">{g.winner || ''}</div>
-                                    </div>
-                                );
-                            })}
-                        </div>
+                        {(masterData.topGames || []).length ? (
+                            <div className="master-games-list">
+                                <div className="master-games-header">
+                                    <span>Top Master Games</span>
+                                    <span className="master-games-count">{Math.min(5, masterData.topGames.length)}</span>
+                                </div>
+                                {(masterData.topGames || []).slice(0, 5).map((g, idx) => {
+                                    const whiteName = g?.white?.name || g?.white || 'White';
+                                    const blackName = g?.black?.name || g?.black || 'Black';
+                                    const winnerRaw = (g?.winner || '').toString().toLowerCase();
+                                    const winnerLabel = winnerRaw === 'white'
+                                        ? 'White wins'
+                                        : winnerRaw === 'black'
+                                            ? 'Black wins'
+                                            : winnerRaw === 'draw'
+                                                ? 'Draw'
+                                                : 'Result n/a';
+                                    const winnerClass = winnerRaw === 'white'
+                                        ? 'is-white'
+                                        : winnerRaw === 'black'
+                                            ? 'is-black'
+                                            : winnerRaw === 'draw'
+                                                ? 'is-draw'
+                                                : 'is-unknown';
+                                    const isLoading = masterGameLoadingId === g?.id;
+                                    return (
+                                        <button
+                                            key={`${g.id || idx}`}
+                                            className="master-game-card disabled:opacity-50 disabled:cursor-not-allowed"
+                                            onClick={() => handleOpenMasterGame(g)}
+                                            disabled={!g?.id || isLoading}
+                                        >
+                                            <div className="master-game-card__left">
+                                                <div className="master-game-card__players">
+                                                    <span className="master-player master-player--white">{whiteName}</span>
+                                                    <span className="master-vs">vs</span>
+                                                    <span className="master-player master-player--black">{blackName}</span>
+                                                </div>
+                                                <div className="master-game-card__meta">
+                                                    <span>{g.month || g.year || '-'}</span>
+                                                    <span className="meta-sep">•</span>
+                                                    <span className={`master-winner ${winnerClass}`}>{winnerLabel}</span>
+                                                </div>
+                                            </div>
+                                            <div className="master-game-card__action">
+                                                {isLoading ? (
+                                                    <>
+                                                        <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                                                        <span>Loading</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <span>Open</span>
+                                                        <ChevronRight size={14} />
+                                                    </>
+                                                )}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-muted">No master games found for this position.</div>
+                        )}
                     </div>
-                ) : cachedBook?.masterMoves?.length ? (
+                ) : cachedEntry?.masterMoves?.length ? (
                     <div className="flex flex-col gap-3">
                         <div className="flex flex-wrap gap-2">
-                            {cachedBook.masterMoves.slice(0, 6).map((m, idx) => (
+                            {cachedEntry.masterMoves.slice(0, 6).map((m, idx) => (
                                 <span key={`${m}-${idx}`} className="pill">{m}</span>
                             ))}
                         </div>
-                        <div className="text-xs text-muted">Cached book moves loaded from Settings sync.</div>
+                        <div className="text-xs text-muted">Cached book moves from a previous refresh.</div>
                     </div>
                 ) : (
-                    <div className="text-sm text-muted">Load master games to see book moves and reference games.</div>
+                    <div className="text-sm text-muted">Click refresh to load book moves and master games.</div>
                 )}
             </div>
 
@@ -298,6 +496,7 @@ const OpeningDetail = ({ opening }) => {
 };
 
 export const OpeningExplorer = () => {
+    const SELECTED_ECO_KEY = 'openingExplorerSelectedEco';
     const heroUser = localStorage.getItem('heroUser') || '';
     const getPlayerName = (player) => {
         if (!player) return '';
@@ -421,7 +620,10 @@ export const OpeningExplorer = () => {
         })).sort((a, b) => b.total - a.total);
     });
 
-    const [selectedEco, setSelectedEco] = useState(null);
+    const [selectedEco, setSelectedEco] = useState(() => {
+        if (typeof window === 'undefined') return null;
+        return localStorage.getItem(SELECTED_ECO_KEY) || null;
+    });
     const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
 
     useEffect(() => {
@@ -430,6 +632,20 @@ export const OpeningExplorer = () => {
         mq.addEventListener('change', handler);
         return () => mq.removeEventListener('change', handler);
     }, []);
+
+    useEffect(() => {
+        if (!openings || !openings.length) return;
+        if (selectedEco && openings.some((op) => op.eco === selectedEco)) return;
+        const nextEco = openings[0]?.eco || null;
+        if (nextEco) {
+            setSelectedEco(nextEco);
+            try {
+                localStorage.setItem(SELECTED_ECO_KEY, nextEco);
+            } catch {
+                // Ignore persistence errors
+            }
+        }
+    }, [openings, selectedEco]);
 
     if (!openings) return <div className="p-8 text-secondary">Loading openings...</div>;
 
@@ -447,7 +663,14 @@ export const OpeningExplorer = () => {
                             return (
                                 <button
                                     key={op.eco}
-                                    onClick={() => setSelectedEco(op.eco)}
+                                    onClick={() => {
+                                        setSelectedEco(op.eco);
+                                        try {
+                                            localStorage.setItem(SELECTED_ECO_KEY, op.eco);
+                                        } catch {
+                                            // Ignore persistence errors
+                                        }
+                                    }}
                                     className={`opening-chip ${isSelected ? 'is-selected' : ''}`}
                                 >
                                     <span className="opening-chip__eco">{op.eco}</span>
@@ -469,13 +692,6 @@ export const OpeningExplorer = () => {
                     <div className="opening-list-panel border-r bg-panel flex flex-col h-full">
                         <div className="p-4 border-b flex justify-between items-center">
                             <h3 className="font-semibold text-xs uppercase tracking-wider text-muted">My Repertoire</h3>
-                            <button
-                                className="p-1 hover:bg-subtle rounded text-muted hover:text-primary transition-colors"
-                                title="Bulk Load Master Games (Slowly)"
-                                onClick={() => document.getElementById('bulk-load-trigger').click()}
-                            >
-                                <Zap size={14} />
-                            </button>
                         </div>
                         <div className="flex-1 overflow-y-auto">
                             {openings.map(op => {
@@ -486,7 +702,14 @@ export const OpeningExplorer = () => {
                                 return (
                                     <button
                                         key={op.eco}
-                                        onClick={() => setSelectedEco(op.eco)}
+                                        onClick={() => {
+                                            setSelectedEco(op.eco);
+                                            try {
+                                                localStorage.setItem(SELECTED_ECO_KEY, op.eco);
+                                            } catch {
+                                                // Ignore persistence errors
+                                            }
+                                        }}
                                         className="w-full text-left p-4 border-b hover:bg-subtle transition-colors focus:outline-none"
                                         style={{ backgroundColor: isSelected ? 'var(--bg-subtle)' : 'transparent', borderLeft: isSelected ? '2px solid var(--accent-blue)' : '2px solid transparent' }}
                                     >

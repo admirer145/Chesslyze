@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { db } from '../../services/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
-import { Filter, Search, RotateCcw, ChevronDown, ChevronUp, Trophy, Brain, Calendar, X, Zap, SlidersHorizontal } from 'lucide-react';
+import { Filter, Search, RotateCcw, ChevronDown, ChevronUp, Trophy, Brain, Calendar, X, Zap, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { ConfirmModal } from '../common/ConfirmModal';
 
 export const GamesLibrary = () => {
@@ -47,6 +47,10 @@ export const GamesLibrary = () => {
     const [activeFilterCount, setActiveFilterCount] = useState(0);
     const [queueing, setQueueing] = useState(false);
     const [confirmAnalyzeOpen, setConfirmAnalyzeOpen] = useState(false);
+    const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+    const [deleteInput, setDeleteInput] = useState('');
+    const [deleting, setDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState('');
     const [mobileFiltersExpanded, setMobileFiltersExpanded] = useState(false);
     const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
 
@@ -141,6 +145,35 @@ export const GamesLibrary = () => {
             console.error('Failed to queue filtered analysis', error);
         } finally {
             setQueueing(false);
+        }
+    };
+
+    const handleDeleteFiltered = async () => {
+        if (!games || games.length === 0) return;
+        setDeleting(true);
+        setDeleteError('');
+        try {
+            const ids = games.map((g) => g?.id).filter((id) => id != null);
+            if (ids.length === 0) {
+                setDeleteError('No deletable games found.');
+                return;
+            }
+            const chunkSize = 500;
+            await db.transaction('rw', db.games, db.positions, db.ai_analyses, async () => {
+                for (let i = 0; i < ids.length; i += chunkSize) {
+                    const chunk = ids.slice(i, i + chunkSize);
+                    await db.positions.where('gameId').anyOf(chunk).delete();
+                    await db.ai_analyses.where('gameId').anyOf(chunk).delete();
+                    await db.games.bulkDelete(chunk);
+                }
+            });
+            setConfirmDeleteOpen(false);
+            setPage(1);
+        } catch (error) {
+            console.error('Failed to delete filtered games', error);
+            setDeleteError('Delete failed. Please try again.');
+        } finally {
+            setDeleting(false);
         }
     };
 
@@ -334,6 +367,21 @@ export const GamesLibrary = () => {
         return `perf-tag perf-${key}`;
     };
 
+    const deleteCount = games ? games.length : 0;
+    const deleteLabel = deleteCount === 1 ? 'game' : 'games';
+    const deleteConfirmText = `DELETE ${deleteCount}`;
+    const deleteDisabled = deleteCount === 0 || deleting;
+
+    useEffect(() => {
+        if (!confirmDeleteOpen) {
+            setDeleteInput('');
+            setDeleteError('');
+            return;
+        }
+        setDeleteInput('');
+        setDeleteError('');
+    }, [confirmDeleteOpen, deleteCount]);
+
     return (
         <div className="library-page">
             <div className="library-bg" />
@@ -371,11 +419,12 @@ export const GamesLibrary = () => {
                             {queueing ? 'Queueing...' : `Analyze Filtered${games ? ` (${games.length})` : ''}`}
                         </button>
                         <button
-                            onClick={() => navigate('/import')}
-                            className="btn-primary"
+                            onClick={() => setConfirmDeleteOpen(true)}
+                            className="btn-danger"
+                            disabled={deleteDisabled}
                         >
-                            <span>+</span>
-                            Import Games
+                            <Trash2 size={16} />
+                            {`Delete all filtered${games ? ` (${games.length})` : ''}`}
                         </button>
                     </div>
                 </header>
@@ -893,6 +942,24 @@ export const GamesLibrary = () => {
                     setConfirmAnalyzeOpen(false);
                     await handleAnalyzeFiltered();
                 }}
+            />
+
+            <ConfirmModal
+                open={confirmDeleteOpen}
+                title={`Delete ${deleteCount} ${deleteLabel}?`}
+                description="This will permanently delete all games that match your current filters. This can't be undone."
+                confirmText={deleting ? 'Deleting...' : `Delete ${deleteCount} ${deleteLabel}`}
+                cancelText="Cancel"
+                confirmClassName="btn-danger"
+                inputLabel={`Type ${deleteConfirmText} to confirm.`}
+                inputPlaceholder={deleteConfirmText}
+                inputValue={deleteInput}
+                onInputChange={setDeleteInput}
+                confirmDisabled={deleteInput !== deleteConfirmText || deleting}
+                cancelDisabled={deleting}
+                error={deleteError}
+                onCancel={() => setConfirmDeleteOpen(false)}
+                onConfirm={handleDeleteFiltered}
             />
         </div>
     );

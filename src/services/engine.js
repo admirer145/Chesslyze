@@ -33,7 +33,7 @@ class EngineService {
         this.initPromise = new Promise((resolve, reject) => {
             try {
                 this.worker = new Worker(new URL('../workers/analysis.worker.js', import.meta.url), {
-                    type: 'classic'
+                    type: 'module'
                 });
 
                 this.worker.onmessage = (e) => {
