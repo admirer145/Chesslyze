@@ -987,9 +987,10 @@ export const GamesLibrary = () => {
                         <div className="drawer-section">
                             <label>Quick Reset</label>
                             <button
-                                onClick={() => setFilters({
-                                    ...DEFAULT_FILTERS
-                                })}
+                                onClick={() => {
+                                    setFilters({ ...DEFAULT_FILTERS });
+                                    setFiltersOpen(false);
+                                }}
                                 className="btn-secondary w-full"
                             >
                                 <RotateCcw size={16} />

@@ -24,6 +24,37 @@ const rangeToDate = (range) => {
     return null;
 };
 
+const parseRatingDiff = (value) => {
+    if (value === null || value === undefined) return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+};
+
+const readTagValue = (pgn, tag) => {
+    if (!pgn || !tag) return null;
+    const match = pgn.match(new RegExp(`\\[${tag} "([^"]*)"\\]`));
+    return match ? match[1] : null;
+};
+
+const getHeroRatingDiff = (g, isWhite) => {
+    const direct = isWhite
+        ? (g.whiteRatingDiff ?? g.whiteEloDiff ?? g.whiteRatingDelta)
+        : (g.blackRatingDiff ?? g.blackEloDiff ?? g.blackRatingDelta);
+    const directParsed = parseRatingDiff(direct);
+    if (directParsed !== null) return directParsed;
+
+    if (!g.pgn) return null;
+    const tags = isWhite
+        ? ['WhiteRatingDiff', 'WhiteEloDiff', 'WhiteRatingDelta']
+        : ['BlackRatingDiff', 'BlackEloDiff', 'BlackRatingDelta'];
+    for (const tag of tags) {
+        const value = readTagValue(g.pgn, tag);
+        const parsed = parseRatingDiff(value);
+        if (parsed !== null) return parsed;
+    }
+    return null;
+};
+
 const normalizeGame = (g, heroLower) => {
     if (!g) return null;
     const white = typeof g.white === 'string' ? g.white : g.white?.name || '';
@@ -36,6 +67,10 @@ const normalizeGame = (g, heroLower) => {
 
     const heroColor = isWhite ? 'white' : 'black';
     const heroRating = isWhite ? (g.whiteRating ?? g.whiteElo) : (g.blackRating ?? g.blackElo);
+    const heroRatingDiff = getHeroRatingDiff(g, isWhite);
+    const heroRatingPost = (typeof heroRating === 'number' && typeof heroRatingDiff === 'number')
+        ? heroRating + heroRatingDiff
+        : heroRating;
     const oppRating = isWhite ? (g.blackRating ?? g.blackElo) : (g.whiteRating ?? g.whiteElo);
     const opponent = isWhite ? black : white;
     const whiteTitle = (g.whiteTitle || '').trim();
@@ -60,6 +95,8 @@ const normalizeGame = (g, heroLower) => {
         date: g.date || g.timestamp || null,
         heroColor,
         heroRating: typeof heroRating === 'number' ? heroRating : null,
+        heroRatingDiff: typeof heroRatingDiff === 'number' ? heroRatingDiff : null,
+        heroRatingPost: typeof heroRatingPost === 'number' ? heroRatingPost : null,
         oppRating: typeof oppRating === 'number' ? oppRating : null,
         opponent,
         opponentTitle,
@@ -166,11 +203,11 @@ export const useJourneyData = () => {
     const effectivePerf = filters.perf === 'all' ? mostPlayedPerf : filters.perf;
 
     const ratingHistory = useMemo(() => {
-        const source = filteredGames.filter((g) => g.perf === effectivePerf && typeof g.heroRating === 'number');
+        const source = filteredGames.filter((g) => g.perf === effectivePerf && (typeof g.heroRatingPost === 'number' || typeof g.heroRating === 'number'));
         return source.map((g) => ({
             date: toDate(g.date)?.toLocaleDateString() || 'Unknown',
             rawDate: g.date,
-            rating: g.heroRating
+            rating: (typeof g.heroRatingPost === 'number' ? g.heroRatingPost : g.heroRating)
         }));
     }, [filteredGames, effectivePerf]);
 
@@ -248,9 +285,10 @@ export const useJourneyData = () => {
             if (g.result === 'win') entry.wins += 1;
             if (g.result === 'loss') entry.losses += 1;
             if (g.result === 'draw') entry.draws += 1;
-            if (typeof g.heroRating === 'number') {
-                entry.peak = Math.max(entry.peak, g.heroRating);
-                entry.current = g.heroRating;
+            const ratingValue = typeof g.heroRatingPost === 'number' ? g.heroRatingPost : g.heroRating;
+            if (typeof ratingValue === 'number') {
+                entry.peak = Math.max(entry.peak, ratingValue);
+                entry.current = ratingValue;
             }
             if (typeof g.accuracy === 'number') entry.accuracyValues.push(g.accuracy);
         });
@@ -399,7 +437,7 @@ export const useJourneyData = () => {
         const draws = filteredGames.filter((g) => g.result === 'draw').length;
         const losses = filteredGames.filter((g) => g.result === 'loss').length;
         const winRate = totalGames ? Math.round((wins / totalGames) * 100) : 0;
-        const highestRating = Math.max(0, ...filteredGames.map((g) => g.heroRating || 0));
+        const highestRating = Math.max(0, ...filteredGames.map((g) => (typeof g.heroRatingPost === 'number' ? g.heroRatingPost : (g.heroRating || 0))));
         const avgAccuracy = average(analyzedGames.map((g) => g.accuracy).filter((v) => typeof v === 'number'));
         return {
             heroUser,

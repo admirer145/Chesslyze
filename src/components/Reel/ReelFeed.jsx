@@ -127,8 +127,8 @@ const deriveCategories = ({ classification, motifs = [], phase, missedWin, misse
     if (heroMoved && ['blunder', 'mistake', 'inaccuracy'].includes(classification)) categories.add('my_blunder');
     if (!heroMoved && ['blunder', 'mistake', 'inaccuracy'].includes(classification)) categories.add('punish');
     if (heroMoved && ['brilliant', 'great'].includes(classification)) categories.add('brilliant');
-    if (missedWin) categories.add('winning_move');
-    if (missedDefense) categories.add('defense');
+    if (heroMoved && missedWin) categories.add('winning_move');
+    if (heroMoved && missedDefense) categories.add('defense');
     return Array.from(categories);
 };
 
@@ -177,6 +177,15 @@ const spreadByGame = (items) => {
     return result;
 };
 
+const BOARD_LIGHT_KEY = 'boardLightSquare';
+const BOARD_DARK_KEY = 'boardDarkSquare';
+const BOARD_FLASH_WHITE_KEY = 'boardFlashWhite';
+const BOARD_FLASH_BLACK_KEY = 'boardFlashBlack';
+const DEFAULT_BOARD_LIGHT = '#e2e8f0';
+const DEFAULT_BOARD_DARK = '#475569';
+const DEFAULT_FLASH_WHITE = '#D9C64A';
+const DEFAULT_FLASH_BLACK = '#D9C64A';
+
 const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLine, gameOverride, compact = false, onRevealChange }) => {
     const BADGE_SIZE = 26;
     const BADGE_INSET = 2;
@@ -198,6 +207,16 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
     const [badgesReady, setBadgesReady] = useState(true);
     const [blunderBadgeStyle, setBlunderBadgeStyle] = useState(null);
     const [solutionBadgeStyle, setSolutionBadgeStyle] = useState(null);
+    const [selectedSquare, setSelectedSquare] = useState(null);
+    const [boardColors, setBoardColors] = useState(() => ({
+        light: localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT,
+        dark: localStorage.getItem(BOARD_DARK_KEY) || DEFAULT_BOARD_DARK
+    }));
+    const [flashColors, setFlashColors] = useState(() => ({
+        white: localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE,
+        black: localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK
+    }));
+    const [lastMoveFlash, setLastMoveFlash] = useState(0);
     // (Explore mode removed) - continue lines open in Dashboard now.
 
     useEffect(() => {
@@ -216,6 +235,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         setBadgesReady(false);
         setBlunderBadgeStyle(null);
         setSolutionBadgeStyle(null);
+        setSelectedSquare(null);
         if (resetTimerRef.current) {
             clearTimeout(resetTimerRef.current);
             resetTimerRef.current = null;
@@ -233,6 +253,37 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
             badgeTimerRef.current = null;
         }
     }, [position.id, gameOverride]);
+
+    useEffect(() => {
+        if (showSolution || stage !== 'puzzle') {
+            setSelectedSquare(null);
+        }
+    }, [showSolution, stage]);
+
+    useEffect(() => {
+        const normalize = (value, fallback) => {
+            if (typeof value !== 'string') return fallback;
+            return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value) ? value : fallback;
+        };
+        const updateColors = () => {
+            setBoardColors({
+                light: normalize(localStorage.getItem(BOARD_LIGHT_KEY), DEFAULT_BOARD_LIGHT),
+                dark: normalize(localStorage.getItem(BOARD_DARK_KEY), DEFAULT_BOARD_DARK)
+            });
+            setFlashColors({
+                white: normalize(localStorage.getItem(BOARD_FLASH_WHITE_KEY), DEFAULT_FLASH_WHITE),
+                black: normalize(localStorage.getItem(BOARD_FLASH_BLACK_KEY), DEFAULT_FLASH_BLACK)
+            });
+        };
+        updateColors();
+        window.addEventListener('boardColorsChanged', updateColors);
+        window.addEventListener('storage', updateColors);
+        return () => {
+            window.removeEventListener('boardColorsChanged', updateColors);
+            window.removeEventListener('storage', updateColors);
+        };
+    }, []);
+
 
     useLayoutEffect(() => {
         if (!boardRef.current) return;
@@ -293,23 +344,12 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         };
     };
 
-    const onDrop = (...args) => {
-        let sourceSquare = args[0];
-        let targetSquare = args[1];
-
+    const attemptMove = (sourceSquare, targetSquare) => {
         if (showSolution || stage !== 'puzzle' || attemptLocked) return false;
-
-        if (typeof sourceSquare === 'object') {
-            if (sourceSquare.sourceSquare && sourceSquare.targetSquare) {
-                const obj = sourceSquare;
-                sourceSquare = obj.sourceSquare;
-                targetSquare = obj.targetSquare;
-            }
-        }
+        if (!puzzleFen) return false;
         if (typeof sourceSquare !== 'string' || typeof targetSquare !== 'string') return false;
         if (sourceSquare === targetSquare) return false;
 
-        if (!puzzleFen) return false;
         const base = new Chess(puzzleFen);
         const piece = base.get(sourceSquare);
         const targetRank = targetSquare[1];
@@ -330,13 +370,11 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
 
         const attemptUCI = (moveResult.from + moveResult.to + (moveResult.promotion || '')).toLowerCase();
 
-        const targetFull = (targetMove || position.bestMove || '').trim().toLowerCase();
+        const targetFull = (heroMoved ? (targetMove || position.bestMove) : targetMove || '').trim().toLowerCase();
         const targetUCI = targetFull.substring(0, 4);
 
-        if (moveResult) {
-            setTempFen(base.fen());
-            setLastAttempt({ san: moveResult.san, uci: attemptUCI });
-        }
+        setTempFen(base.fen());
+        setLastAttempt({ san: moveResult.san, uci: attemptUCI });
         setAttemptLocked(true);
 
         const shouldReset = true;
@@ -346,42 +384,49 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
             : attemptUCI.substring(0, 4) === targetUCI);
 
         if (isCorrect) {
-
             setFeedback('correct');
-        setShowSolution(true);
-        if (onRevealChange) onRevealChange(true);
+            setShowSolution(true);
+            if (onRevealChange) onRevealChange(true);
             setStage('solved');
-            // Keep the piece on the board and show the move
             setTempFen(base.fen());
             setLastAttempt({ san: moveResult.san, uci: attemptUCI });
-
             if (onSolved) onSolved(true);
             return true;
-        } else {
-            // Wrong move: Show for a bit, then reset
-            if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
-            if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
-
-            // 1. Show the wrong move immediately (already done by returning true + tempFen set above)
-
-            // 2. Wait, then reset board and show feedback
-            resetTimerRef.current = setTimeout(() => {
-                if (shouldReset) {
-                    setTempFen(null); // Clear the wrong move from board
-                    setLastAttempt(null); // Clear the move notation
-                }
-                setFeedback('incorrect');
-                setAttemptLocked(false);
-
-                // 3. Clear feedback message after a delay
-                messageTimerRef.current = setTimeout(() => {
-                    setFeedback(null);
-                }, 2000);
-            }, 800); // 800ms of showing the wrong move
-
-            if (onSolved) onSolved(false);
-            return true;
         }
+
+        if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+        if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+
+        resetTimerRef.current = setTimeout(() => {
+            if (shouldReset) {
+                setTempFen(null);
+                setLastAttempt(null);
+            }
+            setFeedback('incorrect');
+            setAttemptLocked(false);
+
+            messageTimerRef.current = setTimeout(() => {
+                setFeedback(null);
+            }, 2000);
+        }, 800);
+
+        if (onSolved) onSolved(false);
+        return true;
+    };
+
+    const onDrop = (...args) => {
+        let sourceSquare = args[0];
+        let targetSquare = args[1];
+
+        if (typeof sourceSquare === 'object') {
+            if (sourceSquare.sourceSquare && sourceSquare.targetSquare) {
+                const obj = sourceSquare;
+                sourceSquare = obj.sourceSquare;
+                targetSquare = obj.targetSquare;
+            }
+        }
+        setSelectedSquare(null);
+        return attemptMove(sourceSquare, targetSquare);
     };
 
     const heroUser = localStorage.getItem('heroUser') || 'Hero';
@@ -418,6 +463,13 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         { name: getName(game?.white) || heroUser, rating: getRating(game?.white, game?.whiteRating), title: getTitle('white') } :
         { name: getName(game?.black) || heroUser, rating: getRating(game?.black, game?.blackRating), title: getTitle('black') };
 
+    const heroMoved = useMemo(() => {
+        return (position.turn === 'w' && isHeroWhite) || (position.turn === 'b' && !isHeroWhite);
+    }, [position.turn, isHeroWhite]);
+    const isBrilliantIdea = useMemo(() => {
+        return heroMoved && (position.questionType === 'find_brilliant' || ['brilliant', 'great'].includes(position.classification));
+    }, [heroMoved, position.questionType, position.classification]);
+
     const isReview = useMemo(() => {
         return !!position?.reviewFlag;
     }, [position?.reviewFlag]);
@@ -431,6 +483,47 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
     const blunderInfo = useMemo(() => {
         return getMoveInfoFromPgn(game?.pgn, position?.ply);
     }, [game?.pgn, position?.ply]);
+
+    const opponentLastMove = useMemo(() => {
+        if (heroMoved) return null;
+        if (!blunderInfo?.from || !blunderInfo?.to) return null;
+        return { from: blunderInfo.from, to: blunderInfo.to, color: position?.turn || null };
+    }, [heroMoved, blunderInfo?.from, blunderInfo?.to, position?.turn]);
+
+    const flashPalette = useMemo(() => {
+        const moveTone = opponentLastMove?.color === 'b' ? 'black' : 'white';
+        const base = moveTone === 'black' ? flashColors.black : flashColors.white;
+        const hexToRgb = (hex) => {
+            if (!hex) return null;
+            const raw = hex.replace('#', '');
+            if (raw.length === 3) {
+                const r = parseInt(raw[0] + raw[0], 16);
+                const g = parseInt(raw[1] + raw[1], 16);
+                const b = parseInt(raw[2] + raw[2], 16);
+                return { r, g, b };
+            }
+            if (raw.length === 6) {
+                const r = parseInt(raw.slice(0, 2), 16);
+                const g = parseInt(raw.slice(2, 4), 16);
+                const b = parseInt(raw.slice(4, 6), 16);
+                return { r, g, b };
+            }
+            return null;
+        };
+        const rgb = hexToRgb(base) || { r: 245, g: 200, b: 75 };
+        const rgba = (a) => `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`;
+        return {
+            fromFill: rgba(0.22),
+            fromRing: rgba(0.7),
+            toFill: rgba(0.4),
+            toRing: rgba(0.95)
+        };
+    }, [opponentLastMove?.color, flashColors]);
+
+    useEffect(() => {
+        if (!opponentLastMove) return;
+        setLastMoveFlash((v) => v + 1);
+    }, [opponentLastMove?.from, opponentLastMove?.to, position?.id]);
 
     const moveLabel = useMemo(() => {
         if (!blunderInfo) return null;
@@ -447,10 +540,6 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         if (positive.includes(position.classification)) return getMoveBadge(position.classification);
         return { label: '★', tone: 'best' };
     }, [position?.classification]);
-
-    const heroMoved = useMemo(() => {
-        return (position.turn === 'w' && isHeroWhite) || (position.turn === 'b' && !isHeroWhite);
-    }, [position.turn, isHeroWhite]);
 
     const blunderFen = useMemo(() => {
         try {
@@ -473,33 +562,25 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
     }, [heroMoved, blunderFen, position?.fen]);
 
     const targetMove = useMemo(() => {
-        if (!game?.analysisLog || !position?.ply) return position.bestMove;
-
         // If it's our blunder (heroMoved), we are looking for the best move from the *original* position
-        // This is stored in position.bestMove (engine analyzed the pre-move position)
+        // This is stored in position.bestMove (engine analyzed the pre-move position).
         if (heroMoved) {
-            return position.bestMove;
+            return position?.bestMove || null;
         }
 
-        // If it's opponent's blunder (!heroMoved), we are looking for the move that *punishes* it.
-        // This corresponds to the *next* ply in the game... BUT wait. 
-        // The game analysis log stores "bestMove" for the position *before* the move at that ply.
-        // So for ply X (opponent move), we want the best move for ply X+1 (our response).
+        // If it's opponent's blunder (!heroMoved), we are looking for the move that punishes it.
+        // Prefer the stored response from the ReelFeed builder, then fall back to analysisLog.
+        if (position?.bestResponse) return position.bestResponse;
+        if (!game?.analysisLog || !position?.ply) return null;
         const nextEntry = game.analysisLog.find((e) => e.ply === position.ply + 1);
-        if (nextEntry) return nextEntry.bestMove;
-
-        // Fallback: If we don't have next entry (e.g. end of game), we might need to rely on engine
-        // or just use what we have if it makes sense. 
-        // For now, let's trust position.bestMove if we can't find next entry, 
-        // though position.bestMove is usually for the position at `ply`.
-        return position.bestMove;
-    }, [game?.analysisLog, position?.ply, heroMoved, position?.bestMove]);
+        return nextEntry?.bestMove || null;
+    }, [game?.analysisLog, position?.ply, heroMoved, position?.bestMove, position?.bestResponse]);
 
     const bestMoveSan = useMemo(() => {
-        const move = targetMove || position?.bestMove;
+        const move = targetMove || (heroMoved ? position?.bestMove : null);
         if (!move) return '-';
         return uciToSanWithFallback([puzzleFen, position?.fen, blunderFen], move);
-    }, [puzzleFen, position?.fen, blunderFen, targetMove, position?.bestMove]);
+    }, [puzzleFen, position?.fen, blunderFen, targetMove, heroMoved, position?.bestMove]);
 
     const puzzleTurn = useMemo(() => {
         if (!puzzleFen) return position?.turn || null;
@@ -510,6 +591,49 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
             return position?.turn || null;
         }
     }, [puzzleFen, position?.turn]);
+
+    const onSquareClick = (info) => {
+        if (showSolution || stage !== 'puzzle' || attemptLocked) return;
+        const square = typeof info === 'string' ? info : info?.square;
+        if (!puzzleFen || typeof square !== 'string') return;
+        let base = null;
+        try {
+            base = new Chess(puzzleFen);
+        } catch {
+            return;
+        }
+        const piece = base.get(square);
+        const turn = base.turn();
+
+        if (!selectedSquare) {
+            if (piece && piece.color === turn) {
+                setSelectedSquare(square);
+            }
+            return;
+        }
+
+        if (selectedSquare === square) {
+            setSelectedSquare(null);
+            return;
+        }
+
+        const moved = attemptMove(selectedSquare, square);
+        if (moved) {
+            setSelectedSquare(null);
+            return;
+        }
+
+        if (piece && piece.color === turn) {
+            setSelectedSquare(square);
+        } else {
+            setSelectedSquare(null);
+        }
+    };
+
+    const onPieceClick = (info) => {
+        if (!info?.square) return;
+        onSquareClick(info);
+    };
 
     const sideToMoveLabel = puzzleTurn === 'b' ? 'Black' : 'White';
     const heroSideLabel = isHeroWhite ? 'White' : 'Black';
@@ -534,7 +658,50 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         return targetMove.substring(2, 4);
     }, [targetMove]);
 
+    const lastMoveStyles = useMemo(() => {
+        if (!opponentLastMove) return {};
+        const flashVariant = lastMoveFlash % 2 === 0 ? 'a' : 'b';
+        const palette = flashPalette;
+        const fromStyle = {
+            backgroundImage: `radial-gradient(circle at 50% 50%, ${palette.fromFill}, rgba(0, 0, 0, 0) 70%)`,
+            boxShadow: `inset 0 0 0 2px ${palette.fromRing}`
+        };
+        const toStyle = {
+            backgroundImage: `radial-gradient(circle at 50% 50%, ${palette.toFill}, rgba(0, 0, 0, 0) 70%)`,
+            boxShadow: `inset 0 0 0 2px ${palette.toRing}, 0 0 12px ${palette.toFill}`
+        };
+        const flashFrom = {
+            animation: `last-move-flash-from-${flashVariant} 0.45s cubic-bezier(0.2, 0.9, 0.2, 1)`
+        };
+        const flashTo = {
+            animation: `last-move-flash-to-${flashVariant} 0.45s cubic-bezier(0.2, 0.9, 0.2, 1)`
+        };
+        return {
+            [opponentLastMove.from]: { ...fromStyle, ...flashFrom },
+            [opponentLastMove.to]: { ...toStyle, ...flashTo }
+        };
+    }, [opponentLastMove, lastMoveFlash, flashPalette]);
+
+    const selectedSquareStyles = useMemo(() => {
+        if (!selectedSquare) return {};
+        return {
+            [selectedSquare]: {
+                boxShadow: 'inset 0 0 0 2px rgba(59, 130, 246, 0.95)',
+                backgroundImage: 'radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.22), rgba(0, 0, 0, 0) 70%)'
+            }
+        };
+    }, [selectedSquare]);
+
+    const combinedSquareStyles = useMemo(() => {
+        return { ...lastMoveStyles, ...selectedSquareStyles };
+    }, [lastMoveStyles, selectedSquareStyles]);
+
     useEffect(() => {
+        if (isBrilliantIdea) {
+            setStage('puzzle');
+            setAttemptLocked(false);
+            return;
+        }
         if (!heroMoved) {
             setStage('puzzle');
             setAttemptLocked(false);
@@ -549,7 +716,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         return () => {
             if (introTimerRef.current) clearTimeout(introTimerRef.current);
         };
-    }, [heroMoved, position?.id]);
+    }, [heroMoved, isBrilliantIdea, position?.id]);
 
     // Delay badge render until piece animation likely finished
     useEffect(() => {
@@ -679,16 +846,19 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
                 <div className="w-full rounded overflow-hidden mb-2 border bg-subtle relative">
                     <div style={{ paddingBottom: '100%' }}></div>
                     <div className="absolute inset-0" ref={boardRef}>
-                        <Chessboard
+                                <Chessboard
                             options={{
                                 position: displayFen,
                                 boardWidth: boardSize,
                                 arePiecesDraggable: !showSolution && stage === 'puzzle',
                                 onPieceDrop: onDrop,
+                                onPieceClick: onPieceClick,
+                                onSquareClick: onSquareClick,
                                 boardOrientation: isHeroWhite ? 'white' : 'black',
                                 animationDuration: PIECE_ANIMATION_MS,
-                                customDarkSquareStyle: { backgroundColor: '#71717a' },
-                                customLightSquareStyle: { backgroundColor: '#e4e4e7' }
+                                darkSquareStyle: { backgroundColor: boardColors.dark },
+                                lightSquareStyle: { backgroundColor: boardColors.light },
+                                squareStyles: combinedSquareStyles
                             }}
                         />
                         {badgesReady && classificationBadge && blunderBadgeStyle && (stage === 'intro' || !heroMoved) && (
@@ -836,9 +1006,10 @@ export const ReelFeed = () => {
     const heroUser = localStorage.getItem('heroUser');
     const navigate = useNavigate();
     const [deckNonce, setDeckNonce] = useState(0);
-    const [sideFilter, setSideFilter] = useState('all');
     const [solutionRevealed, setSolutionRevealed] = useState(false);
     const [heldPuzzle, setHeldPuzzle] = useState(null);
+    const [puzzleLocked, setPuzzleLocked] = useState(false);
+    const [positionsCache, setPositionsCache] = useState(null);
     // removed left-panel search and resize controls
     const [recentIds, setRecentIds] = useState(() => {
         try {
@@ -894,6 +1065,8 @@ export const ReelFeed = () => {
                 const responseEntry = log.find((entry) => entry.ply === pos.ply + 1);
                 const heroResponse = responseEntry?.move;
                 const bestResponse = responseEntry?.bestMove;
+                if (heroMoved && !pos.bestMove) continue;
+                if (!heroMoved && !bestResponse) continue;
                 const heroPunished = !heroMoved
                     && normalizeMove(heroResponse)
                     && normalizeMove(heroResponse) === normalizeMove(bestResponse);
@@ -975,7 +1148,11 @@ export const ReelFeed = () => {
         }
     }, [quizActive, positions, quizSet.length]);
 
-    const safePositions = positions || { solved: [], unsolved: [], review: [], all: [] };
+    useEffect(() => {
+        if (positions) setPositionsCache(positions);
+    }, [positions]);
+
+    const safePositions = positions || positionsCache || { solved: [], unsolved: [], review: [], all: [] };
     const noData = safePositions.unsolved.length === 0 && safePositions.solved.length === 0 && safePositions.review.length === 0;
 
     const activePositions = section === 'unsolved'
@@ -996,16 +1173,9 @@ export const ReelFeed = () => {
         return true;
     };
 
-    const sideMatches = (pos) => {
-        if (sideFilter === 'all') return true;
-        if (sideFilter === 'hero') return pos.heroMoved;
-        if (sideFilter === 'opponent') return !pos.heroMoved;
-        return true;
-    };
-
     const filteredPositions = useMemo(
-        () => activePositions.filter((pos) => focusMatches(pos) && sideMatches(pos)),
-        [activePositions, mode, sideFilter]
+        () => activePositions.filter((pos) => focusMatches(pos)),
+        [activePositions, mode]
     );
 
     const filteredKey = useMemo(
@@ -1014,6 +1184,7 @@ export const ReelFeed = () => {
     );
 
     useEffect(() => {
+        if (puzzleLocked && deck.length > 0) return;
         if (!filteredPositions.length) {
             setDeck([]);
             return;
@@ -1024,12 +1195,21 @@ export const ReelFeed = () => {
             : filteredPositions;
         const shuffled = spreadByGame(weightedShuffle(pool.length ? pool : filteredPositions, computeWeight));
         setDeck(shuffled);
-    }, [filteredKey, deckNonce]);
+    }, [filteredKey, deckNonce, puzzleLocked, deck.length, filteredPositions.length]);
 
     const activeSet = deck;
     const activePosition = activeSet.length > 0 ? activeSet[index % activeSet.length] : null;
     const basePuzzle = !quizActive && heldPuzzle ? heldPuzzle : activePosition;
     const currentPuzzle = quizActive && quizSet[quizIndex] ? quizSet[quizIndex] : basePuzzle;
+    useEffect(() => {
+        if (quizActive) {
+            setPuzzleLocked(false);
+            return;
+        }
+        if (currentPuzzle?.id) {
+            setPuzzleLocked(true);
+        }
+    }, [currentPuzzle?.id, quizActive]);
     const activePositionLive = useLiveQuery(
         () => (currentPuzzle?.id ? db.positions.get(currentPuzzle.id) : null),
         [currentPuzzle?.id]
@@ -1059,6 +1239,7 @@ export const ReelFeed = () => {
 
     const handleNext = () => {
         setHeldPuzzle(null);
+        setPuzzleLocked(false);
         setIndex((prev) => (prev + 1) % activeSet.length);
     };
 
@@ -1075,15 +1256,18 @@ export const ReelFeed = () => {
 
     useEffect(() => {
         setIndex(0);
-    }, [section, mode, sideFilter, deckNonce]);
+        setHeldPuzzle(null);
+        setPuzzleLocked(false);
+    }, [section, mode, deckNonce]);
 
     useEffect(() => {
         setSolutionRevealed(false);
-    }, [index, section, mode, sideFilter, deckNonce, currentPuzzle?.id, quizActive, quizIndex]);
+    }, [index, section, mode, deckNonce, currentPuzzle?.id, quizActive, quizIndex]);
 
     useEffect(() => {
         if (quizActive) {
             setHeldPuzzle(null);
+            setPuzzleLocked(false);
         }
     }, [quizActive]);
 
@@ -1287,7 +1471,7 @@ export const ReelFeed = () => {
                                     {!noData && activePositions.length > 0 && (
                                         <>
                                             <p className="text-lg text-primary mb-2">No puzzles in this focus.</p>
-                                            <p className="text-sm">Try another focus or side filter.</p>
+                                            <p className="text-sm">Try another focus.</p>
                                         </>
                                     )}
                                 </div>
@@ -1367,26 +1551,9 @@ export const ReelFeed = () => {
                             </div>
                         </div>
 
-                            <div className="puzzle-panel__section">
-                                <div className="puzzle-panel__title">Side Filter</div>
-                                <div className="puzzle-button-list">
-                                    {[
-                                        { id: 'all', label: 'Both Sides' },
-                                        { id: 'hero', label: 'Your Turn' },
-                                        { id: 'opponent', label: 'Opponent Turn' }
-                                    ].map((opt) => (
-                                        <button
-                                            key={opt.id}
-                                            onClick={() => setSideFilter(opt.id)}
-                                            className={`puzzle-button ${sideFilter === opt.id ? 'puzzle-button--active' : ''}`}
-                                        >
-                                            <span>{opt.label}</span>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </aside>
-                    )}
+                        
+                    </aside>
+                )}
                 </div>
             </div>
         </div>
