@@ -37,6 +37,7 @@ export const Dashboard = () => {
     const DEFAULT_FLASH_WHITE = '#D9C64A';
     const DEFAULT_FLASH_BLACK = '#D9C64A';
     const latestGame = useLiveQuery(() => db.games.orderBy('date').reverse().first());
+    const totalGames = useLiveQuery(() => db.games.count());
     const [selectedGameId, setSelectedGameId] = useState(() => localStorage.getItem('activeGameId'));
     const [boardColors, setBoardColors] = useState(() => ({
         light: localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT,
@@ -889,7 +890,7 @@ export const Dashboard = () => {
 
     if (!stats) return <div className="p-8 text-secondary">Loading dashboard...</div>;
 
-    const hasGames = stats.total > 0;
+    const hasGames = (totalGames ?? 0) > 0;
     const showContextPanel = hasGames && !!activeGame;
 
     return (
@@ -1243,20 +1244,28 @@ export const Dashboard = () => {
                             >Moves</button>
                             <button
                                 onClick={() => setActiveTab('analysis')}
-                                disabled={!(analysisLog && analysisLog.length > 0)}
-                                className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'analysis' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
+                                className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'analysis' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary'}`}
                             >Analytics</button>
                             <button
                                 onClick={() => setActiveTab('ai')}
-                                disabled={!aiAnalysis}
-                                className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'ai' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary disabled:opacity-50 disabled:cursor-not-allowed'}`}
+                                className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === 'ai' ? 'text-primary bg-panel border-b-2 border-primary' : 'text-muted hover:text-secondary'}`}
                             >
-                                <span className={!aiAnalysis ? 'opacity-50' : 'text-purple-400'}>AI Coach</span>
+                                <span className={aiAnalysis ? 'text-purple-400' : ''}>AI Coach</span>
                             </button>
                         </div>
                         <div className="flex-1 overflow-y-auto min-h-0 bg-panel relative">
                             {activeTab === 'ai' ? (
-                                <AIInsightsView analysis={aiAnalysis} onJumpToMove={(moveIdx) => handleJumpTo(moveIdx)} />
+                                aiAnalysis ? (
+                                    <AIInsightsView analysis={aiAnalysis} onJumpToMove={(moveIdx) => handleJumpTo(moveIdx)} />
+                                ) : (
+                                    <div className="p-8 text-center text-muted">
+                                        <div className="text-purple-400" style={{ fontSize: 28 }}>✦</div>
+                                        <div className="text-primary font-medium mt-2">AI Coach</div>
+                                        <div className="text-muted text-xs mt-1">
+                                            Tap the AI analysis button above the board to get personalized insights, blunder explanations, and improvement tips for this game.
+                                        </div>
+                                    </div>
+                                )
                             ) : activeTab === 'analysis' ? (
                                 (analysisLog && analysisLog.length > 0) ? (
                                     <AnalyticsPanel

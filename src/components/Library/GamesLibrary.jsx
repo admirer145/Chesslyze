@@ -107,16 +107,76 @@ export const GamesLibrary = () => {
         }
     }, [filters, sortBy, sortOrder]);
 
+    const normalizeResult = (value) => {
+        if (!value) return '';
+        return String(value)
+            .trim()
+            .replace(/\s+/g, '')
+            .replace(/[–—]/g, '-')
+            .replace(/½/g, '1/2')
+            .toLowerCase();
+    };
+
+    const getPlayerNameValue = (value) => {
+        if (!value) return '';
+        if (typeof value === 'string') return value;
+        return value?.name || '';
+    };
+
+    const isDrawResult = (value) => {
+        const normalized = normalizeResult(value);
+        return normalized === '1/2-1/2' || normalized === '0.5-0.5';
+    };
+
+    const getOutcomeSide = (game) => {
+        const normalized = normalizeResult(game?.result);
+        if (isDrawResult(normalized)) return 'draw';
+        if (normalized === '1-0') return 'white';
+        if (normalized === '0-1') return 'black';
+        return null;
+    };
+
+    const getFocusSide = (game) => {
+        const whiteName = getPlayerNameValue(game.white).toLowerCase();
+        const blackName = getPlayerNameValue(game.black).toLowerCase();
+        if (heroUser) {
+            const heroLower = heroUser.toLowerCase();
+            if (whiteName === heroLower) return 'white';
+            if (blackName === heroLower) return 'black';
+        }
+        if (filters.player) {
+            const query = filters.player.toLowerCase().trim();
+            if (query) {
+                const matchWhite = whiteName.includes(query);
+                const matchBlack = blackName.includes(query);
+                if (matchWhite && !matchBlack) return 'white';
+                if (matchBlack && !matchWhite) return 'black';
+            }
+        }
+        return null;
+    };
+
+    const getPerspectiveSide = (game) => {
+        const focus = getFocusSide(game);
+        if (focus) return focus;
+        if (filters.color === 'white' || filters.color === 'black') return filters.color;
+        return null;
+    };
+
+    const getSideResult = (game, side) => {
+        const outcome = getOutcomeSide(game);
+        if (!outcome) return null;
+        if (outcome === 'draw') return 'draw';
+        return outcome === side ? 'win' : 'loss';
+    };
+
     const getHeroResult = (game) => {
-        if (!heroUser) return null;
-        const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
-        const isBlack = game.black?.toLowerCase() === heroUser.toLowerCase();
-        if (!isWhite && !isBlack) return null;
-        if (game.result === '1/2-1/2') return 'draw';
-        if (isWhite && game.result === '1-0') return 'win';
-        if (isWhite && game.result === '0-1') return 'loss';
-        if (isBlack && game.result === '0-1') return 'win';
-        if (isBlack && game.result === '1-0') return 'loss';
+        const side = getFocusSide(game);
+        if (side) return getSideResult(game, side);
+        const outcome = getOutcomeSide(game);
+        if (outcome === 'draw') return 'draw';
+        if (outcome === 'white') return 'win';
+        if (outcome === 'black') return 'loss';
         return null;
     };
 
@@ -181,21 +241,17 @@ export const GamesLibrary = () => {
         const normalizeTitle = (title) => (title || '').trim().toUpperCase();
         const isBotTitle = (title) => normalizeTitle(title) === 'BOT';
         const getMyRating = (game) => {
-            if (!heroUser) return null;
-            const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
-            return isWhite ? (game.whiteRating ?? game.whiteElo) : (game.blackRating ?? game.blackElo);
+            const side = getPerspectiveSide(game) || 'white';
+            return side === 'white' ? (game.whiteRating ?? game.whiteElo) : (game.blackRating ?? game.blackElo);
         };
         const getOppRating = (game) => {
-            if (!heroUser) return null;
-            const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
-            return isWhite ? (game.blackRating ?? game.blackElo) : (game.whiteRating ?? game.whiteElo);
+            const side = getPerspectiveSide(game) || 'white';
+            return side === 'white' ? (game.blackRating ?? game.blackElo) : (game.whiteRating ?? game.whiteElo);
         };
         const getOppTitle = (game) => {
-            if (!heroUser) {
-                return normalizeTitle(game.blackTitle || game.whiteTitle || '');
-            }
-            const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
-            const title = isWhite ? (game.blackTitle || '') : (game.whiteTitle || '');
+            const side = getPerspectiveSide(game);
+            if (!side) return normalizeTitle(game.blackTitle || game.whiteTitle || '');
+            const title = side === 'white' ? (game.blackTitle || '') : (game.whiteTitle || '');
             return normalizeTitle(title);
         };
 
@@ -209,8 +265,19 @@ export const GamesLibrary = () => {
             if (filters.scope === 'others' && isHeroGame) return false;
 
             if (filters.result !== 'all') {
-                const heroResult = getHeroResult(game);
-                if (!heroResult || heroResult !== filters.result) return false;
+                if (filters.result === 'draw') {
+                    if (!isDrawResult(game.result)) return false;
+                } else {
+                    const side = getPerspectiveSide(game);
+                    if (side) {
+                        const sideResult = getSideResult(game, side);
+                        if (!sideResult || sideResult !== filters.result) return false;
+                    } else {
+                        const outcome = getOutcomeSide(game);
+                        if (filters.result === 'win' && outcome !== 'white') return false;
+                        if (filters.result === 'loss' && outcome !== 'black') return false;
+                    }
+                }
             }
             if (filters.analyzed !== 'all') {
                 const status = game.analysisStatus;
@@ -249,16 +316,19 @@ export const GamesLibrary = () => {
                 if (!playerTarget.includes(filters.player.toLowerCase())) return false;
             }
 
-            if (filters.color !== 'all' && heroUser) {
-                const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
-                const isBlack = game.black?.toLowerCase() === heroUser.toLowerCase();
-                if (filters.color === 'white' && !isWhite) return false;
-                if (filters.color === 'black' && !isBlack) return false;
+            if (filters.color !== 'all') {
+                const focusSide = getFocusSide(game);
+                if (focusSide) {
+                    if (filters.color !== focusSide) return false;
+                } else if (filters.result === 'all') {
+                    const outcome = getOutcomeSide(game);
+                    if (outcome === 'draw' || !outcome) return false;
+                    if (outcome !== filters.color) return false;
+                }
             }
 
             if (filters.myRatingOp !== 'any' && filters.myRatingVal !== '') {
-                const isWhite = game.white?.toLowerCase() === heroUser.toLowerCase();
-                const myRating = isWhite ? (game.whiteRating ?? game.whiteElo) : (game.blackRating ?? game.blackElo);
+                const myRating = getMyRating(game);
                 const target = Number(filters.myRatingVal);
                 if (!Number.isFinite(target) || typeof myRating !== 'number') return false;
                 if (filters.myRatingOp === 'eq' && myRating !== target) return false;
