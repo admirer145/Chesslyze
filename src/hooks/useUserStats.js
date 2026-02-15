@@ -1,16 +1,19 @@
+import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../services/db';
+import { useHeroProfiles } from './useHeroProfiles';
+import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../services/heroProfiles';
 
 export const useUserStats = () => {
+    const { activeProfiles } = useHeroProfiles();
+    const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
+
     return useLiveQuery(async () => {
-        const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
-        if (!heroUser) return null;
+        if (!activeProfiles.length) return null;
+        const heroLabel = getHeroDisplayName(activeProfiles);
 
         const all = await db.games.toArray();
-        const games = all.filter((g) => {
-            if (typeof g.isHero === 'boolean') return g.isHero;
-            return g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser;
-        });
+        const games = all.filter((g) => isHeroGameForProfiles(g, activeProfiles));
 
         if (!games.length) return null;
 
@@ -49,7 +52,8 @@ export const useUserStats = () => {
         let totalAggressiveMoves = 0; // for Archetype (high ACPL/swings but winning)
 
         games.forEach((g, index) => {
-            const isWhite = g.white?.toLowerCase() === heroUser;
+            const heroSide = getHeroSideFromGame(g, activeProfiles);
+            const isWhite = heroSide === 'white';
             const myRating = isWhite ? g.whiteRating : g.blackRating;
             const oppRating = isWhite ? g.blackRating : g.whiteRating;
             const oppName = isWhite ? g.black : g.white;
@@ -151,7 +155,7 @@ export const useUserStats = () => {
             .slice(0, 8);
 
         return {
-            heroUser,
+            heroUser: heroLabel,
             totalGames,
             wins, losses, draws, winRate,
             currentRating,
@@ -172,5 +176,5 @@ export const useUserStats = () => {
             }
         };
 
-    }, []);
+    }, [profileKey]);
 };

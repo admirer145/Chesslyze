@@ -4,6 +4,8 @@ import { db } from '../../services/db';
 import { engine } from '../../services/engine';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { ConfirmModal } from '../common/ConfirmModal';
+import { useHeroProfiles } from '../../hooks/useHeroProfiles';
+import { getHeroDisplayName, isHeroGameForProfiles } from '../../services/heroProfiles';
 
 const ENGINE_PROFILES_KEY = 'engineProfiles';
 const ENGINE_ACTIVE_KEY = 'activeEngineProfileId';
@@ -91,7 +93,8 @@ const getInitialEngineState = () => {
 };
 
 export const Settings = () => {
-    const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
+    const { profiles: heroProfiles, activeProfiles, filterIds, setFilterIds } = useHeroProfiles();
+    const heroLabel = useMemo(() => getHeroDisplayName(activeProfiles), [activeProfiles]);
     const [status, setStatus] = useState(null);
     const [engineInfo, setEngineInfo] = useState(() => engine.getInfo());
     const [boardLight, setBoardLight] = useState(() => localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT);
@@ -210,7 +213,7 @@ export const Settings = () => {
         let analyzing = 0;
         let failed = 0;
         games.forEach((g) => {
-            const isHero = heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser);
+            const isHero = isHeroGameForProfiles(g, activeProfiles);
             if (isHero) heroTotal += 1;
 
             if (g.analysisStatus === 'analyzing') {
@@ -239,18 +242,18 @@ export const Settings = () => {
         const idle = games.length - (analyzed + pending + analyzing + failed + ignored);
 
         return { total: games.length, heroTotal, analyzed, pending, ignored, analyzing, failed, idle };
-    }, [games, heroUser]);
+    }, [games, activeProfiles]);
 
     const analyzeAllCount = useMemo(() => {
         if (!games) return 0;
         let count = 0;
         games.forEach((g) => {
-            const isHero = heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser);
+            const isHero = isHeroGameForProfiles(g, activeProfiles);
             const needsAnalysis = !g.analyzed || g.analysisStatus === 'failed';
             if (isHero && needsAnalysis) count += 1;
         });
         return count;
-    }, [games, heroUser]);
+    }, [games, activeProfiles]);
 
     const handleAnalyzeAll = async () => {
         if (!games) return;
@@ -259,7 +262,7 @@ export const Settings = () => {
             // Only target games that are NOT analyzed OR have failed
             const targetGames = await db.games
                 .filter((g) => {
-                    const isHero = heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser);
+                    const isHero = isHeroGameForProfiles(g, activeProfiles);
                     const needsAnalysis = !g.analyzed || g.analysisStatus === 'failed';
                     return isHero && needsAnalysis;
                 })
@@ -375,6 +378,22 @@ export const Settings = () => {
         setNewProfileName('');
     };
 
+    const toggleProfileFilter = (id) => {
+        if (!id) return;
+        if (!filterIds.length) {
+            setFilterIds([id]);
+            return;
+        }
+        if (filterIds.includes(id)) {
+            const next = filterIds.filter((pid) => pid !== id);
+            setFilterIds(next);
+            return;
+        }
+        setFilterIds([...filterIds, id]);
+    };
+
+    const clearProfileFilter = () => setFilterIds([]);
+
     return (
         <div className="settings-page h-full w-full bg-app p-4 md:p-8 overflow-y-auto">
             <div className="flex flex-col gap-6" style={{ maxWidth: 900, margin: '0 auto' }}>
@@ -383,7 +402,7 @@ export const Settings = () => {
                         <h2 className="text-2xl font-semibold text-primary">Settings</h2>
                         <p className="text-secondary">Manage analysis runs and local data.</p>
                     </div>
-                    <div className="text-s text-muted">Hero: {heroUser || 'Not set'}</div>
+                    <div className="text-s text-muted">Hero: {heroLabel || 'Not set'}</div>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -415,6 +434,40 @@ export const Settings = () => {
                         <div className="text-xs text-muted uppercase tracking-wider mb-1">Failed</div>
                         <div className="text-2xl font-bold text-rose-400">{stats.failed}</div>
                     </div>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Hero Profiles</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Choose which profiles power your hero analytics. Leave it on “All Profiles” for a unified view.
+                    </p>
+                    {heroProfiles.length === 0 ? (
+                        <div className="text-xs text-muted">Connect a Lichess or Chess.com account to add hero profiles.</div>
+                    ) : (
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                className={`pill ${filterIds.length === 0 ? 'pill--active' : ''}`}
+                                onClick={clearProfileFilter}
+                            >
+                                All Profiles
+                            </button>
+                            {heroProfiles.map((profile) => {
+                                const active = filterIds.includes(profile.id);
+                                const label = `${profile.platform === 'chesscom' ? 'Chess.com' : 'Lichess'} · ${profile.displayName || profile.usernameLower}`;
+                                return (
+                                    <button
+                                        key={profile.id}
+                                        type="button"
+                                        className={`pill ${active ? 'pill--active' : ''}`}
+                                        onClick={() => toggleProfileFilter(profile.id)}
+                                    >
+                                        {label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">

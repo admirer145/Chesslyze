@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../services/db';
+import { useHeroProfiles } from './useHeroProfiles';
+import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../services/heroProfiles';
 
 const toDate = (value) => {
     if (!value) return null;
@@ -55,16 +57,14 @@ const getHeroRatingDiff = (g, isWhite) => {
     return null;
 };
 
-const normalizeGame = (g, heroLower) => {
+const normalizeGame = (g, heroProfiles) => {
     if (!g) return null;
     const white = typeof g.white === 'string' ? g.white : g.white?.name || '';
     const black = typeof g.black === 'string' ? g.black : g.black?.name || '';
-    const whiteLower = white.toLowerCase();
-    const blackLower = black.toLowerCase();
-    const isWhite = heroLower && whiteLower === heroLower;
-    const isBlack = heroLower && blackLower === heroLower;
-    if (!isWhite && !isBlack) return null;
+    const heroSide = getHeroSideFromGame(g, heroProfiles);
+    if (!heroSide) return null;
 
+    const isWhite = heroSide === 'white';
     const heroColor = isWhite ? 'white' : 'black';
     const heroRating = isWhite ? (g.whiteRating ?? g.whiteElo) : (g.blackRating ?? g.blackElo);
     const heroRatingDiff = getHeroRatingDiff(g, isWhite);
@@ -166,7 +166,9 @@ const isBotTitle = (title) => normalizeTitle(title) === 'BOT';
 const isBotOpponent = (game) => isBotTitle(game.opponentTitle);
 
 export const useJourneyData = () => {
-    const heroUser = useMemo(() => (localStorage.getItem('heroUser') || '').toLowerCase(), []);
+    const { activeProfiles } = useHeroProfiles();
+    const heroLabel = useMemo(() => getHeroDisplayName(activeProfiles), [activeProfiles]);
+    const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
     const [filters, setFilters] = useState({
         range: 'all',
         perf: 'all',
@@ -178,14 +180,11 @@ export const useJourneyData = () => {
     });
 
     const games = useLiveQuery(async () => {
-        if (!heroUser) return [];
+        if (!activeProfiles.length) return [];
         const all = await db.games.toArray();
-        const heroGames = all.filter((g) => {
-            if (typeof g.isHero === 'boolean') return g.isHero;
-            return g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser;
-        });
-        return heroGames.map((g) => normalizeGame(g, heroUser)).filter(Boolean);
-    }, [heroUser]);
+        const heroGames = all.filter((g) => isHeroGameForProfiles(g, activeProfiles));
+        return heroGames.map((g) => normalizeGame(g, activeProfiles)).filter(Boolean);
+    }, [profileKey]);
 
     const filteredGames = useMemo(() => applyFilters(games || [], filters), [games, filters]);
     const filteredNoPerf = useMemo(() => applyFilters(games || [], filters, { ignore: ['perf'] }), [games, filters]);
@@ -440,7 +439,7 @@ export const useJourneyData = () => {
         const highestRating = Math.max(0, ...filteredGames.map((g) => (typeof g.heroRatingPost === 'number' ? g.heroRatingPost : (g.heroRating || 0))));
         const avgAccuracy = average(analyzedGames.map((g) => g.accuracy).filter((v) => typeof v === 'number'));
         return {
-            heroUser,
+            heroUser: heroLabel,
             totalGames,
             wins,
             draws,
@@ -450,7 +449,7 @@ export const useJourneyData = () => {
             avgAccuracy,
             effectivePerf
         };
-    }, [filteredGames, analyzedGames, effectivePerf, heroUser]);
+    }, [filteredGames, analyzedGames, effectivePerf, heroLabel]);
 
     return {
         filters,

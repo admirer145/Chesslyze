@@ -10,6 +10,8 @@ import { AnalyticsPanel } from './AnalyticsPanel';
 import { AIAnalysisModal } from './AIAnalysisModal';
 import { AIInsightsView } from './AIInsightsView';
 import { Sparkles } from 'lucide-react';
+import { useHeroProfiles } from '../../hooks/useHeroProfiles';
+import { getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
 
 const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
     <div className="flex items-center gap-4 p-3 rounded-md hover:bg-subtle transition-colors cursor-default">
@@ -47,6 +49,8 @@ export const Dashboard = () => {
         white: localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE,
         black: localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK
     }));
+    const { activeProfiles } = useHeroProfiles();
+    const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
 
     useEffect(() => {
         const handleActiveChange = () => {
@@ -89,7 +93,9 @@ export const Dashboard = () => {
 
     const stats = useLiveQuery(async () => {
         const all = await db.games.toArray();
-        if (!all.length) return { total: 0, wins: 0, winRate: 0, accuracy: 0, avgCpLoss: 0, maxStreak: 0, maxSwing: 0 };
+        if (!all.length || !activeProfiles.length) {
+            return { total: 0, wins: 0, winRate: 0, accuracy: 0, avgCpLoss: 0, maxStreak: 0, maxSwing: 0 };
+        }
 
         let wins = 0;
         let totalAccuracy = 0;
@@ -101,15 +107,12 @@ export const Dashboard = () => {
         let bookMoves = 0;
         let bookTotal = 0;
 
-        const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
-        const heroGames = all.filter((g) => {
-            if (typeof g.isHero === 'boolean') return g.isHero;
-            return heroUser && (g.white?.toLowerCase() === heroUser || g.black?.toLowerCase() === heroUser);
-        });
+        const heroGames = all.filter((g) => isHeroGameForProfiles(g, activeProfiles));
 
         heroGames.forEach(g => {
-            const isWhite = heroUser && g.white?.toLowerCase() === heroUser;
-            const isBlack = heroUser && g.black?.toLowerCase() === heroUser;
+            const heroSide = getHeroSideFromGame(g, activeProfiles);
+            const isWhite = heroSide === 'white';
+            const isBlack = heroSide === 'black';
             if (isWhite && g.result === '1-0') wins++;
             if (isBlack && g.result === '0-1') wins++;
 
@@ -189,7 +192,7 @@ export const Dashboard = () => {
         const handler = (e) => setIsMobile(e.matches);
         mq.addEventListener('change', handler);
         return () => mq.removeEventListener('change', handler);
-    }, []);
+    }, [profileKey]);
 
     // Persist active tab
     useEffect(() => {
@@ -485,7 +488,6 @@ export const Dashboard = () => {
         }
     }, [moveIndex, history, startFen]);
 
-    const heroUser = useMemo(() => localStorage.getItem('heroUser'), []);
     const getSafeName = (value) => {
         if (!value) return '?';
         if (typeof value === 'string') return value;
@@ -494,11 +496,10 @@ export const Dashboard = () => {
 
     // Determine orientation: If hero is Black, flip board. Default to White.
     const boardOrientation = useMemo(() => {
-        if (!activeGame || !heroUser) return 'white';
-        // Case insensitive check
-        if (getSafeName(activeGame.black).toLowerCase() === heroUser.toLowerCase()) return 'black';
-        return 'white';
-    }, [activeGame, heroUser]);
+        if (!activeGame || !activeProfiles.length) return 'white';
+        const heroSide = getHeroSideFromGame(activeGame, activeProfiles);
+        return heroSide === 'black' ? 'black' : 'white';
+    }, [activeGame, activeProfiles]);
 
     useEffect(() => {
         // Scroll active move into view

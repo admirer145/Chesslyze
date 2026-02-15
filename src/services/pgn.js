@@ -149,6 +149,9 @@ export const importPgnGames = async (rawPgn, options = {}) => {
             date,
             pgn: chunk,
             pgnHash,
+            platform: 'pgn',
+            sourceGameId: pgnHash,
+            sourceUrl: '',
             isHero: false,
             source: 'pgn',
             importTag: importTag || ''

@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../services/db';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { Chess } from 'chess.js';
 import { parsePGN } from '../../services/pgn';
+import { useHeroProfiles } from '../../hooks/useHeroProfiles';
+import { getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
 
 const fetchMasterGames = async (fen) => {
     const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}`;
@@ -121,17 +123,10 @@ const OpeningDetail = ({ opening }) => {
         }
         return entry;
     }, [opening?.eco]);
-    if (!opening) return (
-        <div className="h-full flex flex-col items-center justify-center text-muted text-center p-8">
-            <BookOpen size={48} className="mb-4 opacity-20" />
-            <p>Select an opening from the list to analyze performance.</p>
-        </div>
-    );
-
-    const total = opening.total || 0;
-    const winRate = total ? Math.round((opening.wins / total) * 100) : 0;
-    const lossRate = total ? Math.round((opening.losses / total) * 100) : 0;
-    const drawRate = total ? Math.round((opening.draws / total) * 100) : 0;
+    const total = opening?.total || 0;
+    const winRate = total ? Math.round(((opening?.wins || 0) / total) * 100) : 0;
+    const lossRate = total ? Math.round(((opening?.losses || 0) / total) * 100) : 0;
+    const drawRate = total ? Math.round(((opening?.draws || 0) / total) * 100) : 0;
 
     const loadMasterGames = async () => {
         if (!opening?.sampleGameId) return;
@@ -273,6 +268,15 @@ const OpeningDetail = ({ opening }) => {
             setMasterGameLoadingId(null);
         }
     };
+
+    if (!opening) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center text-muted text-center p-8">
+                <BookOpen size={48} className="mb-4 opacity-20" />
+                <p>Select an opening from the list to analyze performance.</p>
+            </div>
+        );
+    }
 
     return (
         <div className="p-8 h-full overflow-y-auto w-full">
@@ -497,7 +501,8 @@ const OpeningDetail = ({ opening }) => {
 
 export const OpeningExplorer = () => {
     const SELECTED_ECO_KEY = 'openingExplorerSelectedEco';
-    const heroUser = localStorage.getItem('heroUser') || '';
+    const { activeProfiles } = useHeroProfiles();
+    const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
     const getPlayerName = (player) => {
         if (!player) return '';
         if (typeof player === 'string') return player;
@@ -505,30 +510,26 @@ export const OpeningExplorer = () => {
     };
 
     const openings = useLiveQuery(async () => {
+        if (!activeProfiles.length) return [];
         const allGames = await db.games.toArray();
         const stats = {};
 
         const heroResult = (game) => {
-            if (!heroUser) return null;
-            const whiteName = getPlayerName(game.white).toLowerCase();
-            const blackName = getPlayerName(game.black).toLowerCase();
-            const isWhite = whiteName === heroUser.toLowerCase();
-            const isBlack = blackName === heroUser.toLowerCase();
-            if (!isWhite && !isBlack) return null;
+            const heroSide = getHeroSideFromGame(game, activeProfiles);
+            if (!heroSide) return null;
+            const isWhite = heroSide === 'white';
             if (game.result === '1/2-1/2') return 'draw';
             if (isWhite && game.result === '1-0') return 'win';
             if (isWhite && game.result === '0-1') return 'loss';
-            if (isBlack && game.result === '0-1') return 'win';
-            if (isBlack && game.result === '1-0') return 'loss';
+            if (!isWhite && game.result === '0-1') return 'win';
+            if (!isWhite && game.result === '1-0') return 'loss';
             return null;
         };
 
         allGames.forEach(game => {
             const whiteName = getPlayerName(game.white).toLowerCase();
             const blackName = getPlayerName(game.black).toLowerCase();
-            const isHeroGame = typeof game.isHero === 'boolean'
-                ? game.isHero
-                : (heroUser && (whiteName === heroUser.toLowerCase() || blackName === heroUser.toLowerCase()));
+            const isHeroGame = isHeroGameForProfiles(game, activeProfiles);
             if (!isHeroGame) return;
 
             const name = game.eco || 'Unknown';
@@ -563,7 +564,8 @@ export const OpeningExplorer = () => {
             else if (result === 'draw') opening.draws++;
 
             if (game.accuracy) {
-                const isWhite = heroUser && game.white?.toLowerCase() === heroUser.toLowerCase();
+                const heroSide = getHeroSideFromGame(game, activeProfiles);
+                const isWhite = heroSide === 'white';
                 const accuracy = isWhite ? game.accuracy.white : game.accuracy.black;
                 if (typeof accuracy === 'number') {
                     opening.accuracySum += accuracy;
@@ -584,9 +586,9 @@ export const OpeningExplorer = () => {
 
             if (Array.isArray(game.analysisLog)) {
                 game.analysisLog.forEach(entry => {
-                    if (!heroUser) return;
-                    const isHeroTurn = (entry.turn === 'w' && game.white?.toLowerCase() === heroUser.toLowerCase())
-                        || (entry.turn === 'b' && game.black?.toLowerCase() === heroUser.toLowerCase());
+                    const heroSide = getHeroSideFromGame(game, activeProfiles);
+                    const isHeroTurn = (entry.turn === 'w' && heroSide === 'white')
+                        || (entry.turn === 'b' && heroSide === 'black');
                     if (!isHeroTurn) return;
 
                     if (entry.classification === 'blunder') opening.blunderMoves[entry.ply] = (opening.blunderMoves[entry.ply] || 0) + 1;
@@ -618,7 +620,7 @@ export const OpeningExplorer = () => {
             losingMotif: Object.entries(opening.motifsLoss).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A',
             topGames: opening.topGames.sort((a, b) => b.accuracy - a.accuracy).slice(0, 3)
         })).sort((a, b) => b.total - a.total);
-    });
+    }, [profileKey]);
 
     const [selectedEco, setSelectedEco] = useState(() => {
         if (typeof window === 'undefined') return null;

@@ -130,6 +130,53 @@ db.version(17).stores({
     importProgress: 'username, currentSince, targetUntil, totalImported, lastUpdated, status, mode, failedChunks'
 });
 
+db.version(18).stores({
+    games: '++id, lichessId, pgnHash, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority, rated, variant, whiteTitle, blackTitle, isHero, source, importTag, platform, sourceGameId, sourceUrl, &[platform+sourceGameId]',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt',
+    importProgress: 'username, [platform+usernameLower], platform, usernameLower, currentSince, targetUntil, totalImported, lastUpdated, status, mode, failedChunks, cursor',
+    heroProfiles: '++id, &[platform+usernameLower], platform, usernameLower, displayName, createdAt'
+}).upgrade((tx) => {
+    return tx.table('games').toCollection().modify((g) => {
+        if (!g.platform) {
+            if (g.source) {
+                g.platform = g.source;
+            } else if (g.lichessId) {
+                g.platform = 'lichess';
+            } else if (g.pgnHash) {
+                g.platform = 'pgn';
+            } else {
+                g.platform = 'unknown';
+            }
+        }
+        if (!g.sourceGameId) {
+            if (g.platform === 'lichess' && g.lichessId) g.sourceGameId = g.lichessId;
+            if (g.platform === 'pgn' && g.pgnHash) g.sourceGameId = g.pgnHash;
+        }
+        if (typeof g.sourceUrl !== 'string') g.sourceUrl = '';
+    });
+});
+
+// Safety migration: drop importProgress if a previous schema changed its primary key.
+db.version(19).stores({
+    games: '++id, lichessId, pgnHash, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority, rated, variant, whiteTitle, blackTitle, isHero, source, importTag, platform, sourceGameId, sourceUrl, &[platform+sourceGameId]',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt',
+    importProgress: null,
+    heroProfiles: '++id, &[platform+usernameLower], platform, usernameLower, displayName, createdAt'
+});
+
+db.version(20).stores({
+    games: '++id, lichessId, pgnHash, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority, rated, variant, whiteTitle, blackTitle, isHero, source, importTag, platform, sourceGameId, sourceUrl, &[platform+sourceGameId]',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt',
+    importProgress: 'username, [platform+usernameLower], platform, usernameLower, currentSince, targetUntil, totalImported, lastUpdated, status, mode, failedChunks, cursor',
+    heroProfiles: '++id, &[platform+usernameLower], platform, usernameLower, displayName, createdAt'
+});
+
 export const saveAIAnalysis = async (gameId, analysisData, promptVersion = '1.0') => {
     const existing = await db.ai_analyses.where('gameId').equals(gameId).first();
     const record = {
@@ -187,19 +234,43 @@ export const backfillTitlesFromPgn = async () => {
     }
 };
 
-export const bulkUpsertGames = async (games) => {
-    // We use lichessId as the unique key to check for duplicates
-    // Since we want to update if it exists or add if not, bulkPut is suitable if the PK is lichessId,
-    // but here ++id is the primary key. So we should probably check existence.
-    // However, if we trust lichessId to be unique enough, we can use it.
-    // Let's implement a manual upsert since lichessId is indexed but not the PK.
-    const gameIds = games.map(g => g.lichessId).filter(Boolean);
-    const existing = await db.games.where('lichessId').anyOf(gameIds).toArray();
-    const existingIdsMap = new Map(existing.map(g => [g.lichessId, g.id]));
+const inferPlatform = (g) => {
+    if (!g) return 'unknown';
+    const raw = g.platform || g.source || (g.lichessId ? 'lichess' : '') || (g.pgnHash ? 'pgn' : '');
+    return (raw || 'unknown').toLowerCase();
+};
 
-    const toPut = games.map(g => {
-        if (g.lichessId && existingIdsMap.has(g.lichessId)) {
-            return { ...g, id: existingIdsMap.get(g.lichessId) };
+export const bulkUpsertGames = async (games) => {
+    const normalizedGames = games.map((g) => {
+        if (!g) return g;
+        const next = { ...g };
+        if (!next.platform) {
+            if (next.source) next.platform = next.source;
+            else if (next.lichessId) next.platform = 'lichess';
+            else if (next.pgnHash) next.platform = 'pgn';
+        }
+        if (!next.sourceGameId) {
+            if (next.platform === 'lichess' && next.lichessId) next.sourceGameId = next.lichessId;
+            if (next.platform === 'pgn' && next.pgnHash) next.sourceGameId = next.pgnHash;
+        }
+        return next;
+    });
+
+    const keys = normalizedGames
+        .map(g => (g?.platform && g?.sourceGameId ? [g.platform, g.sourceGameId] : null))
+        .filter(Boolean);
+
+    const existing = keys.length
+        ? await db.games.where('[platform+sourceGameId]').anyOf(keys).toArray()
+        : [];
+    const existingIdsMap = new Map(existing.map(g => [`${g.platform}::${g.sourceGameId}`, g.id]));
+
+    const toPut = normalizedGames.map(g => {
+        if (g?.platform && g?.sourceGameId) {
+            const key = `${g.platform}::${g.sourceGameId}`;
+            if (existingIdsMap.has(key)) {
+                return { ...g, id: existingIdsMap.get(key) };
+            }
         }
         return g;
     });
@@ -207,12 +278,16 @@ export const bulkUpsertGames = async (games) => {
     return await db.games.bulkPut(toPut);
 };
 
-export const getLatestGameTimestamp = async (username) => {
+export const getLatestGameTimestampForProfile = async (platform, username) => {
+    if (!platform || !username) return 0;
+    const lowerUser = username.toLowerCase();
+    const targetPlatform = platform.toLowerCase();
     const latest = await db.games
         .filter(g => {
-            if (typeof g.isHero === 'boolean') return g.isHero;
-            const isHero = username && (g.white?.toLowerCase() === username.toLowerCase() || g.black?.toLowerCase() === username.toLowerCase());
-            return !!isHero;
+            const gamePlatform = inferPlatform(g);
+            if (gamePlatform !== targetPlatform) return false;
+            const isHero = g.white?.toLowerCase() === lowerUser || g.black?.toLowerCase() === lowerUser;
+            return isHero;
         })
         .reverse()
         .sortBy('timestamp');
@@ -220,12 +295,14 @@ export const getLatestGameTimestamp = async (username) => {
     return latest.length > 0 ? latest[0].timestamp : 0;
 };
 
-// Count distinct days with activity for a username within a timestamp range
-export const getDistinctGameDaysInRange = async (username, since, until) => {
+// Count distinct days with activity for a profile within a timestamp range
+export const getDistinctGameDaysInRange = async (platform, username, since, until) => {
     const lowerUser = username.toLowerCase();
+    const targetPlatform = platform.toLowerCase();
     const games = await db.games
         .filter(g => {
-            if (g.source !== 'lichess') return false;
+            const gamePlatform = inferPlatform(g);
+            if (gamePlatform !== targetPlatform) return false;
             if (g.timestamp < since || g.timestamp >= until) return false;
             const isHero = g.white?.toLowerCase() === lowerUser || g.black?.toLowerCase() === lowerUser;
             return isHero;
@@ -241,21 +318,48 @@ export const getGame = async (id) => {
 };
 
 // Import Progress Management
-export const saveImportProgress = async (username, progress) => {
+const buildImportProgressKey = (platform, usernameLower) => `${platform}:${usernameLower}`;
+
+export const saveImportProgress = async (platform, username, progress) => {
+    const usernameLower = username.toLowerCase();
+    const safePlatform = platform.toLowerCase();
     await db.importProgress.put({
-        username: username.toLowerCase(),
+        username: buildImportProgressKey(safePlatform, usernameLower),
+        platform: safePlatform,
+        usernameLower,
         currentSince: progress.currentSince,
         targetUntil: progress.targetUntil,
         totalImported: progress.totalImported || 0,
         lastUpdated: Date.now(),
         status: progress.status, // 'in-progress', 'paused', 'completed', 'failed'
         mode: progress.mode || 'smart',
-        failedChunks: JSON.stringify(progress.failedChunks || [])
+        failedChunks: JSON.stringify(progress.failedChunks || []),
+        cursor: typeof progress.cursor === 'number' ? progress.cursor : null
     });
 };
 
-export const loadImportProgress = async (username) => {
-    const progress = await db.importProgress.get(username.toLowerCase());
+export const loadImportProgress = async (platform, username) => {
+    if (!platform || !username) return null;
+    const usernameLower = username.toLowerCase();
+    const safePlatform = platform.toLowerCase();
+    const key = buildImportProgressKey(safePlatform, usernameLower);
+    let progress = await db.importProgress.get(key);
+
+    // Fallback for legacy (v17) lichess imports
+    if (!progress && safePlatform === 'lichess') {
+        const legacy = await db.importProgress.get(usernameLower);
+        if (legacy) {
+            progress = {
+                ...legacy,
+                username: key,
+                platform: safePlatform,
+                usernameLower
+            };
+            await db.importProgress.delete(usernameLower);
+            await db.importProgress.put(progress);
+        }
+    }
+
     if (progress && progress.failedChunks) {
         try {
             progress.failedChunks = JSON.parse(progress.failedChunks);
@@ -266,6 +370,9 @@ export const loadImportProgress = async (username) => {
     return progress;
 };
 
-export const clearImportProgress = async (username) => {
-    await db.importProgress.delete(username.toLowerCase());
+export const clearImportProgress = async (platform, username) => {
+    if (!platform || !username) return;
+    const usernameLower = username.toLowerCase();
+    const safePlatform = platform.toLowerCase();
+    await db.importProgress.delete(buildImportProgressKey(safePlatform, usernameLower));
 };
