@@ -1015,8 +1015,6 @@ a {
 
 .board-badge {
   position: absolute;
-  width: 26px;
-  height: 26px;
   border-radius: 999px;
   display: flex;
   align-items: center;
@@ -1029,6 +1027,7 @@ a {
   box-shadow: 0 6px 14px rgba(2, 6, 23, 0.45);
   pointer-events: none;
   transform: translateZ(0);
+  line-height: 1;
 }
 
 .reel-header {
@@ -5470,7 +5469,9 @@ a {
   .dashboard-board-area {
     padding: 8px 4px 12px;
   }
+
 }
+
 
 /* --- Import Page Mobile --- */
 @media (max-width: 768px) {

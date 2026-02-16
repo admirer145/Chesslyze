@@ -172,7 +172,7 @@ export const Dashboard = () => {
     const [activeTab, setActiveTab] = useState('moves'); // 'moves' | 'analysis'
     const [hoverArrow, setHoverArrow] = useState(null); // { from, to }
     const [previewFen, setPreviewFen] = useState(null);
-    const [badgeStyle, setBadgeStyle] = useState(null); // { left, top }
+    const [badgeStyle, setBadgeStyle] = useState(null); // { left, top, size, fontSize }
     const [lastMoveRects, setLastMoveRects] = useState(null);
     const [kingResultBadges, setKingResultBadges] = useState(null);
     const [rightPanelOpen, setRightPanelOpen] = useState(() => {
@@ -862,9 +862,14 @@ export const Dashboard = () => {
             if (el) {
                 const rootRect = root.getBoundingClientRect();
                 const rect = el.getBoundingClientRect();
+                const size = Math.max(16, Math.min(22, Math.round(rect.width * 0.32)));
+                const inset = Math.max(1, Math.round(size * 0.12));
+                const fontSize = Math.max(9, Math.round(size * 0.5));
                 setBadgeStyle({
-                    left: Math.round(rect.left - rootRect.left + rect.width - 26 + 2),
-                    top: Math.round(rect.top - rootRect.top + 2)
+                    left: Math.round(rect.left - rootRect.left + rect.width - size - inset),
+                    top: Math.round(rect.top - rootRect.top + inset),
+                    size,
+                    fontSize
                 });
                 return;
             }
@@ -874,6 +879,9 @@ export const Dashboard = () => {
         const file = square.charCodeAt(0) - 97;
         const rank = parseInt(square[1], 10) - 1;
         const size = (boardWidth || 500) / 8;
+        const badgeSize = Math.max(16, Math.min(22, Math.round(size * 0.32)));
+        const inset = Math.max(1, Math.round(badgeSize * 0.12));
+        const fontSize = Math.max(9, Math.round(badgeSize * 0.5));
 
         let x = file;
         let y = 7 - rank;
@@ -882,8 +890,10 @@ export const Dashboard = () => {
             y = rank;
         }
         setBadgeStyle({
-            left: Math.round(x * size + size - 26 + 2),
-            top: Math.round(y * size + 2)
+            left: Math.round(x * size + size - badgeSize - inset),
+            top: Math.round(y * size + inset),
+            size: badgeSize,
+            fontSize
         });
     }, [classificationBadge, history, moveIndex, boardWidth, boardOrientation, previewFen]);
 
@@ -1030,7 +1040,13 @@ export const Dashboard = () => {
                                     {badgeStyle && classificationBadge && (
                                         <div
                                             className={`board-badge badge-${classificationBadge.tone}`}
-                                            style={{ left: badgeStyle.left, top: badgeStyle.top }}
+                                            style={{
+                                                left: badgeStyle.left,
+                                                top: badgeStyle.top,
+                                                width: badgeStyle.size,
+                                                height: badgeStyle.size,
+                                                fontSize: badgeStyle.fontSize
+                                            }}
                                         >
                                             {classificationBadge.label}
                                         </div>

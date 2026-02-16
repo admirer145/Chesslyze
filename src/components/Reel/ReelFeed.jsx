@@ -189,8 +189,12 @@ const DEFAULT_FLASH_WHITE = '#D9C64A';
 const DEFAULT_FLASH_BLACK = '#D9C64A';
 
 const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLine, gameOverride, compact = false, onRevealChange }) => {
-    const BADGE_SIZE = 26;
-    const BADGE_INSET = 2;
+    const computeBadgeMetrics = (squareSize) => {
+        const size = Math.max(16, Math.min(22, Math.round(squareSize * 0.32)));
+        const inset = Math.max(1, Math.round(size * 0.12));
+        const fontSize = Math.max(9, Math.round(size * 0.5));
+        return { size, inset, fontSize };
+    };
     const PIECE_ANIMATION_MS = 300;
 
     const [showSolution, setShowSolution] = useState(false);
@@ -324,9 +328,12 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
             if (el) {
                 const rootRect = root.getBoundingClientRect();
                 const rect = el.getBoundingClientRect();
+                const { size, inset, fontSize } = computeBadgeMetrics(rect.width);
                 return {
-                    left: Math.round(rect.left - rootRect.left + rect.width - BADGE_SIZE + BADGE_INSET),
-                    top: Math.round(rect.top - rootRect.top + BADGE_INSET)
+                    left: Math.round(rect.left - rootRect.left + rect.width - size - inset),
+                    top: Math.round(rect.top - rootRect.top + inset),
+                    size,
+                    fontSize
                 };
             }
         }
@@ -336,6 +343,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         const rank = parseInt(square[1], 10) - 1;
         if (Number.isNaN(file) || Number.isNaN(rank)) return null;
         const size = boardSize / 8;
+        const { size: badgeSize, inset, fontSize } = computeBadgeMetrics(size);
         let x = file;
         let y = 7 - rank;
         if (!isHeroWhite) {
@@ -343,8 +351,10 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
             y = rank;
         }
         return {
-            left: Math.round(x * size + size - BADGE_SIZE + BADGE_INSET),
-            top: Math.round(y * size + BADGE_INSET)
+            left: Math.round(x * size + size - badgeSize - inset),
+            top: Math.round(y * size + inset),
+            size: badgeSize,
+            fontSize
         };
     };
 
@@ -868,7 +878,13 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
                         {badgesReady && classificationBadge && blunderBadgeStyle && (stage === 'intro' || !heroMoved) && (
                             <div
                                 className={`board-badge badge-${classificationBadge.tone}`}
-                                style={{ left: blunderBadgeStyle.left, top: blunderBadgeStyle.top }}
+                                style={{
+                                    left: blunderBadgeStyle.left,
+                                    top: blunderBadgeStyle.top,
+                                    width: blunderBadgeStyle.size,
+                                    height: blunderBadgeStyle.size,
+                                    fontSize: blunderBadgeStyle.fontSize
+                                }}
                             >
                                 {classificationBadge.label}
                             </div>
@@ -876,7 +892,13 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
                         {badgesReady && showSolution && solutionBadge && solutionBadgeStyle && (
                             <div
                                 className={`board-badge badge-${solutionBadge.tone}`}
-                                style={{ left: solutionBadgeStyle.left, top: solutionBadgeStyle.top }}
+                                style={{
+                                    left: solutionBadgeStyle.left,
+                                    top: solutionBadgeStyle.top,
+                                    width: solutionBadgeStyle.size,
+                                    height: solutionBadgeStyle.size,
+                                    fontSize: solutionBadgeStyle.fontSize
+                                }}
                             >
                                 {solutionBadge.label}
                             </div>
