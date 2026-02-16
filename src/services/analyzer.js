@@ -1,4 +1,5 @@
 import { db } from './db';
+import { storePuzzlePositions } from './puzzles';
 import { getHeroProfiles, getHeroSideFromGame } from './heroProfiles';
 import { engine } from './engine';
 import { Chess } from 'chess.js';
@@ -1045,7 +1046,7 @@ export const processGame = async (gameId) => {
         // Save partial analysis if we have any, so Dashboard can still show openings and some lines.
         if (analysisLog.length > 0) {
             try {
-                if (reelPositions.length > 0) await db.positions.bulkAdd(reelPositions);
+                await storePuzzlePositions(reelPositions);
             } catch {
                 // ignore
             }
@@ -1064,9 +1065,7 @@ export const processGame = async (gameId) => {
     }
 
     // Save Reel Positions
-    if (reelPositions.length > 0) {
-        await db.positions.bulkAdd(reelPositions);
-    }
+    await storePuzzlePositions(reelPositions);
 
     // Save Game Analytics
     await db.games.update(gameId, {
