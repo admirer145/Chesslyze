@@ -1667,6 +1667,84 @@ a {
   }
 }
 
+@media (max-width: 640px) {
+  .puzzle-main {
+    padding: 12px;
+    gap: 14px;
+  }
+
+  .puzzle-stage {
+    gap: 12px;
+  }
+
+  .puzzle-board {
+    padding: 0;
+    gap: 10px;
+  }
+
+  .reel-card {
+    max-width: 100% !important;
+    padding: 12px !important;
+  }
+
+  .reel-header {
+    padding: 8px 10px;
+    margin-bottom: 10px;
+  }
+
+  .reel-header__line1 {
+    font-size: 12px;
+    gap: 6px;
+  }
+
+  .reel-header__line2 {
+    font-size: 11px;
+  }
+
+  .reel-player-line .player-name {
+    font-size: 14px;
+  }
+
+  .reel-player-line .player-rating {
+    font-size: 11px;
+  }
+
+  .reel-board {
+    margin-bottom: 8px;
+  }
+
+  .puzzle-shell .text-lg {
+    font-size: 16px;
+  }
+
+  .puzzle-shell .text-sm {
+    font-size: 13px;
+  }
+
+  .puzzle-shell .text-xs {
+    font-size: 11px;
+  }
+
+  .puzzle-title {
+    font-size: 22px;
+  }
+
+  .puzzle-subtitle {
+    font-size: 12px;
+  }
+
+  .puzzle-header__actions {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .puzzle-header__actions .btn {
+    flex: 1;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+}
+
 @media (max-width: 768px) {
   .puzzle-stage {
     grid-template-columns: 1fr;
@@ -2359,11 +2437,13 @@ a {
 .board-color-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 220px;
+  grid-template-areas: "controls preview";
   gap: 16px;
   align-items: start;
 }
 
 .board-color-controls {
+  grid-area: controls;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2377,6 +2457,7 @@ a {
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(15, 23, 42, 0.5);
+  cursor: pointer;
 }
 
 .board-color-row {
@@ -2396,6 +2477,7 @@ a {
 }
 
 .board-preview {
+  grid-area: preview;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 4px;
@@ -5500,6 +5582,28 @@ a {
 @media (max-width: 768px) {
   .settings-page {
     padding: 16px 12px;
+  }
+
+  .board-color-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas: "preview" "controls";
+  }
+
+  .board-color-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .board-preview {
+    width: 100%;
+    max-width: 360px;
+    justify-self: start;
+  }
+
+  .board-preview__cell {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
   }
 }
 

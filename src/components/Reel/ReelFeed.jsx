@@ -6,6 +6,7 @@ import { ArrowRight, Eye, CheckCircle, XCircle, Bookmark } from 'lucide-react';
 import { Chess } from 'chess.js';
 import { useNavigate } from 'react-router-dom';
 import { useHeroProfiles } from '../../hooks/useHeroProfiles';
+import { DEFAULT_PUZZLE_LIMIT, getPuzzleGenerationEnabled, setPuzzleGenerationEnabled, subscribePuzzleGeneration } from '../../services/puzzles';
 import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
 
 const MOVE_BADGE_MAP = {
@@ -119,7 +120,7 @@ const deriveLessonRule = (position) => {
 
 const TACTICAL_MOTIFS = new Set(['fork', 'pin', 'skewer', 'sacrifice']);
 
-const deriveCategories = ({ classification, motifs = [], phase, missedWin, missedDefense, heroMoved }) => {
+const deriveCategories = ({ classification, motifs = [], phase, heroMoved }) => {
     const categories = new Set();
     if (phase === 'opening') categories.add('opening');
     if (phase === 'endgame') categories.add('endgame');
@@ -129,8 +130,6 @@ const deriveCategories = ({ classification, motifs = [], phase, missedWin, misse
     if (heroMoved && ['blunder', 'mistake', 'inaccuracy'].includes(classification)) categories.add('my_blunder');
     if (!heroMoved && ['blunder', 'mistake', 'inaccuracy'].includes(classification)) categories.add('punish');
     if (heroMoved && ['brilliant', 'great'].includes(classification)) categories.add('brilliant');
-    if (heroMoved && missedWin) categories.add('winning_move');
-    if (heroMoved && missedDefense) categories.add('defense');
     return Array.from(categories);
 };
 
@@ -806,7 +805,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         <div className="w-full h-full flex flex-col items-center justify-center relative p-6" style={{ scrollSnapAlign: 'start' }}>
 
             <div
-                className={`bg-panel border rounded-xl shadow-lg w-full relative ${compact ? 'p-4' : 'p-6'}`}
+                className={`reel-card bg-panel border rounded-xl shadow-lg w-full relative ${compact ? 'p-4' : 'p-6'}`}
                 style={{
                     maxWidth: compact ? 720 : 620,
                     width: '100%'
@@ -846,18 +845,18 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
                         </div>
 
                         {/* Opponent (Top) */}
-                        <div className="flex justify-between items-end px-1 mb-1">
+                        <div className="reel-player-line reel-player-line--top flex justify-between items-end px-1 mb-1">
                             <div className="flex items-baseline gap-2 text-secondary">
                                 {topPlayer.title && <span className="title-badge">{topPlayer.title}</span>}
-                                <span className="font-semibold">{topPlayer.name}</span>
-                                <span className="text-sm font-light">({topPlayer.rating})</span>
+                                <span className="player-name font-semibold">{topPlayer.name}</span>
+                                <span className="player-rating text-sm font-light">({topPlayer.rating})</span>
                             </div>
                         </div>
                     </>
                 )}
 
                 {/* Board */}
-                <div className="w-full rounded overflow-hidden mb-2 border bg-subtle relative">
+                <div className="reel-board w-full rounded overflow-hidden mb-2 border bg-subtle relative">
                     <div style={{ paddingBottom: '100%' }}></div>
                     <div className="absolute inset-0" ref={boardRef}>
                                 <Chessboard
@@ -920,11 +919,11 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
 
                 <div>
                     {!compact && (
-                        <div className="flex justify-between items-start px-1 mb-4">
+                        <div className="reel-player-line reel-player-line--bottom flex justify-between items-start px-1 mb-4">
                             <div className="flex items-baseline gap-2 text-primary">
                                 {bottomPlayer.title && <span className="title-badge">{bottomPlayer.title}</span>}
-                                <span className="font-bold text-lg">{bottomPlayer.name}</span>
-                                <span className="text-sm font-light">({bottomPlayer.rating})</span>
+                                <span className="player-name font-bold text-lg">{bottomPlayer.name}</span>
+                                <span className="player-rating text-sm font-light">({bottomPlayer.rating})</span>
                             </div>
                             <button
                                 onClick={toggleReview}
@@ -1035,6 +1034,7 @@ export const ReelFeed = () => {
     const [heldPuzzle, setHeldPuzzle] = useState(null);
     const [puzzleLocked, setPuzzleLocked] = useState(false);
     const [positionsCache, setPositionsCache] = useState(null);
+    const [puzzleGenerationEnabled, setPuzzleGenerationEnabledState] = useState(() => getPuzzleGenerationEnabled());
     // removed left-panel search and resize controls
     const [recentIds, setRecentIds] = useState(() => {
         try {
@@ -1048,6 +1048,17 @@ export const ReelFeed = () => {
     const [deck, setDeck] = useState([]);
     const { activeProfiles } = useHeroProfiles();
     const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
+
+    useEffect(() => {
+        const handler = (e) => {
+            if (typeof e?.detail === 'boolean') {
+                setPuzzleGenerationEnabledState(e.detail);
+            } else {
+                setPuzzleGenerationEnabledState(getPuzzleGenerationEnabled());
+            }
+        };
+        return subscribePuzzleGeneration(handler);
+    }, []);
 
     // Complex query: Join positions with games to filter by Hero's turn
     const positions = useLiveQuery(async () => {
@@ -1099,8 +1110,6 @@ export const ReelFeed = () => {
                     classification: pos.classification,
                     motifs: pos.motifs || [],
                     phase: pos.phase,
-                    missedWin: pos.missedWin,
-                    missedDefense: pos.missedDefense,
                     heroMoved
                 });
 
@@ -1190,8 +1199,6 @@ export const ReelFeed = () => {
         if (mode === 'my_blunder') return pos.categories?.includes('my_blunder');
         if (mode === 'punish') return pos.categories?.includes('punish');
         if (mode === 'brilliant') return pos.categories?.includes('brilliant');
-        if (mode === 'winning_move') return pos.categories?.includes('winning_move');
-        if (mode === 'defense') return pos.categories?.includes('defense');
         return true;
     };
 
@@ -1271,9 +1278,7 @@ export const ReelFeed = () => {
         opening: activePositions.filter((p) => p.categories?.includes('opening')).length,
         my_blunder: activePositions.filter((p) => p.categories?.includes('my_blunder')).length,
         punish: activePositions.filter((p) => p.categories?.includes('punish')).length,
-        brilliant: activePositions.filter((p) => p.categories?.includes('brilliant')).length,
-        winning_move: activePositions.filter((p) => p.categories?.includes('winning_move')).length,
-        defense: activePositions.filter((p) => p.categories?.includes('defense')).length
+        brilliant: activePositions.filter((p) => p.categories?.includes('brilliant')).length
     };
 
     useEffect(() => {
@@ -1466,7 +1471,24 @@ export const ReelFeed = () => {
                                     <div className="puzzle-empty__icon">
                                         <CheckCircle size={32} />
                                     </div>
-                                    {noData && (
+                                    {noData && !puzzleGenerationEnabled && (
+                                        <>
+                                            <p className="text-lg text-primary mb-2">Puzzle generation is off.</p>
+                                            <p className="text-sm">
+                                                Turn it on to create smart puzzles while you analyze games. We keep up to {DEFAULT_PUZZLE_LIMIT.toLocaleString()} puzzles and auto-remove low-priority older ones.
+                                            </p>
+                                            <button
+                                                className="mt-4 btn btn-primary"
+                                                onClick={() => {
+                                                    setPuzzleGenerationEnabled(true);
+                                                    setPuzzleGenerationEnabledState(true);
+                                                }}
+                                            >
+                                                Enable Puzzle Generation
+                                            </button>
+                                        </>
+                                    )}
+                                    {noData && puzzleGenerationEnabled && (
                                         <>
                                             <p className="text-lg text-primary mb-2">No puzzles yet.</p>
                                             <p className="text-sm">Import and analyze games to generate lessons.</p>
@@ -1529,6 +1551,27 @@ export const ReelFeed = () => {
                         </div>
 
                         <div className="puzzle-panel__section">
+                            <div className="puzzle-panel__title">Puzzle Generation</div>
+                            <div className="p-3 rounded-lg border border-white/5 bg-subtle/40">
+                                <p className="text-xs text-secondary mb-3">
+                                    {puzzleGenerationEnabled
+                                        ? `New puzzles are generated during analysis. Storage is capped at ${DEFAULT_PUZZLE_LIMIT.toLocaleString()} puzzles (older low-priority ones are removed first).`
+                                        : 'New puzzle generation is paused. You can still solve existing puzzles.'}
+                                </p>
+                                <button
+                                    className={`btn ${puzzleGenerationEnabled ? 'btn-secondary' : 'btn-primary'} w-full`}
+                                    onClick={() => {
+                                        const next = !puzzleGenerationEnabled;
+                                        setPuzzleGenerationEnabled(next);
+                                        setPuzzleGenerationEnabledState(next);
+                                    }}
+                                >
+                                    {puzzleGenerationEnabled ? 'Pause Puzzle Generation' : 'Enable Puzzle Generation'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="puzzle-panel__section">
                             <div className="puzzle-panel__title">Feed Source</div>
                             <div className="puzzle-button-list">
                                 {[
@@ -1557,9 +1600,7 @@ export const ReelFeed = () => {
                                     { id: 'opening', label: 'Opening', count: focusCounts.opening },
                                     { id: 'my_blunder', label: 'Fix My Blunders', count: focusCounts.my_blunder },
                                     { id: 'punish', label: 'Punish Opponent', count: focusCounts.punish },
-                                    { id: 'brilliant', label: 'Brilliant Ideas', count: focusCounts.brilliant },
-                                    { id: 'winning_move', label: 'Only Winning Move', count: focusCounts.winning_move },
-                                    { id: 'defense', label: 'Best Defense', count: focusCounts.defense }
+                                    { id: 'brilliant', label: 'Brilliant Ideas', count: focusCounts.brilliant }
                                 ].map((opt) => (
                                     <button
                                         key={opt.id}

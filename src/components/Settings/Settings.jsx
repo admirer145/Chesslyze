@@ -105,8 +105,8 @@ export const Settings = () => {
     const [profiles, setProfiles] = useState(initialEngineState.profiles);
     const [activeProfileId, setActiveProfileId] = useState(initialEngineState.activeId);
     const [newProfileName, setNewProfileName] = useState('');
-    const [confirmAnalyzeAllOpen, setConfirmAnalyzeAllOpen] = useState(false);
     const [confirmStopOpen, setConfirmStopOpen] = useState(false);
+    const [confirmClearAnalysisOpen, setConfirmClearAnalysisOpen] = useState(false);
     const [confirmDeleteProfileOpen, setConfirmDeleteProfileOpen] = useState(false);
 
     // Get system thread count
@@ -244,40 +244,6 @@ export const Settings = () => {
         return { total: games.length, heroTotal, analyzed, pending, ignored, analyzing, failed, idle };
     }, [games, activeProfiles]);
 
-    const analyzeAllCount = useMemo(() => {
-        if (!games) return 0;
-        let count = 0;
-        games.forEach((g) => {
-            const isHero = isHeroGameForProfiles(g, activeProfiles);
-            const needsAnalysis = !g.analyzed || g.analysisStatus === 'failed';
-            if (isHero && needsAnalysis) count += 1;
-        });
-        return count;
-    }, [games, activeProfiles]);
-
-    const handleAnalyzeAll = async () => {
-        if (!games) return;
-        setStatus({ type: 'loading', message: 'Queueing analysis for unanalyzed games...' });
-        try {
-            // Only target games that are NOT analyzed OR have failed
-            const targetGames = await db.games
-                .filter((g) => {
-                    const isHero = isHeroGameForProfiles(g, activeProfiles);
-                    const needsAnalysis = !g.analyzed || g.analysisStatus === 'failed';
-                    return isHero && needsAnalysis;
-                })
-                .modify({
-                    analysisStatus: 'pending',
-                    priority: 1 // Low priority for bulk analysis
-                });
-
-            setStatus({ type: 'success', message: `Queued ${targetGames} games for analysis.` });
-        } catch (err) {
-            console.error(err);
-            setStatus({ type: 'error', message: 'Failed to queue analysis.' });
-        }
-    };
-
     const handleStopAnalysis = async () => {
         setStatus({ type: 'loading', message: 'Stopping analysis...' });
         try {
@@ -304,6 +270,38 @@ export const Settings = () => {
         } catch (err) {
             console.error(err);
             setStatus({ type: 'error', message: 'Failed to stop analysis.' });
+        }
+    };
+
+    const handleClearAnalysis = async () => {
+        setStatus({ type: 'loading', message: 'Clearing analysis data...' });
+        try {
+            engine.stop();
+            engine.terminate();
+
+            await db.transaction('rw', db.games, db.positions, db.ai_analyses, async () => {
+                await db.positions.clear();
+                await db.ai_analyses.clear();
+                await db.games.toCollection().modify((g) => {
+                    g.analyzed = false;
+                    g.analysisStatus = null;
+                    g.analysisStartedAt = null;
+                    g.analysisHeartbeatAt = null;
+                    g.analysisProgress = null;
+                    g.analyzedAt = null;
+                    g.analysisLog = [];
+                    g.accuracy = null;
+                    g.avgCpLoss = null;
+                    g.maxAccuracyStreak = null;
+                    g.maxEvalSwing = null;
+                    g.analysisRetryCount = null;
+                });
+            });
+
+            setStatus({ type: 'success', message: 'All analysis data cleared. Games are back to idle.' });
+        } catch (err) {
+            console.error(err);
+            setStatus({ type: 'error', message: 'Failed to clear analysis data.' });
         }
     };
 
@@ -471,12 +469,12 @@ export const Settings = () => {
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Analyze All Games</h3>
+                    <h3 className="text-sm font-semibold text-primary mb-3">Stop Analysis</h3>
                     <p className="text-sm text-secondary mb-4">
-                        Queue analysis for all games that haven't been analyzed yet. Already analyzed games will be skipped.
+                        Halts the engine and clears any queued games. Already running analysis may finish its current move.
                     </p>
-                    <button className="btn btn-primary" onClick={() => setConfirmAnalyzeAllOpen(true)} disabled={analyzeAllCount === 0}>
-                        Analyze All (Unanalyzed)
+                    <button className="btn btn-secondary" onClick={() => setConfirmStopOpen(true)}>
+                        Stop Analysis
                     </button>
 
                     {status && (
@@ -489,12 +487,12 @@ export const Settings = () => {
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
-                    <h3 className="text-sm font-semibold text-primary mb-3">Stop Analysis</h3>
+                    <h3 className="text-sm font-semibold text-primary mb-3">Clear Analysis Data</h3>
                     <p className="text-sm text-secondary mb-4">
-                        Halts the engine and clears any queued games. Already running analysis may finish its current move.
+                        Removes all analysis results and smart puzzles from this device. Games return to idle state and can be re-analyzed later.
                     </p>
-                    <button className="btn btn-secondary" onClick={() => setConfirmStopOpen(true)}>
-                        Stop Analysis
+                    <button className="btn btn-secondary" onClick={() => setConfirmClearAnalysisOpen(true)}>
+                        Clear Analysis
                     </button>
                 </div>
 
@@ -505,10 +503,11 @@ export const Settings = () => {
                     </p>
                     <div className="board-color-grid">
                         <div className="board-color-controls">
-                            <div className="board-color-card">
-                                <label className="text-xs text-muted uppercase tracking-wider">Light Square</label>
+                            <label className="board-color-card">
+                                <span className="text-xs text-muted uppercase tracking-wider">Light Square</span>
                                 <div className="board-color-row">
                                     <input
+                                        id="board-light"
                                         type="color"
                                         value={boardLight}
                                         onChange={(e) => setBoardLight(e.target.value)}
@@ -516,11 +515,12 @@ export const Settings = () => {
                                     />
                                     <span className="text-sm text-primary">{boardLight.toUpperCase()}</span>
                                 </div>
-                            </div>
-                            <div className="board-color-card">
-                                <label className="text-xs text-muted uppercase tracking-wider">Dark Square</label>
+                            </label>
+                            <label className="board-color-card">
+                                <span className="text-xs text-muted uppercase tracking-wider">Dark Square</span>
                                 <div className="board-color-row">
                                     <input
+                                        id="board-dark"
                                         type="color"
                                         value={boardDark}
                                         onChange={(e) => setBoardDark(e.target.value)}
@@ -528,11 +528,12 @@ export const Settings = () => {
                                     />
                                     <span className="text-sm text-primary">{boardDark.toUpperCase()}</span>
                                 </div>
-                            </div>
-                            <div className="board-color-card">
-                                <label className="text-xs text-muted uppercase tracking-wider">White Move Flash</label>
+                            </label>
+                            <label className="board-color-card">
+                                <span className="text-xs text-muted uppercase tracking-wider">White Move Flash</span>
                                 <div className="board-color-row">
                                     <input
+                                        id="board-flash-white"
                                         type="color"
                                         value={flashWhite}
                                         onChange={(e) => setFlashWhite(e.target.value)}
@@ -540,11 +541,12 @@ export const Settings = () => {
                                     />
                                     <span className="text-sm text-primary">{flashWhite.toUpperCase()}</span>
                                 </div>
-                            </div>
-                            <div className="board-color-card">
-                                <label className="text-xs text-muted uppercase tracking-wider">Black Move Flash</label>
+                            </label>
+                            <label className="board-color-card">
+                                <span className="text-xs text-muted uppercase tracking-wider">Black Move Flash</span>
                                 <div className="board-color-row">
                                     <input
+                                        id="board-flash-black"
                                         type="color"
                                         value={flashBlack}
                                         onChange={(e) => setFlashBlack(e.target.value)}
@@ -552,7 +554,7 @@ export const Settings = () => {
                                     />
                                     <span className="text-sm text-primary">{flashBlack.toUpperCase()}</span>
                                 </div>
-                            </div>
+                            </label>
                         </div>
                         <div className="board-preview board-preview--large">
                             {Array.from({ length: 16 }).map((_, idx) => {
@@ -812,19 +814,6 @@ export const Settings = () => {
             </div>
 
             <ConfirmModal
-                open={confirmAnalyzeAllOpen}
-                title="Analyze all unanalyzed games?"
-                description="This will queue analysis for all eligible games in your library."
-                meta={analyzeAllCount ? `${analyzeAllCount} games will be queued.` : null}
-                confirmText="Queue Analysis"
-                cancelText="Cancel"
-                onCancel={() => setConfirmAnalyzeAllOpen(false)}
-                onConfirm={async () => {
-                    setConfirmAnalyzeAllOpen(false);
-                    await handleAnalyzeAll();
-                }}
-            />
-            <ConfirmModal
                 open={confirmStopOpen}
                 title="Stop current analysis?"
                 description="This will halt the engine and reset queued games back to idle. The currently running game will be marked failed."
@@ -834,6 +823,18 @@ export const Settings = () => {
                 onConfirm={async () => {
                     setConfirmStopOpen(false);
                     await handleStopAnalysis();
+                }}
+            />
+            <ConfirmModal
+                open={confirmClearAnalysisOpen}
+                title="Clear all analysis data?"
+                description="This removes all analysis results and puzzles from this device. You can re-run analysis anytime."
+                confirmText="Clear Analysis"
+                cancelText="Cancel"
+                onCancel={() => setConfirmClearAnalysisOpen(false)}
+                onConfirm={async () => {
+                    setConfirmClearAnalysisOpen(false);
+                    await handleClearAnalysis();
                 }}
             />
             <ConfirmModal
