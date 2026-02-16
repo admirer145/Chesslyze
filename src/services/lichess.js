@@ -1,4 +1,4 @@
-import { bulkUpsertGames, getLatestGameTimestamp, getDistinctGameDaysInRange, saveImportProgress, loadImportProgress, clearImportProgress } from './db';
+import { bulkUpsertGames, getLatestGameTimestampForProfile, getDistinctGameDaysInRange, saveImportProgress, clearImportProgress } from './db';
 
 const constructPgn = (game) => {
     const headers = [
@@ -27,6 +27,9 @@ const mapLichessGame = (game) => {
 
     return {
         lichessId: game.id,
+        platform: 'lichess',
+        sourceGameId: game.id,
+        sourceUrl: game.id ? `https://lichess.org/${game.id}` : '',
         site: 'Lichess',
         date: new Date(game.createdAt).toISOString(),
         white: game.players?.white?.user?.name || game.players?.white?.name || 'Anonymous',
@@ -244,7 +247,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
     // Determine date range based on mode
     if (mode === 'smart') {
         const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
-        const latestLocal = await getLatestGameTimestamp(username);
+        const latestLocal = await getLatestGameTimestampForProfile('lichess', username);
         // Start from whichever is more recent: 7 days ago or right after our latest local game
         // This avoids re-fetching days we already have
         targetSince = latestLocal > sevenDaysAgo ? latestLocal + 1 : sevenDaysAgo;
@@ -307,7 +310,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
 
         // Check for cancellation
         if (signal?.aborted) {
-            await saveImportProgress(username, {
+            await saveImportProgress('lichess', username, {
                 currentSince,
                 targetUntil,
                 totalImported,
@@ -341,7 +344,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
             // Heuristic: If we have games for >= 5 distinct days in a 7-day chunk, assume it's fully synced.
             // If < 5 days, fetch the whole chunk to fill any potential gaps (safe due to upsert).
             const chunkIncludesToday = currentUntil >= now;
-            const distinctDays = await getDistinctGameDaysInRange(username, currentSince, currentUntil);
+            const distinctDays = await getDistinctGameDaysInRange('lichess', username, currentSince, currentUntil);
             const isHeuristicallyFull = distinctDays >= 5;
 
             if (isHeuristicallyFull && !chunkIncludesToday) {
@@ -383,7 +386,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
             });
 
             // Save progress after each successful chunk
-            await saveImportProgress(username, {
+            await saveImportProgress('lichess', username, {
                 currentSince: currentUntil,
                 targetUntil,
                 totalImported,
@@ -411,7 +414,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
             });
 
             if (err.message.includes('Too many rate limit errors')) {
-                await saveImportProgress(username, {
+                await saveImportProgress('lichess', username, {
                     currentSince,
                     targetUntil,
                     totalImported,
@@ -435,7 +438,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
     }
 
     // Import complete
-    await clearImportProgress(username);
+    await clearImportProgress('lichess', username);
 
     onProgress({
         type: 'success',

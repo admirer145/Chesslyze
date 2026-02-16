@@ -1,4 +1,5 @@
 import { db } from './db';
+import { getHeroProfiles, getHeroSideFromGame } from './heroProfiles';
 import { engine } from './engine';
 import { Chess } from 'chess.js';
 
@@ -501,10 +502,10 @@ export const processGame = async (gameId) => {
     const game = await db.games.get(gameId);
     if (!game || game.analyzed) return; // Skip if already analyzed
 
-    const heroUser = (localStorage.getItem('heroUser') || '').toLowerCase();
-    const heroInGame = heroUser && (game.white?.toLowerCase() === heroUser || game.black?.toLowerCase() === heroUser);
+    const heroProfiles = await getHeroProfiles();
+    const heroSide = getHeroSideFromGame(game, heroProfiles);
     const explicitHero = typeof game.isHero === 'boolean' ? game.isHero : true;
-    if (explicitHero && heroUser && !heroInGame) {
+    if (explicitHero && heroProfiles.length && !heroSide) {
         await db.games.update(gameId, { analyzed: false, analysisStatus: 'ignored' });
         return;
     }

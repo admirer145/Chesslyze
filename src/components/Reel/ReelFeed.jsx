@@ -5,6 +5,8 @@ import { Chessboard } from 'react-chessboard';
 import { ArrowRight, Eye, CheckCircle, XCircle, Bookmark } from 'lucide-react';
 import { Chess } from 'chess.js';
 import { useNavigate } from 'react-router-dom';
+import { useHeroProfiles } from '../../hooks/useHeroProfiles';
+import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
 
 const MOVE_BADGE_MAP = {
     brilliant: { label: '!!', tone: 'brilliant' },
@@ -187,8 +189,12 @@ const DEFAULT_FLASH_WHITE = '#D9C64A';
 const DEFAULT_FLASH_BLACK = '#D9C64A';
 
 const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLine, gameOverride, compact = false, onRevealChange }) => {
-    const BADGE_SIZE = 26;
-    const BADGE_INSET = 2;
+    const computeBadgeMetrics = (squareSize) => {
+        const size = Math.max(16, Math.min(22, Math.round(squareSize * 0.32)));
+        const inset = Math.max(1, Math.round(size * 0.12));
+        const fontSize = Math.max(9, Math.round(size * 0.5));
+        return { size, inset, fontSize };
+    };
     const PIECE_ANIMATION_MS = 300;
 
     const [showSolution, setShowSolution] = useState(false);
@@ -216,6 +222,8 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         white: localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE,
         black: localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK
     }));
+    const { activeProfiles } = useHeroProfiles();
+    const heroLabel = useMemo(() => getHeroDisplayName(activeProfiles), [activeProfiles]);
     const [lastMoveFlash, setLastMoveFlash] = useState(0);
     // (Explore mode removed) - continue lines open in Dashboard now.
 
@@ -320,9 +328,12 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
             if (el) {
                 const rootRect = root.getBoundingClientRect();
                 const rect = el.getBoundingClientRect();
+                const { size, inset, fontSize } = computeBadgeMetrics(rect.width);
                 return {
-                    left: Math.round(rect.left - rootRect.left + rect.width - BADGE_SIZE + BADGE_INSET),
-                    top: Math.round(rect.top - rootRect.top + BADGE_INSET)
+                    left: Math.round(rect.left - rootRect.left + rect.width - size - inset),
+                    top: Math.round(rect.top - rootRect.top + inset),
+                    size,
+                    fontSize
                 };
             }
         }
@@ -332,6 +343,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         const rank = parseInt(square[1], 10) - 1;
         if (Number.isNaN(file) || Number.isNaN(rank)) return null;
         const size = boardSize / 8;
+        const { size: badgeSize, inset, fontSize } = computeBadgeMetrics(size);
         let x = file;
         let y = 7 - rank;
         if (!isHeroWhite) {
@@ -339,8 +351,10 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
             y = rank;
         }
         return {
-            left: Math.round(x * size + size - BADGE_SIZE + BADGE_INSET),
-            top: Math.round(y * size + BADGE_INSET)
+            left: Math.round(x * size + size - badgeSize - inset),
+            top: Math.round(y * size + inset),
+            size: badgeSize,
+            fontSize
         };
     };
 
@@ -429,7 +443,6 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         return attemptMove(sourceSquare, targetSquare);
     };
 
-    const heroUser = localStorage.getItem('heroUser') || 'Hero';
     const getName = (player) => {
         if (!player) return 'Unknown';
         if (typeof player === 'string') return player;
@@ -452,7 +465,8 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         if (direct && direct !== '?' && direct !== '-') return direct;
         return getTitleTag(color === 'white' ? 'WhiteTitle' : 'BlackTitle');
     };
-    const isHeroWhite = game ? getName(game.white).toLowerCase() === heroUser.toLowerCase() : true;
+    const heroSide = getHeroSideFromGame(game, activeProfiles) || 'white';
+    const isHeroWhite = heroSide === 'white';
 
     // Determine Top (Opponent) vs Bottom (Hero)
     const topPlayer = isHeroWhite ?
@@ -460,8 +474,8 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
         { name: getName(game?.white) || 'Opponent', rating: getRating(game?.white, game?.whiteRating), title: getTitle('white') };
 
     const bottomPlayer = isHeroWhite ?
-        { name: getName(game?.white) || heroUser, rating: getRating(game?.white, game?.whiteRating), title: getTitle('white') } :
-        { name: getName(game?.black) || heroUser, rating: getRating(game?.black, game?.blackRating), title: getTitle('black') };
+        { name: getName(game?.white) || heroLabel, rating: getRating(game?.white, game?.whiteRating), title: getTitle('white') } :
+        { name: getName(game?.black) || heroLabel, rating: getRating(game?.black, game?.blackRating), title: getTitle('black') };
 
     const heroMoved = useMemo(() => {
         return (position.turn === 'w' && isHeroWhite) || (position.turn === 'b' && !isHeroWhite);
@@ -864,7 +878,13 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
                         {badgesReady && classificationBadge && blunderBadgeStyle && (stage === 'intro' || !heroMoved) && (
                             <div
                                 className={`board-badge badge-${classificationBadge.tone}`}
-                                style={{ left: blunderBadgeStyle.left, top: blunderBadgeStyle.top }}
+                                style={{
+                                    left: blunderBadgeStyle.left,
+                                    top: blunderBadgeStyle.top,
+                                    width: blunderBadgeStyle.size,
+                                    height: blunderBadgeStyle.size,
+                                    fontSize: blunderBadgeStyle.fontSize
+                                }}
                             >
                                 {classificationBadge.label}
                             </div>
@@ -872,7 +892,13 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
                         {badgesReady && showSolution && solutionBadge && solutionBadgeStyle && (
                             <div
                                 className={`board-badge badge-${solutionBadge.tone}`}
-                                style={{ left: solutionBadgeStyle.left, top: solutionBadgeStyle.top }}
+                                style={{
+                                    left: solutionBadgeStyle.left,
+                                    top: solutionBadgeStyle.top,
+                                    width: solutionBadgeStyle.size,
+                                    height: solutionBadgeStyle.size,
+                                    fontSize: solutionBadgeStyle.fontSize
+                                }}
                             >
                                 {solutionBadge.label}
                             </div>
@@ -1003,7 +1029,6 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
 };
 
 export const ReelFeed = () => {
-    const heroUser = localStorage.getItem('heroUser');
     const navigate = useNavigate();
     const [deckNonce, setDeckNonce] = useState(0);
     const [solutionRevealed, setSolutionRevealed] = useState(false);
@@ -1021,10 +1046,12 @@ export const ReelFeed = () => {
     });
     const recentIdsRef = useRef(recentIds);
     const [deck, setDeck] = useState([]);
+    const { activeProfiles } = useHeroProfiles();
+    const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
 
     // Complex query: Join positions with games to filter by Hero's turn
     const positions = useLiveQuery(async () => {
-        if (!heroUser) return null;
+        if (!activeProfiles.length) return null;
 
         // Pull recent positions first to keep feed updated with fresh analysis
         const candidates = await db.positions
@@ -1051,16 +1078,11 @@ export const ReelFeed = () => {
         for (const pos of critical) {
             const game = gameMap.get(pos.gameId);
             if (!game) continue;
-            if (typeof game.isHero === 'boolean' && game.isHero === false) continue;
-
-            const gameWhite = typeof game.white === 'string' ? game.white : game.white?.name || '';
-            const gameBlack = typeof game.black === 'string' ? game.black : game.black?.name || '';
-            const isHeroWhite = gameWhite.toLowerCase() === heroUser.toLowerCase();
-            const isHeroBlack = gameBlack.toLowerCase() === heroUser.toLowerCase();
-
-            if (isHeroWhite || isHeroBlack) {
-                const heroSide = isHeroWhite ? 'w' : 'b';
-                const heroMoved = pos.turn === heroSide;
+            if (!isHeroGameForProfiles(game, activeProfiles)) continue;
+            const heroSide = getHeroSideFromGame(game, activeProfiles);
+            if (heroSide) {
+                const heroTurn = heroSide === 'white' ? 'w' : 'b';
+                const heroMoved = pos.turn === heroTurn;
                 const log = Array.isArray(game.analysisLog) ? game.analysisLog : [];
                 const responseEntry = log.find((entry) => entry.ply === pos.ply + 1);
                 const heroResponse = responseEntry?.move;
@@ -1120,7 +1142,7 @@ export const ReelFeed = () => {
             review,
             all: validPositions
         };
-    }, [heroUser]);
+    }, [profileKey]);
 
     const [section, setSection] = useState('unsolved');
     const [mode, setMode] = useState('all');
@@ -1338,17 +1360,17 @@ export const ReelFeed = () => {
         await db.positions.update(displayPosition.id, { reviewFlag: !reviewFlag, nextReviewAt });
     };
 
-    const heroLower = (heroUser || '').toLowerCase();
+    const heroSide = getHeroSideFromGame(activeGame, activeProfiles) || 'white';
     const opponentInfo = useMemo(() => {
         if (!activeGame) return { name: 'Opponent', rating: '-', title: '' };
         const whiteName = typeof activeGame.white === 'string' ? activeGame.white : activeGame.white?.name || '';
         const blackName = typeof activeGame.black === 'string' ? activeGame.black : activeGame.black?.name || '';
-        const isHeroWhite = heroLower && whiteName.toLowerCase() === heroLower;
+        const isHeroWhite = heroSide === 'white';
         const name = isHeroWhite ? blackName : whiteName;
         const rating = isHeroWhite ? activeGame.blackRating : activeGame.whiteRating;
         const title = isHeroWhite ? activeGame.blackTitle : activeGame.whiteTitle;
         return { name: name || 'Opponent', rating: rating || '-', title: title || '' };
-    }, [activeGame, heroLower]);
+    }, [activeGame, heroSide]);
 
     return (
         <div className="puzzle-shell">

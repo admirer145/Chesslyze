@@ -4,6 +4,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
 import { Filter, Search, RotateCcw, ChevronDown, ChevronUp, Trophy, Brain, Calendar, X, Zap, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { ConfirmModal } from '../common/ConfirmModal';
+import { useHeroProfiles } from '../../hooks/useHeroProfiles';
+import { getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
 
 export const GamesLibrary = () => {
     const FILTERS_KEY = 'gamesLibraryFilters';
@@ -70,8 +72,35 @@ export const GamesLibrary = () => {
     });
     const [filters, setFilters] = useState(loadFilters);
 
-    const heroUser = useMemo(() => localStorage.getItem('heroUser') || '', []);
-    const heroLower = heroUser.toLowerCase();
+    const { profiles, activeProfiles } = useHeroProfiles();
+    const PROFILE_FILTER_KEY = 'gamesLibraryHeroProfiles';
+    const [libraryProfileIds, setLibraryProfileIds] = useState(() => {
+        if (typeof window === 'undefined') return [];
+        try {
+            const raw = localStorage.getItem(PROFILE_FILTER_KEY);
+            const parsed = JSON.parse(raw || '[]');
+            return Array.isArray(parsed) ? parsed.map((id) => Number(id)).filter((id) => Number.isFinite(id)) : [];
+        } catch {
+            return [];
+        }
+    });
+    const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
+    const allProfilesKey = useMemo(() => profiles.map((p) => p.id).join('|'), [profiles]);
+    const allowedProfiles = activeProfiles.length ? activeProfiles : profiles;
+    const libraryActiveProfiles = useMemo(() => {
+        if (!libraryProfileIds.length) return allowedProfiles;
+        const selected = allowedProfiles.filter((p) => libraryProfileIds.includes(p.id));
+        return selected.length ? selected : allowedProfiles;
+    }, [libraryProfileIds, allowedProfiles]);
+
+    useEffect(() => {
+        if (!libraryProfileIds.length) return;
+        const allowedIds = new Set(allowedProfiles.map((p) => p.id));
+        const next = libraryProfileIds.filter((id) => allowedIds.has(id));
+        if (next.length !== libraryProfileIds.length) {
+            setLibraryProfileIds(next);
+        }
+    }, [libraryProfileIds, allowedProfiles]);
 
     // Calculate active filter count
     useEffect(() => {
@@ -90,12 +119,13 @@ export const GamesLibrary = () => {
         if (filters.oppRatingOp !== 'any' && filters.oppRatingVal !== '') count++;
         if (filters.titledOnly) count++;
         if (filters.botOnly) count++;
+        if (libraryProfileIds.length > 0) count++;
         setActiveFilterCount(count);
-    }, [filters]);
+    }, [filters, libraryProfileIds]);
 
     useEffect(() => {
         setPage(1);
-    }, [filters, sortOrder, sortBy]);
+    }, [filters, sortOrder, sortBy, profileKey, allProfilesKey, libraryProfileIds]);
 
     useEffect(() => {
         try {
@@ -106,6 +136,14 @@ export const GamesLibrary = () => {
             // Ignore persistence failures
         }
     }, [filters, sortBy, sortOrder]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(PROFILE_FILTER_KEY, JSON.stringify(libraryProfileIds));
+        } catch {
+            // Ignore persistence failures
+        }
+    }, [libraryProfileIds]);
 
     const normalizeResult = (value) => {
         if (!value) return '';
@@ -139,11 +177,8 @@ export const GamesLibrary = () => {
     const getFocusSide = (game) => {
         const whiteName = getPlayerNameValue(game.white).toLowerCase();
         const blackName = getPlayerNameValue(game.black).toLowerCase();
-        if (heroUser) {
-            const heroLower = heroUser.toLowerCase();
-            if (whiteName === heroLower) return 'white';
-            if (blackName === heroLower) return 'black';
-        }
+        const heroSide = getHeroSideFromGame(game, libraryActiveProfiles);
+        if (heroSide) return heroSide;
         if (filters.player) {
             const query = filters.player.toLowerCase().trim();
             if (query) {
@@ -256,13 +291,20 @@ export const GamesLibrary = () => {
         };
 
         const all = await db.games.toArray();
+        const isLimitedBySettings = activeProfiles.length > 0 && activeProfiles.length < profiles.length;
         const filtered = all.filter((game) => {
-            const isHeroGame = typeof game.isHero === 'boolean'
-                ? game.isHero
-                : heroUser && (game.white?.toLowerCase() === heroUser.toLowerCase() || game.black?.toLowerCase() === heroUser.toLowerCase());
+            const isHeroGlobal = isHeroGameForProfiles(game, activeProfiles);
+            const isHeroLocal = isHeroGameForProfiles(game, libraryActiveProfiles);
+            const isHeroAny = isLimitedBySettings ? isHeroGameForProfiles(game, profiles) : false;
 
-            if (filters.scope === 'hero' && !isHeroGame) return false;
-            if (filters.scope === 'others' && isHeroGame) return false;
+            if (isLimitedBySettings && isHeroAny && !isHeroGlobal) return false;
+
+            if (filters.scope === 'hero' && !isHeroLocal) return false;
+            if (filters.scope === 'others' && isHeroGlobal) return false;
+
+            if (filters.scope === 'all' && libraryProfileIds.length > 0 && isHeroGlobal && !isHeroLocal) {
+                return false;
+            }
 
             if (filters.result !== 'all') {
                 if (filters.result === 'draw') {
@@ -365,7 +407,7 @@ export const GamesLibrary = () => {
             }
 
             return true;
-        });
+    }, [filters, sortOrder, sortBy, profileKey]);
 
         const titleRank = (title) => {
             // Higher number = higher title. This keeps "Low to High" intuitive.
@@ -405,7 +447,7 @@ export const GamesLibrary = () => {
 
         if (sortOrder === 'desc') sorted.reverse();
         return sorted;
-    }, [filters, heroUser, sortOrder, sortBy]);
+    }, [filters, activeProfiles, libraryActiveProfiles, sortOrder, sortBy, libraryProfileIds, allProfilesKey]);
 
     const pageSize = 24;
     const totalPages = games ? Math.max(1, Math.ceil(games.length / pageSize)) : 1;
@@ -420,6 +462,22 @@ export const GamesLibrary = () => {
     const clearFilter = (key) => {
         setFilters({ ...filters, [key]: DEFAULT_FILTERS[key] });
     };
+
+    const toggleProfileFilter = (id) => {
+        if (!id) return;
+        if (!libraryProfileIds.length) {
+            setLibraryProfileIds([id]);
+            return;
+        }
+        if (libraryProfileIds.includes(id)) {
+            const next = libraryProfileIds.filter((pid) => pid !== id);
+            setLibraryProfileIds(next);
+            return;
+        }
+        setLibraryProfileIds([...libraryProfileIds, id]);
+    };
+
+    const clearProfileFilter = () => setLibraryProfileIds([]);
 
     const formatDate = (dateStr) => {
         if (!dateStr) return 'Unknown';
@@ -705,10 +763,14 @@ export const GamesLibrary = () => {
                                     </span>
                                 );
                             };
-                            const isHeroWhite = heroLower && whiteName.toLowerCase() === heroLower;
-                            const isHeroBlack = heroLower && blackName.toLowerCase() === heroLower;
+                            const heroSide = getHeroSideFromGame(game, libraryActiveProfiles);
+                            const isHeroWhite = heroSide === 'white';
+                            const isHeroBlack = heroSide === 'black';
                             const whiteRating = game.whiteElo || game.whiteRating || '';
                             const blackRating = game.blackElo || game.blackRating || '';
+                            const platform = (game.platform || game.source || (game.lichessId ? 'lichess' : '') || (game.pgnHash ? 'pgn' : 'unknown')).toLowerCase();
+                            const platformLabel = platform === 'chesscom' ? 'Chess.com' : platform === 'lichess' ? 'Lichess' : platform === 'pgn' ? 'PGN' : 'Other';
+                            const platformClass = platform === 'chesscom' ? 'platform-chesscom' : platform === 'lichess' ? 'platform-lichess' : platform === 'pgn' ? 'platform-pgn' : 'platform-other';
 
                             return (
                                 <button key={game.id} onClick={() => handleView(game.id)} className="game-card">
@@ -736,6 +798,7 @@ export const GamesLibrary = () => {
                                         </div>
 
                                         <div className="game-card__row game-card__row--meta">
+                                            <span className={`platform-badge ${platformClass}`}>{platformLabel}</span>
                                             <span className={getPerfColor(game.perf)}>{game.perf || 'Rapid'}</span>
                                             <span className="meta-sep">•</span>
                                             <span className="meta-item">{formatDate(game.date)}</span>
@@ -747,7 +810,6 @@ export const GamesLibrary = () => {
 
                                         <div className="game-card__row game-card__row--opening">
                                             <Brain size={14} />
-                                            <span className="opening-label">Opening</span>
                                             <span className="opening-name" title={opening}>{opening}</span>
                                         </div>
                                     </div>
@@ -892,6 +954,42 @@ export const GamesLibrary = () => {
                                     <option value="others">Others</option>
                                 </select>
                             </div>
+                        </div>
+
+                        <div className="drawer-section">
+                            <label>Hero Profiles</label>
+                            {profiles.length === 0 ? (
+                                <div className="text-xs text-muted">Connect a hero profile to filter by account.</div>
+                            ) : (
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        className={`pill ${libraryProfileIds.length === 0 ? 'pill--active' : ''}`}
+                                        onClick={clearProfileFilter}
+                                    >
+                                        All Profiles
+                                    </button>
+                                    {allowedProfiles.map((profile) => {
+                                        const active = libraryProfileIds.includes(profile.id);
+                                        const label = `${profile.platform === 'chesscom' ? 'Chess.com' : 'Lichess'} · ${profile.displayName || profile.usernameLower}`;
+                                        return (
+                                            <button
+                                                key={profile.id}
+                                                type="button"
+                                                className={`pill ${active ? 'pill--active' : ''}`}
+                                                onClick={() => toggleProfileFilter(profile.id)}
+                                            >
+                                                {label}
+                                            </button>
+                                        );
+                                    })}
+                                    {profiles.length > 0 && activeProfiles.length < profiles.length && (
+                                        <div className="text-[10px] text-muted w-full">
+                                            Limited by Settings hero profiles.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <div className="drawer-section">
