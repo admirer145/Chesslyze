@@ -34,6 +34,7 @@ export const Dashboard = () => {
     const BOARD_DARK_KEY = 'boardDarkSquare';
     const BOARD_FLASH_WHITE_KEY = 'boardFlashWhite';
     const BOARD_FLASH_BLACK_KEY = 'boardFlashBlack';
+    const BEST_MOVE_ARROW_KEY = 'showBestMoveArrow';
     const DEFAULT_BOARD_LIGHT = '#e2e8f0';
     const DEFAULT_BOARD_DARK = '#475569';
     const DEFAULT_FLASH_WHITE = '#D9C64A';
@@ -49,6 +50,14 @@ export const Dashboard = () => {
         white: localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE,
         black: localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK
     }));
+    const [showBestMoveArrow, setShowBestMoveArrow] = useState(() => {
+        try {
+            const raw = localStorage.getItem(BEST_MOVE_ARROW_KEY);
+            return raw === null ? true : raw === 'true';
+        } catch {
+            return true;
+        }
+    });
     const { activeProfiles } = useHeroProfiles();
     const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
     const heroDisplayName = useMemo(() => getHeroDisplayName(activeProfiles), [activeProfiles]);
@@ -82,6 +91,24 @@ export const Dashboard = () => {
         return () => {
             window.removeEventListener('boardColorsChanged', updateColors);
             window.removeEventListener('storage', updateColors);
+        };
+    }, []);
+
+    useEffect(() => {
+        const updateArrowSetting = () => {
+            try {
+                const raw = localStorage.getItem(BEST_MOVE_ARROW_KEY);
+                setShowBestMoveArrow(raw === null ? true : raw === 'true');
+            } catch {
+                setShowBestMoveArrow(true);
+            }
+        };
+        updateArrowSetting();
+        window.addEventListener('bestMoveArrowChanged', updateArrowSetting);
+        window.addEventListener('storage', updateArrowSetting);
+        return () => {
+            window.removeEventListener('bestMoveArrowChanged', updateArrowSetting);
+            window.removeEventListener('storage', updateArrowSetting);
         };
     }, []);
 
@@ -719,6 +746,7 @@ export const Dashboard = () => {
 
     const defaultArrow = useMemo(() => {
         // Show best move arrow when analysis data is available, regardless of active tab
+        if (!showBestMoveArrow) return null;
         if (previewFen) return null;
         if (!analysisLog || analysisLog.length === 0) return null;
 
@@ -740,7 +768,7 @@ export const Dashboard = () => {
         const uci = entry?.bestMove;
         if (!uci || typeof uci !== 'string' || uci.length < 4) return null;
         return { from: uci.substring(0, 2), to: uci.substring(2, 4) };
-    }, [previewFen, analysisLog, moveIndex, currentFen]);
+    }, [previewFen, analysisLog, moveIndex, currentFen, showBestMoveArrow]);
 
     const chessboardOptions = useMemo(() => {
         const arrow = hoverArrow || defaultArrow;

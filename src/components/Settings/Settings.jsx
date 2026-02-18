@@ -14,6 +14,7 @@ const BOARD_LIGHT_KEY = 'boardLightSquare';
 const BOARD_DARK_KEY = 'boardDarkSquare';
 const BOARD_FLASH_WHITE_KEY = 'boardFlashWhite';
 const BOARD_FLASH_BLACK_KEY = 'boardFlashBlack';
+const BEST_MOVE_ARROW_KEY = 'showBestMoveArrow';
 const DEFAULT_BOARD_LIGHT = '#e2e8f0';
 const DEFAULT_BOARD_DARK = '#475569';
 const DEFAULT_FLASH_WHITE = '#D9C64A';
@@ -104,6 +105,14 @@ export const Settings = () => {
     const [boardDark, setBoardDark] = useState(() => localStorage.getItem(BOARD_DARK_KEY) || DEFAULT_BOARD_DARK);
     const [flashWhite, setFlashWhite] = useState(() => localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE);
     const [flashBlack, setFlashBlack] = useState(() => localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK);
+    const [showBestMoveArrow, setShowBestMoveArrow] = useState(() => {
+        try {
+            const raw = localStorage.getItem(BEST_MOVE_ARROW_KEY);
+            return raw === null ? true : raw === 'true';
+        } catch {
+            return true;
+        }
+    });
     const initialEngineState = useMemo(() => getInitialEngineState(), []);
     const isMobile = useMemo(() => isMobileDevice(), []);
     const [profiles, setProfiles] = useState(initialEngineState.profiles);
@@ -172,6 +181,15 @@ export const Settings = () => {
             // Ignore persistence failures
         }
     }, [boardLight, boardDark, flashWhite, flashBlack]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(BEST_MOVE_ARROW_KEY, String(showBestMoveArrow));
+            window.dispatchEvent(new Event('bestMoveArrowChanged'));
+        } catch {
+            // ignore
+        }
+    }, [showBestMoveArrow]);
 
     useEffect(() => {
         if (!activeProfile) return;
@@ -597,6 +615,28 @@ export const Settings = () => {
                         </button>
                         <div className="text-xs text-muted">Applies immediately to the dashboard board.</div>
                     </div>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Analysis Aids</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Control helper overlays shown on the board during analysis.
+                    </p>
+                    <div className="flex items-center gap-3">
+                        <input
+                            type="checkbox"
+                            id="best-move-arrow-toggle"
+                            checked={showBestMoveArrow}
+                            onChange={(e) => setShowBestMoveArrow(e.target.checked)}
+                            className="w-4 h-4"
+                        />
+                        <label htmlFor="best-move-arrow-toggle" className="text-sm font-medium text-primary cursor-pointer select-none">
+                            Show best move arrow on the board
+                        </label>
+                    </div>
+                    <p className="text-xs text-muted mt-2">
+                        Disable to hide automatic best-move hints. Hover previews in Analytics still work.
+                    </p>
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">

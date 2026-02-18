@@ -129,6 +129,8 @@ const applyClassificationPenalty = (accuracy, classification) => {
 const getClassification = ({
     evalDiff,
     isBestMove,
+    isExactBest,
+    isTopLine,
     scoreBefore,
     scoreAfter,
     materialDelta,
@@ -165,7 +167,7 @@ const getClassification = ({
     const stillLosing = beforeLosing && afterLosing;
 
     const deferredSac = typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -3;
-    const sacrifice = materialDelta <= -2 || deferredSac;
+    const sacrifice = materialDelta <= -2 || deferredSac || (typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -2);
     const majorMaterialLoss = materialDelta <= -5; // rook/queen
 
     const rating = typeof playerRating === 'number' ? playerRating : null;
@@ -186,30 +188,36 @@ const getClassification = ({
     if (isBestMove) {
         const immediateSac = materialDelta <= -2;
         const pieceSac = materialDelta <= -3 || deferredSac; // minor piece or more
-        const BRILLIANT_GAP = 100 * brilliantFactor;
+    const BRILLIANT_GAP = 80 * brilliantFactor;
 
-        // 🔥 BRILLIANT: Best move + genuine sacrifice + non-obvious
-        // Requires:
-        //  - Not a simple recapture
-        //  - Genuine material sacrifice (piece-level, OR minor + tactical motif)
-        //  - Not already in an overwhelming position (< +5.0)
-        //  - Position stays reasonable after the sacrifice
-        //  - Move stands out from alternatives (gap to second best)
-        const notOverwhelming = before < 500;
-        const positionHeld = after >= -NEAR_EQUAL && after >= before - 50;
-        const standoutMove = gap !== null && gap >= BRILLIANT_GAP;
+    // 🔥 BRILLIANT: Best move + genuine sacrifice + non-obvious
+    // Requires:
+    //  - Not a simple recapture
+    //  - Genuine material sacrifice (piece-level, OR minor + tactical motif)
+    //  - Not already in an overwhelming position (< +5.0)
+    //  - Position stays reasonable after the sacrifice
+    //  - Move stands out from alternatives (gap to second best)
+    const notOverwhelming = before < 500;
+    const positionHeld = after >= -NEAR_EQUAL && after >= before - 50;
+    const standoutMove = gap !== null && gap >= BRILLIANT_GAP;
+    const isBestish = !!(isExactBest || (isTopLine && evalDiff <= THRESHOLDS.BEST * 0.7) || isBestMove);
+    const complexPosition = Math.abs(before) <= 300;
+    const improves = (after - before) >= 60;
+    const winningSac = majorMaterialLoss && (isMateScore(after) || after >= WINNING);
 
-        if (
+    if (
             !isRecapture &&
-            notOverwhelming &&
-            positionHeld &&
+            isBestish &&
+            sacrifice &&
             (
-                // Path A: Piece-level sacrifice (knight/bishop/rook/queen)
-                (pieceSac && standoutMove) ||
-                // Path B: Smaller sacrifice (pawn/exchange) but with a tactical motif
+                // Path A: Major sacrifice leading to winning/mate even if already better
+                winningSac ||
+                // Path B: Piece-level sacrifice with standout or big improvement in a complex position
+                (pieceSac && (standoutMove || (improves && complexPosition))) ||
+                // Path C: Smaller sacrifice with a tactical motif and clear separation
                 (immediateSac && hasTacticalMotif && standoutMove) ||
-                // Path C: Piece sacrifice that dramatically improves position
-                (pieceSac && (after - before) >= 60)
+                // Path D: Sacrifice that holds a complex position without dropping eval
+                (complexPosition && positionHeld && standoutMove)
             )
         ) {
             return 'brilliant';
@@ -223,32 +231,39 @@ const getClassification = ({
 
         const recoveredFromLosing =
             before <= -WINNING &&
-            after >= -NEAR_EQUAL;
+            after >= -SLIGHT_EDGE;
 
         const savedFromCollapse =
             before <= -CLEAR_EDGE &&
             after >= -SLIGHT_EDGE &&
             secondScore !== null &&
-            secondScore <= -WINNING; // second-best leads to losing
+            secondScore <= -CLEAR_EDGE; // second-best leads to trouble
 
         const onlyMovePreventingDisaster =
-            gap !== null && gap >= 200 &&
+            gap !== null && gap >= 140 &&
             secondScore !== null &&
-            secondScore <= -CLEAR_EDGE &&
+            secondScore <= -SLIGHT_EDGE &&
             after >= -NEAR_EQUAL;
 
         const criticalConversion =
             Math.abs(before) <= SLIGHT_EDGE &&
-            after >= WINNING &&
-            gap !== null && gap >= 150;
+            after >= CLEAR_EDGE &&
+            gap !== null && gap >= 120;
+
+        const decisiveSwing =
+            isBestish &&
+            !isRecapture &&
+            complexPosition &&
+            (after - before) >= 120;
 
         const isGreat =
             recoveredFromLosing ||
             savedFromCollapse ||
             onlyMovePreventingDisaster ||
-            criticalConversion;
+            criticalConversion ||
+            decisiveSwing;
 
-        if (isGreat && !isRecapture) {
+        if (isGreat && !isRecapture && isBestish) {
             return 'great';
         }
 
@@ -972,6 +987,8 @@ export const processGame = async (gameId) => {
             classification = getClassification({
                 evalDiff,
                 isBestMove,
+                isExactBest: userMoveUCI === bestMoveUCI,
+                isTopLine: isInTopLines,
                 scoreBefore: scoreBeforeCp,
                 scoreAfter: myScoreAfter,
                 materialDelta,
@@ -1011,9 +1028,12 @@ export const processGame = async (gameId) => {
                     const deepBestThreshold = THRESHOLDS.BEST * (phase === 'opening' ? 1.3 : 1);
                     const deepIsBestMove = userMoveUCI === deepBestMoveUCI || deepEvalDiff <= deepBestThreshold;
 
+                    const deepIsTopLine = !!deepUserLine;
                     const deepClassification = getClassification({
                         evalDiff: deepEvalDiff,
                         isBestMove: deepIsBestMove,
+                        isExactBest: userMoveUCI === deepBestMoveUCI,
+                        isTopLine: deepIsTopLine,
                         scoreBefore: deepScoreBeforeCp,
                         scoreAfter: deepScoreAfter,
                         materialDelta,
