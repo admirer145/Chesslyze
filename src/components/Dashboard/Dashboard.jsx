@@ -11,7 +11,7 @@ import { AIAnalysisModal } from './AIAnalysisModal';
 import { AIInsightsView } from './AIInsightsView';
 import { Sparkles } from 'lucide-react';
 import { useHeroProfiles } from '../../hooks/useHeroProfiles';
-import { getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
+import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
 
 const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
     <div className="flex items-center gap-4 p-3 rounded-md hover:bg-subtle transition-colors cursor-default">
@@ -51,6 +51,7 @@ export const Dashboard = () => {
     }));
     const { activeProfiles } = useHeroProfiles();
     const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
+    const heroDisplayName = useMemo(() => getHeroDisplayName(activeProfiles), [activeProfiles]);
 
     useEffect(() => {
         const handleActiveChange = () => {
@@ -535,6 +536,11 @@ export const Dashboard = () => {
         if (!activeGame || !activeProfiles.length) return 'white';
         const heroSide = getHeroSideFromGame(activeGame, activeProfiles);
         return heroSide === 'black' ? 'black' : 'white';
+    }, [activeGame, activeProfiles]);
+
+    const heroSideForGame = useMemo(() => {
+        if (!activeGame || !activeProfiles.length) return null;
+        return getHeroSideFromGame(activeGame, activeProfiles);
     }, [activeGame, activeProfiles]);
 
     useEffect(() => {
@@ -1173,6 +1179,9 @@ export const Dashboard = () => {
                             <AIAnalysisModal
                                 game={activeGame}
                                 pgn={activePgn}
+                                analysisLog={analysisLog}
+                                heroSide={heroSideForGame}
+                                heroName={heroDisplayName}
                                 onClose={() => setShowAIModal(false)}
                                 onAnalysisComplete={() => {
                                     setActiveTab('ai');
