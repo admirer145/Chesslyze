@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Copy, Check, ClipboardPaste, ArrowRight, Sparkles, AlertTriangle, Zap } from 'lucide-react';
 import { generateAnalysisPrompt, submitAnalysis } from '../../services/aiAnalysisService';
 
-export const AIAnalysisModal = ({ game, onClose, onAnalysisComplete }) => {
+export const AIAnalysisModal = ({ game, pgn, analysisLog, heroSide, heroName, onClose, onAnalysisComplete }) => {
     const [step, setStep] = useState(1); // 1: Prompt, 2: Input
     const [prompt, setPrompt] = useState('');
     const [jsonInput, setJsonInput] = useState('');
@@ -12,10 +12,10 @@ export const AIAnalysisModal = ({ game, onClose, onAnalysisComplete }) => {
 
     useEffect(() => {
         if (game) {
-            const p = generateAnalysisPrompt(game);
+            const p = generateAnalysisPrompt(game, pgn, analysisLog, { heroSide, heroName });
             setPrompt(p);
         }
-    }, [game]);
+    }, [game, pgn, analysisLog, heroSide, heroName]);
 
     const handleCopy = async () => {
         try {

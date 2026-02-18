@@ -15,6 +15,12 @@ export const useUserStats = () => {
         const all = await db.games.toArray();
         const games = all.filter((g) => isHeroGameForProfiles(g, activeProfiles));
 
+        const analyzedIds = games
+            .filter((g) => g?.id && (g.analyzed || g.analysisStatus === 'completed'))
+            .map((g) => g.id);
+        const analysisRows = analyzedIds.length ? await db.gameAnalysis.bulkGet(analyzedIds) : [];
+        const analysisById = new Map(analyzedIds.map((id, idx) => [id, analysisRows[idx]?.analysisLog || []]));
+
         if (!games.length) return null;
 
         // Sort by date ascending
@@ -57,6 +63,7 @@ export const useUserStats = () => {
             const myRating = isWhite ? g.whiteRating : g.blackRating;
             const oppRating = isWhite ? g.blackRating : g.whiteRating;
             const oppName = isWhite ? g.black : g.white;
+            const log = analysisById.get(g.id) || [];
 
             totalGames++;
             if (myRating > highestRating) highestRating = myRating;
@@ -89,7 +96,7 @@ export const useUserStats = () => {
                     biggestUpset = { opponent: oppName, ratingDiff: diff, rating: oppRating, date: g.date, gameId: g.id };
                 }
                 // Fastest Win
-                const ply = Array.isArray(g.history) ? g.history.length : (g.analysisLog?.length || 999);
+                const ply = Array.isArray(g.history) ? g.history.length : (log.length || 999);
                 if (ply > 0 && ply < (fastestWin?.ply || 999)) {
                     fastestWin = { opponent: oppName, ply, date: g.date, gameId: g.id };
                 }
@@ -112,9 +119,9 @@ export const useUserStats = () => {
             if (g.date > openings[family].lastPlayed) openings[family].lastPlayed = g.date;
 
             // Evolution / Archetype Stats (Approximate based on Analysis Log if available)
-            if (g.analyzed && g.analysisLog) {
-                const blunders = g.analysisLog.filter(l => l.classification === 'blunder').length;
-                const moveCount = g.analysisLog.length;
+            if (g.analyzed && log.length) {
+                const blunders = log.filter(l => l.classification === 'blunder').length;
+                const moveCount = log.length;
 
                 if (index < earlyCount) {
                     earlyBlunders += blunders;

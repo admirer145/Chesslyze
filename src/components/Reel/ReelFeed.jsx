@@ -89,7 +89,7 @@ const getMoveInfoFromPgn = (pgn, ply) => {
     if (!pgn || !ply) return null;
     try {
         const chess = new Chess();
-        chess.loadPgn(pgn);
+        chess.loadPgn(pgn, { sloppy: true });
         const moves = chess.history({ verbose: true });
         const entry = moves[ply - 1];
         if (!entry) return null;
@@ -1079,9 +1079,16 @@ export const ReelFeed = () => {
 
         const uniqueGameIds = [...new Set(critical.map((pos) => pos.gameId))];
         const games = await db.games.bulkGet(uniqueGameIds);
+        const analysisRows = uniqueGameIds.length ? await db.gameAnalysis.bulkGet(uniqueGameIds) : [];
+        const contentRows = uniqueGameIds.length ? await db.gameContent.bulkGet(uniqueGameIds) : [];
+        const analysisById = new Map(uniqueGameIds.map((id, idx) => [id, analysisRows[idx]?.analysisLog || []]));
+        const pgnById = new Map(uniqueGameIds.map((id, idx) => [id, contentRows[idx]?.pgn || '']));
         const gameMap = new Map();
         games.forEach((game) => {
-            if (game) gameMap.set(game.id, game);
+            if (!game) return;
+            const analysisLog = analysisById.get(game.id) || [];
+            const pgn = pgnById.get(game.id) || '';
+            gameMap.set(game.id, { ...game, analysisLog, pgn });
         });
 
         const validPositions = [];

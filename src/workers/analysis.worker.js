@@ -45,6 +45,14 @@ const handleEngineOutput = (line) => {
         rawPostMessage({ type: 'ENGINE_CAPS', caps: { multipv: true } });
         return;
     }
+    if (line.startsWith('option name EvalFileSmall')) {
+        rawPostMessage({ type: 'ENGINE_CAPS', caps: { evalFileSmall: true } });
+        return;
+    }
+    if (line.startsWith('option name EvalFile')) {
+        rawPostMessage({ type: 'ENGINE_CAPS', caps: { evalFile: true } });
+        return;
+    }
 
     if (line.startsWith('bestmove')) {
         const parts = line.split(' ');
@@ -100,57 +108,97 @@ let engine = null;
 let engineReady = false;
 let uciReady = false;
 let pendingCommands = [];
+let initPromise = null;
+
+const isValidScriptResponse = (res) => {
+    if (!res || !res.ok) return false;
+    const ct = res.headers && res.headers.get ? res.headers.get('content-type') : '';
+    if (ct && ct.includes('text/html')) return false;
+    return true;
+};
+
+const checkScriptAvailable = async (url) => {
+    try {
+        const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+        const ok = isValidScriptResponse(res);
+        if (res && res.body && typeof res.body.cancel === 'function') {
+            res.body.cancel();
+        }
+        return ok;
+    } catch {
+        return false;
+    }
+};
 
 // Initialize the engine based on version
-const initEngine = (version) => {
+const initEngine = async (version) => {
     // Prevent double initialization
     if (engine) return;
+    if (initPromise) return initPromise;
 
-    // Check for required features
-    const isSecure = self.crossOriginIsolated;
-    const hasSAB = typeof SharedArrayBuffer !== 'undefined';
-    log(`Worker: Environment Check - Secure Context: ${isSecure}, SharedArrayBuffer: ${hasSAB}`);
+    initPromise = (async () => {
+        // Check for required features
+        const isSecure = self.crossOriginIsolated;
+        const hasSAB = typeof SharedArrayBuffer !== 'undefined';
+        log(`Worker: Environment Check - Secure Context: ${isSecure}, SharedArrayBuffer: ${hasSAB}`);
 
-    if (version === '17.1-multi' && (!isSecure || !hasSAB)) {
-        warn("Worker: Multi-threaded engine requested but environment is not secure. Fallback to single-threaded?");
-        rawPostMessage({ type: 'WARNING', message: "Multi-threaded engine requires secure context (COOP/COEP Headers)." });
-    }
+        if (version === '17.1-multi' && (!isSecure || !hasSAB)) {
+            warn("Worker: Multi-threaded engine requested but environment is not secure. Fallback to single-threaded?");
+            rawPostMessage({ type: 'WARNING', message: "Multi-threaded engine requires secure context (COOP/COEP Headers)." });
+        }
 
-    // Use import.meta.url to resolve paths relative to the current module
-    // This ensures paths work correctly with Vite's base path configuration (e.g., /Chesslyze/)
-    const baseUrl = new URL('.', import.meta.url).href;
-    const scriptPath = version === '17.1-multi'
-        ? new URL('../../public/stockfish-engine.worker.js#/stockfish-17-multi.wasm', import.meta.url).href
-        : new URL('../../public/stockfish-17-single.js', import.meta.url).href;
+        // Use import.meta.url to resolve paths relative to the current module
+        // This ensures paths work correctly with Vite's base path configuration (e.g., /Chesslyze/)
+        let scriptPath = version === '17.1-multi'
+            ? new URL('../../public/stockfish-engine.worker.js#/stockfish-17-multi.wasm', import.meta.url).href
+            : version === '17.1-lite'
+                ? new URL('../../public/stockfish-17-lite.js', import.meta.url).href
+                : new URL('../../public/stockfish-17-single.js', import.meta.url).href;
 
-    try {
-        log(`Worker: Spawning engine worker ${scriptPath}...`);
-        engine = new Worker(scriptPath, { type: 'classic' });
-
-        engine.onmessage = (e) => {
-            const msg = e.data;
-            if (typeof msg === 'string') {
-                handleEngineOutput(msg);
-            } else {
-                // Ignore non-string messages from engine
-                // console.log("Worker: Engine non-string message:", msg);
+        if (version === '17.1-lite') {
+            const ok = await checkScriptAvailable(scriptPath);
+            if (!ok) {
+                warn("Worker: Lite engine missing. Falling back to standard single-thread engine.");
+                rawPostMessage({
+                    type: 'WARNING',
+                    message: "Lite engine missing in this build. Falling back to Stockfish 17.1 Standard."
+                });
+                scriptPath = new URL('../../public/stockfish-17-single.js', import.meta.url).href;
             }
-        };
+        }
 
-        engine.onerror = (err) => {
-            console.error("Worker: Engine Worker Error:", err);
-            rawPostMessage({ type: 'ERROR', error: err?.message || 'Engine worker error' });
-        };
+        try {
+            log(`Worker: Spawning engine worker ${scriptPath}...`);
+            engine = new Worker(scriptPath, { type: 'classic' });
 
-        engineReady = true;
-        uciReady = false;
-        pendingCommands = [];
-        // Kick off UCI handshake
-        engine.postMessage('uci');
-    } catch (e) {
-        console.error("Worker: Failed to spawn engine worker:", e);
-        rawPostMessage({ type: 'ERROR', error: e.message });
-    }
+            engine.onmessage = (e) => {
+                const msg = e.data;
+                if (typeof msg === 'string') {
+                    handleEngineOutput(msg);
+                } else {
+                    // Ignore non-string messages from engine
+                    // console.log("Worker: Engine non-string message:", msg);
+                }
+            };
+
+            engine.onerror = (err) => {
+                console.error("Worker: Engine Worker Error:", err);
+                rawPostMessage({ type: 'ERROR', error: err?.message || 'Engine worker error' });
+            };
+
+            engineReady = true;
+            uciReady = false;
+            pendingCommands = [];
+            // Kick off UCI handshake
+            engine.postMessage('uci');
+        } catch (e) {
+            console.error("Worker: Failed to spawn engine worker:", e);
+            rawPostMessage({ type: 'ERROR', error: e.message });
+            initPromise = null;
+        }
+    })();
+
+    return initPromise;
 };
 
 

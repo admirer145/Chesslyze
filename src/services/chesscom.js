@@ -57,32 +57,34 @@ const mapChessComGame = (game) => {
     };
 };
 
-const fetchJsonWithRetry = async (url, retries = 2, delay = 1000) => {
+const fetchJsonWithRetry = async (url, retries = 2, delay = 1000, signal = null) => {
     try {
-        const res = await fetch(url);
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        const res = await fetch(url, { signal });
         if (!res.ok) {
             if (res.status === 429 && retries > 0) {
                 await sleep(delay);
-                return fetchJsonWithRetry(url, retries - 1, delay * 2);
+                return fetchJsonWithRetry(url, retries - 1, delay * 2, signal);
             }
             throw new Error(`Chess.com API error: ${res.statusText}`);
         }
         return await res.json();
     } catch (err) {
+        if (err?.name === 'AbortError') throw err;
         const isNetwork = err instanceof TypeError || `${err.message}`.toLowerCase().includes('network');
         if (retries > 0 && isNetwork) {
             await sleep(delay);
-            return fetchJsonWithRetry(url, retries - 1, delay * 2);
+            return fetchJsonWithRetry(url, retries - 1, delay * 2, signal);
         }
         throw err;
     }
 };
 
-export const fetchChessComUser = async (username) => {
-    const profile = await fetchJsonWithRetry(`https://api.chess.com/pub/player/${username}`);
+export const fetchChessComUser = async (username, signal = null) => {
+    const profile = await fetchJsonWithRetry(`https://api.chess.com/pub/player/${username}`, 2, 1000, signal);
     let stats = null;
     try {
-        stats = await fetchJsonWithRetry(`https://api.chess.com/pub/player/${username}/stats`);
+        stats = await fetchJsonWithRetry(`https://api.chess.com/pub/player/${username}/stats`, 2, 1000, signal);
     } catch {
         stats = null;
     }
@@ -141,6 +143,10 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
     const now = Date.now();
     let targetSince;
     let targetUntil;
+    const safePercent = (value) => {
+        if (!Number.isFinite(value)) return 0;
+        return Math.max(0, Math.min(100, value));
+    };
 
     if (mode === 'smart') {
         const ninetyDaysAgo = now - (90 * 24 * 60 * 60 * 1000);
@@ -165,7 +171,7 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
         targetUntil = now;
     }
 
-    const archivesData = await fetchJsonWithRetry(`https://api.chess.com/pub/player/${username}/games/archives`);
+    const archivesData = await fetchJsonWithRetry(`https://api.chess.com/pub/player/${username}/games/archives`, 2, 1000, signal);
     const archives = Array.isArray(archivesData?.archives) ? archivesData.archives : [];
 
     const relevantArchives = archives.filter((url) => {
@@ -186,7 +192,7 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
             type: 'resume',
             message: `Resuming from archive ${startIndex + 1} of ${relevantArchives.length}...`,
             total: totalImported,
-            percentage: relevantArchives.length ? (startIndex / relevantArchives.length) * 100 : 0
+            percentage: safePercent(relevantArchives.length ? (startIndex / relevantArchives.length) * 100 : 0)
         });
     }
 
@@ -200,6 +206,7 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
     for (let i = startIndex; i < relevantArchives.length; i++) {
         if (signal?.aborted) {
             await saveImportProgress('chesscom', username, {
+                targetSince,
                 currentSince: targetSince,
                 targetUntil,
                 totalImported,
@@ -212,7 +219,7 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
                 type: 'cancelled',
                 message: `Import cancelled. ${totalImported} games saved.`,
                 total: totalImported,
-                percentage: relevantArchives.length ? (i / relevantArchives.length) * 100 : 0
+                percentage: safePercent(relevantArchives.length ? (i / relevantArchives.length) * 100 : 0)
             });
             return { totalImported, failedChunks, success: false, cancelled: true };
         }
@@ -222,11 +229,11 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
             type: 'progress',
             message: `Fetching archive ${i + 1} of ${relevantArchives.length}...`,
             total: totalImported,
-            percentage: relevantArchives.length ? (i / relevantArchives.length) * 100 : 0
+            percentage: safePercent(relevantArchives.length ? (i / relevantArchives.length) * 100 : 0)
         });
 
         try {
-            const archive = await fetchJsonWithRetry(url);
+            const archive = await fetchJsonWithRetry(url, 2, 1000, signal);
             const rawGames = Array.isArray(archive?.games) ? archive.games : [];
             const filtered = rawGames.filter((g) => {
                 const ts = typeof g.end_time === 'number' ? g.end_time * 1000 : null;
@@ -244,10 +251,11 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
                 message: `Imported ${mappedGames.length} games`,
                 count: mappedGames.length,
                 total: totalImported,
-                percentage: relevantArchives.length ? ((i + 1) / relevantArchives.length) * 100 : 100
+                percentage: safePercent(relevantArchives.length ? ((i + 1) / relevantArchives.length) * 100 : 100)
             });
 
             await saveImportProgress('chesscom', username, {
+                targetSince,
                 currentSince: targetSince,
                 targetUntil,
                 totalImported,
@@ -259,6 +267,25 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
 
             await sleep(350);
         } catch (err) {
+            if (err?.name === 'AbortError' || signal?.aborted) {
+                await saveImportProgress('chesscom', username, {
+                    targetSince,
+                    currentSince: targetSince,
+                    targetUntil,
+                    totalImported,
+                    status: 'paused',
+                    mode,
+                    failedChunks,
+                    cursor: i
+                });
+                onProgress({
+                    type: 'cancelled',
+                    message: `Import cancelled. ${totalImported} games saved.`,
+                    total: totalImported,
+                    percentage: safePercent(relevantArchives.length ? (i / relevantArchives.length) * 100 : 0)
+                });
+                return { totalImported, failedChunks, success: false, cancelled: true };
+            }
             failedChunks.push({
                 since: targetSince,
                 until: targetUntil,
@@ -270,7 +297,7 @@ export const syncChessComGames = async (username, onProgress, options = {}) => {
                 message: `Failed archive ${i + 1}: ${err.message}`,
                 error: err.message,
                 total: totalImported,
-                percentage: relevantArchives.length ? (i / relevantArchives.length) * 100 : 0
+                percentage: safePercent(relevantArchives.length ? (i / relevantArchives.length) * 100 : 0)
             });
         }
     }

@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { db } from './db';
+import { db, bulkUpsertGames } from './db';
 
 const parseTags = (pgn) => {
     const tags = {};
@@ -151,7 +151,7 @@ export const importPgnGames = async (rawPgn, options = {}) => {
             pgnHash,
             platform: 'pgn',
             sourceGameId: pgnHash,
-            sourceUrl: '',
+            sourceUrl: typeof game.site === 'string' && game.site.startsWith('http') ? game.site : '',
             isHero: false,
             source: 'pgn',
             importTag: importTag || ''
@@ -177,11 +177,11 @@ export const importPgnGames = async (rawPgn, options = {}) => {
         const existing = await db.games.where('pgnHash').anyOf(hashes).toArray();
         existingHashes = new Set(existing.map((g) => g.pgnHash).filter(Boolean));
     }
-    const toAdd = uniqueGames.filter((g) => !existingHashes.has(g.pgnHash));
-    if (toAdd.length) {
-        await db.games.bulkAdd(toAdd);
+    const imported = uniqueGames.filter((g) => !existingHashes.has(g.pgnHash)).length;
+    if (uniqueGames.length) {
+        await bulkUpsertGames(uniqueGames);
     }
 
-    const skipped = dupes + (uniqueGames.length - toAdd.length);
-    return { imported: toAdd.length, skipped, errors };
+    const skipped = dupes + (uniqueGames.length - imported);
+    return { imported, skipped, errors };
 };

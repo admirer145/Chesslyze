@@ -38,27 +38,29 @@ const readTagValue = (pgn, tag) => {
     return match ? match[1] : null;
 };
 
-const getHeroRatingDiff = (g, isWhite) => {
+const getHeroRatingDiff = (g, isWhite, pgn) => {
     const direct = isWhite
         ? (g.whiteRatingDiff ?? g.whiteEloDiff ?? g.whiteRatingDelta)
         : (g.blackRatingDiff ?? g.blackEloDiff ?? g.blackRatingDelta);
     const directParsed = parseRatingDiff(direct);
     if (directParsed !== null) return directParsed;
 
-    if (!g.pgn) return null;
+    if (!pgn) return null;
     const tags = isWhite
         ? ['WhiteRatingDiff', 'WhiteEloDiff', 'WhiteRatingDelta']
         : ['BlackRatingDiff', 'BlackEloDiff', 'BlackRatingDelta'];
     for (const tag of tags) {
-        const value = readTagValue(g.pgn, tag);
+        const value = readTagValue(pgn, tag);
         const parsed = parseRatingDiff(value);
         if (parsed !== null) return parsed;
     }
     return null;
 };
 
-const normalizeGame = (g, heroProfiles) => {
+const normalizeGame = (g, heroProfiles, extras = {}) => {
     if (!g) return null;
+    const pgn = extras.pgn || '';
+    const analysisLog = Array.isArray(extras.analysisLog) ? extras.analysisLog : [];
     const white = typeof g.white === 'string' ? g.white : g.white?.name || '';
     const black = typeof g.black === 'string' ? g.black : g.black?.name || '';
     const heroSide = getHeroSideFromGame(g, heroProfiles);
@@ -67,7 +69,7 @@ const normalizeGame = (g, heroProfiles) => {
     const isWhite = heroSide === 'white';
     const heroColor = isWhite ? 'white' : 'black';
     const heroRating = isWhite ? (g.whiteRating ?? g.whiteElo) : (g.blackRating ?? g.blackElo);
-    const heroRatingDiff = getHeroRatingDiff(g, isWhite);
+    const heroRatingDiff = getHeroRatingDiff(g, isWhite, pgn);
     const heroRatingPost = (typeof heroRating === 'number' && typeof heroRatingDiff === 'number')
         ? heroRating + heroRatingDiff
         : heroRating;
@@ -87,8 +89,6 @@ const normalizeGame = (g, heroProfiles) => {
 
     const analyzed = g.analysisStatus === 'completed' || !!g.analyzed;
     const accuracy = analyzed && g.accuracy ? (heroColor === 'white' ? g.accuracy.white : g.accuracy.black) : null;
-    const analysisLog = Array.isArray(g.analysisLog) ? g.analysisLog : [];
-
     return {
         id: g.id,
         raw: g,
@@ -183,7 +183,23 @@ export const useJourneyData = () => {
         if (!activeProfiles.length) return [];
         const all = await db.games.toArray();
         const heroGames = all.filter((g) => isHeroGameForProfiles(g, activeProfiles));
-        return heroGames.map((g) => normalizeGame(g, activeProfiles)).filter(Boolean);
+        if (!heroGames.length) return [];
+        const analyzedIds = heroGames
+            .filter((g) => g?.id && (g.analyzed || g.analysisStatus === 'completed'))
+            .map((g) => g.id);
+        const analysisRows = analyzedIds.length ? await db.gameAnalysis.bulkGet(analyzedIds) : [];
+        const analysisById = new Map(analyzedIds.map((id, idx) => [id, analysisRows[idx]?.analysisLog || []]));
+
+        const pgnIds = heroGames.map((g) => g.id);
+        const pgnRows = pgnIds.length ? await db.gameContent.bulkGet(pgnIds) : [];
+        const pgnById = new Map(pgnIds.map((id, idx) => [id, pgnRows[idx]?.pgn || '']));
+
+        return heroGames
+            .map((g) => normalizeGame(g, activeProfiles, {
+                pgn: pgnById.get(g.id) || '',
+                analysisLog: analysisById.get(g.id) || []
+            }))
+            .filter(Boolean);
     }, [profileKey]);
 
     const filteredGames = useMemo(() => applyFilters(games || [], filters), [games, filters]);

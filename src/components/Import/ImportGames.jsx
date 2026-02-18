@@ -265,7 +265,10 @@ export const ImportGames = () => {
                 setProgress(p);
                 if (p.message) setMessage(p.message);
                 if (p.total !== undefined) setImportTotal(p.total);
-                if (p.percentage !== undefined) setImportPct(p.percentage);
+                if (p.percentage !== undefined) {
+                    const pct = Number.isFinite(p.percentage) ? p.percentage : 0;
+                    setImportPct(Math.max(0, Math.min(100, pct)));
+                }
             }, syncOptions);
 
             abortRef.current = null;
@@ -424,7 +427,10 @@ export const ImportGames = () => {
                 setCcProgress(p);
                 if (p.message) setCcMessage(p.message);
                 if (p.total !== undefined) setCcImportTotal(p.total);
-                if (p.percentage !== undefined) setCcImportPct(p.percentage);
+                if (p.percentage !== undefined) {
+                    const pct = Number.isFinite(p.percentage) ? p.percentage : 0;
+                    setCcImportPct(Math.max(0, Math.min(100, pct)));
+                }
             }, syncOptions);
 
             ccAbortRef.current = null;

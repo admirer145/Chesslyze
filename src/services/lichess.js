@@ -137,13 +137,37 @@ export const fetchLichessGames = async (username, max = 50, filters = {}) => {
     if (filters.since) params.append('since', filters.since.toString());
     if (filters.until) params.append('until', filters.until.toString());
     if (filters.perfType) params.append('perfType', filters.perfType);
+    const signal = filters.signal || null;
+
+    const sleepWithAbort = (ms) => new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+        }
+        const t = setTimeout(() => {
+            if (signal?.aborted) {
+                reject(new DOMException('Aborted', 'AbortError'));
+                return;
+            }
+            resolve();
+        }, ms);
+        if (signal) {
+            const onAbort = () => {
+                clearTimeout(t);
+                reject(new DOMException('Aborted', 'AbortError'));
+            };
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
+    });
 
     const makeRequest = async (retries = 3, delay = 1000) => {
         try {
+            if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             const response = await fetch(`https://lichess.org/api/games/user/${username}?${params.toString()}`, {
                 headers: {
                     'Accept': 'application/x-ndjson',
                 },
+                signal
             });
 
             if (!response.ok) {
@@ -155,7 +179,7 @@ export const fetchLichessGames = async (username, max = 50, filters = {}) => {
                     console.warn(`Rate limit hit (429). Waiting ${waitTime}ms before retry...`);
 
                     if (retries > 0) {
-                        await new Promise(r => setTimeout(r, waitTime));
+                        await sleepWithAbort(waitTime);
                         return makeRequest(retries - 1, waitTime);
                     }
                     throw new Error('Lichess Rate Limit hit. Please wait a minute and try again.');
@@ -164,6 +188,7 @@ export const fetchLichessGames = async (username, max = 50, filters = {}) => {
             }
             return response;
         } catch (err) {
+            if (err?.name === 'AbortError') throw err;
             // Retry on network errors (TypeErrors) or specific messages
             const isNetworkError = err instanceof TypeError ||
                 err.message.toLowerCase().includes('network') ||
@@ -171,7 +196,7 @@ export const fetchLichessGames = async (username, max = 50, filters = {}) => {
 
             if (retries > 0 && isNetworkError) {
                 console.warn(`Network error details: ${err.message}. Retrying in ${delay}ms...`);
-                await new Promise(r => setTimeout(r, delay));
+                await sleepWithAbort(delay);
                 return makeRequest(retries - 1, delay * 2);
             }
             throw err;
@@ -243,6 +268,10 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
 
     const now = Date.now();
     let targetSince, targetUntil;
+    const safePercent = (value) => {
+        if (!Number.isFinite(value)) return 0;
+        return Math.max(0, Math.min(100, value));
+    };
 
     // Determine date range based on mode
     if (mode === 'smart') {
@@ -278,13 +307,19 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
 
     if (resumeFrom) {
         currentSince = resumeFrom.currentSince;
+        if (typeof resumeFrom.targetSince === 'number') targetSince = resumeFrom.targetSince;
+        if (typeof resumeFrom.targetUntil === 'number') targetUntil = resumeFrom.targetUntil;
+        if (typeof targetSince === 'number' && typeof currentSince === 'number' && currentSince < targetSince) {
+            targetSince = currentSince;
+        }
         totalImported = resumeFrom.totalImported || 0;
         failedChunks = resumeFrom.failedChunks || [];
+        const denom = targetUntil - targetSince;
         onProgress({
             type: 'resume',
             message: `Resuming from ${new Date(currentSince).toLocaleDateString()}... (${totalImported} already imported)`,
             total: totalImported,
-            percentage: ((currentSince - targetSince) / (targetUntil - targetSince)) * 100
+            percentage: safePercent(denom > 0 ? ((currentSince - targetSince) / denom) * 100 : 0)
         });
     }
 
@@ -311,6 +346,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
         // Check for cancellation
         if (signal?.aborted) {
             await saveImportProgress('lichess', username, {
+                targetSince,
                 currentSince,
                 targetUntil,
                 totalImported,
@@ -322,7 +358,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
                 type: 'cancelled',
                 message: `Import cancelled. ${totalImported} games saved.`,
                 total: totalImported,
-                percentage: ((currentSince - targetSince) / (targetUntil - targetSince)) * 100
+                percentage: safePercent((targetUntil - targetSince) > 0 ? ((currentSince - targetSince) / (targetUntil - targetSince)) * 100 : 0)
             });
             return { totalImported, failedChunks, success: false, cancelled: true };
         }
@@ -330,7 +366,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
         const currentUntil = Math.min(currentSince + CHUNK_MS, targetUntil);
         const dateFromStr = new Date(currentSince).toLocaleDateString();
         const dateToStr = new Date(currentUntil).toLocaleDateString();
-        const pct = ((currentSince - targetSince) / (targetUntil - targetSince)) * 100;
+        const pct = safePercent((targetUntil - targetSince) > 0 ? ((currentSince - targetSince) / (targetUntil - targetSince)) * 100 : 0);
 
         onProgress({
             type: 'progress',
@@ -349,7 +385,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
 
             if (isHeuristicallyFull && !chunkIncludesToday) {
                 // Skip this chunk — likely already synced
-                const skipPct = ((currentUntil - targetSince) / (targetUntil - targetSince)) * 100;
+                const skipPct = safePercent((targetUntil - targetSince) > 0 ? ((currentUntil - targetSince) / (targetUntil - targetSince)) * 100 : 0);
                 onProgress({
                     type: 'chunk-complete',
                     message: `Skipped ${dateFromStr} – ${dateToStr} (${distinctDays} active days found locally)`,
@@ -366,7 +402,8 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
             await circuitBreaker.execute(async () => {
                 const rawGames = await fetchLichessGames(username, 1000, {
                     since: currentSince,
-                    until: currentUntil
+                    until: currentUntil,
+                    signal
                 });
 
                 if (rawGames.length > 0) {
@@ -375,7 +412,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
                     totalImported += mappedGames.length;
                 }
 
-                const newPct = ((currentUntil - targetSince) / (targetUntil - targetSince)) * 100;
+                const newPct = safePercent((targetUntil - targetSince) > 0 ? ((currentUntil - targetSince) / (targetUntil - targetSince)) * 100 : 0);
                 onProgress({
                     type: 'chunk-complete',
                     message: `Imported ${rawGames.length} games (${dateFromStr} – ${dateToStr})`,
@@ -387,6 +424,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
 
             // Save progress after each successful chunk
             await saveImportProgress('lichess', username, {
+                targetSince,
                 currentSince: currentUntil,
                 targetUntil,
                 totalImported,
@@ -396,6 +434,24 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
             });
 
         } catch (err) {
+            if (err?.name === 'AbortError' || signal?.aborted) {
+                await saveImportProgress('lichess', username, {
+                    targetSince,
+                    currentSince,
+                    targetUntil,
+                    totalImported,
+                    status: 'paused',
+                    mode,
+                    failedChunks
+                });
+                onProgress({
+                    type: 'cancelled',
+                    message: `Import cancelled. ${totalImported} games saved.`,
+                    total: totalImported,
+                    percentage: safePercent((targetUntil - targetSince) > 0 ? ((currentSince - targetSince) / (targetUntil - targetSince)) * 100 : 0)
+                });
+                return { totalImported, failedChunks, success: false, cancelled: true };
+            }
             console.error(`Chunk failed (${dateFromStr} - ${dateToStr}):`, err);
 
             failedChunks.push({
@@ -410,11 +466,12 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
                 message: `Failed: ${dateFromStr} - ${dateToStr} (${err.message})`,
                 error: err.message,
                 total: totalImported,
-                percentage: ((currentSince - targetSince) / (targetUntil - targetSince)) * 100
+                percentage: safePercent((targetUntil - targetSince) > 0 ? ((currentSince - targetSince) / (targetUntil - targetSince)) * 100 : 0)
             });
 
             if (err.message.includes('Too many rate limit errors')) {
                 await saveImportProgress('lichess', username, {
+                    targetSince,
                     currentSince,
                     targetUntil,
                     totalImported,
@@ -427,7 +484,7 @@ export const syncUserGames = async (username, onProgress, options = {}) => {
                     type: 'paused',
                     message: `Rate limited. ${totalImported} games saved. Resume in 2 minutes.`,
                     total: totalImported,
-                    percentage: ((currentSince - targetSince) / (targetUntil - targetSince)) * 100
+                    percentage: safePercent((targetUntil - targetSince) > 0 ? ((currentSince - targetSince) / (targetUntil - targetSince)) * 100 : 0)
                 });
 
                 throw err;

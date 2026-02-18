@@ -177,6 +177,65 @@ db.version(20).stores({
     heroProfiles: '++id, &[platform+usernameLower], platform, usernameLower, displayName, createdAt'
 });
 
+db.version(21).stores({
+    games: '++id, lichessId, pgnHash, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus, analysisStartedAt, whiteRating, blackRating, perf, speed, timeControl, analyzedAt, priority, rated, variant, whiteTitle, blackTitle, isHero, source, importTag, platform, sourceGameId, sourceUrl, &[platform+sourceGameId]',
+    positions: '++id, gameId, fen, eval, classification, bestMove, phase, tags, questionType, nextReviewAt',
+    openings: 'eco, name, winRate, frequency, masterMoves',
+    ai_analyses: '++id, gameId, promptVersion, createdAt',
+    importProgress: 'username, [platform+usernameLower], platform, usernameLower, currentSince, targetUntil, totalImported, lastUpdated, status, mode, failedChunks, cursor',
+    heroProfiles: '++id, &[platform+usernameLower], platform, usernameLower, displayName, createdAt',
+    gameContent: 'gameId, pgnHash, updatedAt',
+    gameAnalysis: 'gameId, updatedAt'
+}).upgrade(async (tx) => {
+    const gamesTable = tx.table('games');
+    const contentTable = tx.table('gameContent');
+    const analysisTable = tx.table('gameAnalysis');
+    const now = new Date().toISOString();
+
+    const contentBatch = [];
+    const analysisBatch = [];
+    const flushContent = async () => {
+        if (contentBatch.length) {
+            const chunk = contentBatch.splice(0, contentBatch.length);
+            await contentTable.bulkPut(chunk);
+        }
+    };
+    const flushAnalysis = async () => {
+        if (analysisBatch.length) {
+            const chunk = analysisBatch.splice(0, analysisBatch.length);
+            await analysisTable.bulkPut(chunk);
+        }
+    };
+
+    await gamesTable.toCollection().each(async (g) => {
+        if (g?.pgn) {
+            contentBatch.push({
+                gameId: g.id,
+                pgn: g.pgn,
+                pgnHash: g.pgnHash || '',
+                updatedAt: now
+            });
+        }
+        if (Array.isArray(g?.analysisLog) && g.analysisLog.length > 0) {
+            analysisBatch.push({
+                gameId: g.id,
+                analysisLog: g.analysisLog,
+                updatedAt: now
+            });
+        }
+        if (contentBatch.length >= 200) await flushContent();
+        if (analysisBatch.length >= 50) await flushAnalysis();
+    });
+
+    await flushContent();
+    await flushAnalysis();
+
+    await gamesTable.toCollection().modify((g) => {
+        if (g?.pgn) g.pgn = null;
+        if (Array.isArray(g?.analysisLog) && g.analysisLog.length > 0) g.analysisLog = [];
+    });
+});
+
 export const saveAIAnalysis = async (gameId, analysisData, promptVersion = '1.0') => {
     const existing = await db.ai_analyses.where('gameId').equals(gameId).first();
     const record = {
@@ -198,7 +257,28 @@ export const getAIAnalysis = async (gameId) => {
 };
 
 export const addGames = async (games) => {
-    return await db.games.bulkAdd(games);
+    if (!Array.isArray(games) || games.length === 0) return [];
+    const stripped = games.map((g) => {
+        if (!g) return g;
+        const { pgn, analysisLog, ...rest } = g;
+        return { ...rest };
+    });
+    const keys = await db.games.bulkAdd(stripped);
+    const contentRecords = [];
+    games.forEach((g, idx) => {
+        if (g?.pgn && keys[idx]) {
+            contentRecords.push({
+                gameId: keys[idx],
+                pgn: g.pgn,
+                pgnHash: g.pgnHash || '',
+                updatedAt: new Date().toISOString()
+            });
+        }
+    });
+    if (contentRecords.length) {
+        await db.gameContent.bulkPut(contentRecords);
+    }
+    return keys;
 };
 
 const extractPgnTag = (pgn, tag) => {
@@ -213,18 +293,21 @@ const isMissingTitle = (value) => !value || value === '?' || value === '-';
 
 export const backfillTitlesFromPgn = async () => {
     try {
-        await db.transaction('rw', db.games, async () => {
+        await db.transaction('rw', db.games, db.gameContent, async () => {
+            const content = await db.gameContent.toArray();
+            const pgnByGameId = new Map(content.map((c) => [c.gameId, c.pgn]));
             await db.games.toCollection().modify((g) => {
-                if (!g?.pgn) return;
+                const pgn = pgnByGameId.get(g.id);
+                if (!pgn) return;
                 const needsWhite = isMissingTitle(g.whiteTitle);
                 const needsBlack = isMissingTitle(g.blackTitle);
                 if (!needsWhite && !needsBlack) return;
                 if (needsWhite) {
-                    const whiteTitle = extractPgnTag(g.pgn, 'WhiteTitle');
+                    const whiteTitle = extractPgnTag(pgn, 'WhiteTitle');
                     if (whiteTitle) g.whiteTitle = whiteTitle;
                 }
                 if (needsBlack) {
-                    const blackTitle = extractPgnTag(g.pgn, 'BlackTitle');
+                    const blackTitle = extractPgnTag(pgn, 'BlackTitle');
                     if (blackTitle) g.blackTitle = blackTitle;
                 }
             });
@@ -243,11 +326,16 @@ const inferPlatform = (g) => {
 export const bulkUpsertGames = async (games) => {
     const normalizedGames = games.map((g) => {
         if (!g) return g;
-        const next = { ...g };
+        const { pgn, analysisLog, ...rest } = g;
+        const next = { ...rest };
         if (!next.platform) {
             if (next.source) next.platform = next.source;
             else if (next.lichessId) next.platform = 'lichess';
             else if (next.pgnHash) next.platform = 'pgn';
+        }
+        if (next.platform === 'pgn' && typeof pgn === 'string' && pgn.trim()) {
+            // Keep PGN for PGN-imported games as a fallback if gameContent is missing.
+            next.pgn = pgn.trim();
         }
         if (!next.sourceGameId) {
             if (next.platform === 'lichess' && next.lichessId) next.sourceGameId = next.lichessId;
@@ -256,12 +344,12 @@ export const bulkUpsertGames = async (games) => {
         return next;
     });
 
-    const keys = normalizedGames
+    const compoundKeys = normalizedGames
         .map(g => (g?.platform && g?.sourceGameId ? [g.platform, g.sourceGameId] : null))
         .filter(Boolean);
 
-    const existing = keys.length
-        ? await db.games.where('[platform+sourceGameId]').anyOf(keys).toArray()
+    const existing = compoundKeys.length
+        ? await db.games.where('[platform+sourceGameId]').anyOf(compoundKeys).toArray()
         : [];
     const existingIdsMap = new Map(existing.map(g => [`${g.platform}::${g.sourceGameId}`, g.id]));
 
@@ -274,8 +362,83 @@ export const bulkUpsertGames = async (games) => {
         }
         return g;
     });
+    const keys = await db.games.bulkPut(toPut);
 
-    return await db.games.bulkPut(toPut);
+    const contentRecords = [];
+    const analysisRecords = [];
+    const now = new Date().toISOString();
+    games.forEach((g, idx) => {
+        const gameId = keys[idx] ?? toPut[idx]?.id;
+        if (!gameId) return;
+        if (g?.pgn) {
+            contentRecords.push({
+                gameId,
+                pgn: g.pgn,
+                pgnHash: g.pgnHash || '',
+                updatedAt: now
+            });
+        }
+        if (Array.isArray(g?.analysisLog) && g.analysisLog.length) {
+            analysisRecords.push({
+                gameId,
+                analysisLog: g.analysisLog,
+                updatedAt: now
+            });
+        }
+    });
+    if (contentRecords.length) {
+        await db.gameContent.bulkPut(contentRecords);
+    }
+    if (analysisRecords.length) {
+        await db.gameAnalysis.bulkPut(analysisRecords);
+    }
+
+    return keys;
+};
+
+export const getGameContent = async (gameId) => {
+    if (!gameId) return null;
+    return await db.gameContent.get(gameId);
+};
+
+export const getGamePgn = async (gameId) => {
+    const content = await getGameContent(gameId);
+    return content?.pgn || '';
+};
+
+export const saveGameContent = async ({ gameId, pgn, pgnHash }) => {
+    if (!gameId || !pgn) return;
+    const record = {
+        gameId,
+        pgn,
+        pgnHash: pgnHash || '',
+        updatedAt: new Date().toISOString()
+    };
+    await db.gameContent.put(record);
+};
+
+export const deleteGameContent = async (gameId) => {
+    if (!gameId) return;
+    await db.gameContent.delete(gameId);
+};
+
+export const getGameAnalysis = async (gameId) => {
+    if (!gameId) return null;
+    return await db.gameAnalysis.get(gameId);
+};
+
+export const saveGameAnalysis = async ({ gameId, analysisLog }) => {
+    if (!gameId) return;
+    await db.gameAnalysis.put({
+        gameId,
+        analysisLog: Array.isArray(analysisLog) ? analysisLog : [],
+        updatedAt: new Date().toISOString()
+    });
+};
+
+export const deleteGameAnalysis = async (gameId) => {
+    if (!gameId) return;
+    await db.gameAnalysis.delete(gameId);
 };
 
 export const getLatestGameTimestampForProfile = async (platform, username) => {
@@ -327,6 +490,7 @@ export const saveImportProgress = async (platform, username, progress) => {
         username: buildImportProgressKey(safePlatform, usernameLower),
         platform: safePlatform,
         usernameLower,
+        targetSince: progress.targetSince ?? null,
         currentSince: progress.currentSince,
         targetUntil: progress.targetUntil,
         totalImported: progress.totalImported || 0,

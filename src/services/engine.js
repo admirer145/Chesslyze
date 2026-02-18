@@ -1,3 +1,5 @@
+import { getDefaultEngineVersion } from './engineDefaults';
+
 class EngineService {
     constructor() {
         this.worker = null;
@@ -6,7 +8,7 @@ class EngineService {
         this.isInitializing = false;
         this.initPromise = null;
         this.engineName = null;
-        this.engineCaps = { nnue: false, multipv: false };
+        this.engineCaps = { nnue: false, multipv: false, evalFile: false, evalFileSmall: false };
         this.lastJobFinishTime = 0;
         this.version = null;
         this.debug = false;
@@ -18,12 +20,27 @@ class EngineService {
         }
     }
 
-    init(version = '17.1-single') {
+    failAllJobs(reason = 'Engine worker terminated') {
+        if (this.jobs.size === 0) return;
+        for (const [jobId, job] of this.jobs.entries()) {
+            try {
+                if (job && typeof job.reject === 'function') {
+                    job.reject(new Error(reason));
+                }
+            } catch {
+                // ignore
+            }
+            this.jobs.delete(jobId);
+        }
+        this.lastJobFinishTime = Date.now();
+    }
+
+    init(version = getDefaultEngineVersion()) {
         if (this.worker && this.version === version) return Promise.resolve();
 
         // If worker exists but version different, stop old one
         if (this.worker) {
-            this.terminate();
+            this.terminate('Engine worker switched');
         }
 
         if (this.initPromise) return this.initPromise;
@@ -160,8 +177,8 @@ class EngineService {
 
     async analyze(fen, depthOrOptions = 15, onUpdate) {
         // Use current expected version if not initialized (should be set by init/restart previously)
-        // If not set, use default '17.1-single'
-        if (!this.worker) await this.init(this.version || '17.1-single');
+        // If not set, use a sensible default based on device/first-run state.
+        if (!this.worker) await this.init(this.version || getDefaultEngineVersion());
 
         const jobId = Math.random().toString(36).substring(7);
 
@@ -233,12 +250,13 @@ class EngineService {
         if (this.worker) this.worker.postMessage({ type: 'STOP' });
     }
 
-    terminate() {
+    terminate(reason) {
         if (this.worker) {
             this.worker.terminate();
             this.worker = null;
             this.initPromise = null;
         }
+        this.failAllJobs(reason);
     }
 }
 

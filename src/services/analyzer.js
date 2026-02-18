@@ -1,8 +1,9 @@
-import { db } from './db';
+import { db, getGamePgn, getGameAnalysis, saveGameAnalysis } from './db';
 import { storePuzzlePositions } from './puzzles';
 import { getHeroProfiles, getHeroSideFromGame } from './heroProfiles';
 import { engine } from './engine';
 import { Chess } from 'chess.js';
+import { getDefaultEngineVersion } from './engineDefaults';
 
 const THRESHOLDS = {
     BLUNDER: 250,
@@ -35,6 +36,47 @@ const clampInt = (value, min, max, fallback) => {
     return Math.min(max, Math.max(min, parsed));
 };
 
+const publicAssetCache = new Map();
+const resolvePublicUrl = (filename) => {
+    if (typeof window === 'undefined') return filename;
+    const base = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL)
+        ? import.meta.env.BASE_URL
+        : '/';
+    const normalized = base.endsWith('/') ? base : `${base}/`;
+    return new URL(`${normalized}${filename}`, window.location.origin).href;
+};
+
+const checkPublicAsset = async (filename) => {
+    if (publicAssetCache.has(filename)) return publicAssetCache.get(filename);
+    if (typeof fetch !== 'function' || typeof window === 'undefined') {
+        publicAssetCache.set(filename, false);
+        return false;
+    }
+
+    const url = resolvePublicUrl(filename);
+    let ok = false;
+    try {
+        const head = await fetch(url, { method: 'HEAD', cache: 'force-cache' });
+        const ct = head.headers && head.headers.get ? head.headers.get('content-type') : '';
+        ok = head.ok && !(ct && ct.includes('text/html'));
+    } catch {
+        ok = false;
+    }
+
+    if (!ok) {
+        try {
+            const res = await fetch(url, { method: 'GET', cache: 'force-cache' });
+            const ct = res.headers && res.headers.get ? res.headers.get('content-type') : '';
+            ok = res.ok && !(ct && ct.includes('text/html'));
+        } catch {
+            ok = false;
+        }
+    }
+
+    publicAssetCache.set(filename, ok);
+    return ok;
+};
+
 const loadActiveEngineProfile = () => {
     if (typeof window === 'undefined') return null;
     try {
@@ -54,7 +96,7 @@ const loadActiveEngineProfile = () => {
             threads: clampInt(selected?.threads ?? 1, 1, 32, 1),
             timePerMove: clampInt(selected?.timePerMove ?? 0, 0, 60000, 0),
             useNNUE: typeof selected?.useNNUE === 'boolean' ? selected.useNNUE : true,
-            version: selected?.version || '17.1-single'
+            version: selected?.version || getDefaultEngineVersion()
         };
     } catch {
         return null;
@@ -87,6 +129,8 @@ const applyClassificationPenalty = (accuracy, classification) => {
 const getClassification = ({
     evalDiff,
     isBestMove,
+    isExactBest,
+    isTopLine,
     scoreBefore,
     scoreAfter,
     materialDelta,
@@ -123,7 +167,7 @@ const getClassification = ({
     const stillLosing = beforeLosing && afterLosing;
 
     const deferredSac = typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -3;
-    const sacrifice = materialDelta <= -2 || deferredSac;
+    const sacrifice = materialDelta <= -2 || deferredSac || (typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -2);
     const majorMaterialLoss = materialDelta <= -5; // rook/queen
 
     const rating = typeof playerRating === 'number' ? playerRating : null;
@@ -144,30 +188,36 @@ const getClassification = ({
     if (isBestMove) {
         const immediateSac = materialDelta <= -2;
         const pieceSac = materialDelta <= -3 || deferredSac; // minor piece or more
-        const BRILLIANT_GAP = 100 * brilliantFactor;
+    const BRILLIANT_GAP = 80 * brilliantFactor;
 
-        // 🔥 BRILLIANT: Best move + genuine sacrifice + non-obvious
-        // Requires:
-        //  - Not a simple recapture
-        //  - Genuine material sacrifice (piece-level, OR minor + tactical motif)
-        //  - Not already in an overwhelming position (< +5.0)
-        //  - Position stays reasonable after the sacrifice
-        //  - Move stands out from alternatives (gap to second best)
-        const notOverwhelming = before < 500;
-        const positionHeld = after >= -NEAR_EQUAL && after >= before - 50;
-        const standoutMove = gap !== null && gap >= BRILLIANT_GAP;
+    // 🔥 BRILLIANT: Best move + genuine sacrifice + non-obvious
+    // Requires:
+    //  - Not a simple recapture
+    //  - Genuine material sacrifice (piece-level, OR minor + tactical motif)
+    //  - Not already in an overwhelming position (< +5.0)
+    //  - Position stays reasonable after the sacrifice
+    //  - Move stands out from alternatives (gap to second best)
+    const notOverwhelming = before < 500;
+    const positionHeld = after >= -NEAR_EQUAL && after >= before - 50;
+    const standoutMove = gap !== null && gap >= BRILLIANT_GAP;
+    const isBestish = !!(isExactBest || (isTopLine && evalDiff <= THRESHOLDS.BEST * 0.7) || isBestMove);
+    const complexPosition = Math.abs(before) <= 300;
+    const improves = (after - before) >= 60;
+    const winningSac = majorMaterialLoss && (isMateScore(after) || after >= WINNING);
 
-        if (
+    if (
             !isRecapture &&
-            notOverwhelming &&
-            positionHeld &&
+            isBestish &&
+            sacrifice &&
             (
-                // Path A: Piece-level sacrifice (knight/bishop/rook/queen)
-                (pieceSac && standoutMove) ||
-                // Path B: Smaller sacrifice (pawn/exchange) but with a tactical motif
+                // Path A: Major sacrifice leading to winning/mate even if already better
+                winningSac ||
+                // Path B: Piece-level sacrifice with standout or big improvement in a complex position
+                (pieceSac && (standoutMove || (improves && complexPosition))) ||
+                // Path C: Smaller sacrifice with a tactical motif and clear separation
                 (immediateSac && hasTacticalMotif && standoutMove) ||
-                // Path C: Piece sacrifice that dramatically improves position
-                (pieceSac && (after - before) >= 60)
+                // Path D: Sacrifice that holds a complex position without dropping eval
+                (complexPosition && positionHeld && standoutMove)
             )
         ) {
             return 'brilliant';
@@ -181,32 +231,39 @@ const getClassification = ({
 
         const recoveredFromLosing =
             before <= -WINNING &&
-            after >= -NEAR_EQUAL;
+            after >= -SLIGHT_EDGE;
 
         const savedFromCollapse =
             before <= -CLEAR_EDGE &&
             after >= -SLIGHT_EDGE &&
             secondScore !== null &&
-            secondScore <= -WINNING; // second-best leads to losing
+            secondScore <= -CLEAR_EDGE; // second-best leads to trouble
 
         const onlyMovePreventingDisaster =
-            gap !== null && gap >= 200 &&
+            gap !== null && gap >= 140 &&
             secondScore !== null &&
-            secondScore <= -CLEAR_EDGE &&
+            secondScore <= -SLIGHT_EDGE &&
             after >= -NEAR_EQUAL;
 
         const criticalConversion =
             Math.abs(before) <= SLIGHT_EDGE &&
-            after >= WINNING &&
-            gap !== null && gap >= 150;
+            after >= CLEAR_EDGE &&
+            gap !== null && gap >= 120;
+
+        const decisiveSwing =
+            isBestish &&
+            !isRecapture &&
+            complexPosition &&
+            (after - before) >= 120;
 
         const isGreat =
             recoveredFromLosing ||
             savedFromCollapse ||
             onlyMovePreventingDisaster ||
-            criticalConversion;
+            criticalConversion ||
+            decisiveSwing;
 
-        if (isGreat && !isRecapture) {
+        if (isGreat && !isRecapture && isBestish) {
             return 'great';
         }
 
@@ -501,28 +558,90 @@ const generateExplanation = (classification, evalDiff, move, bestMove) => {
 
 export const processGame = async (gameId) => {
     const game = await db.games.get(gameId);
-    if (!game || game.analyzed) return; // Skip if already analyzed
+    if (!game) return;
+    if (game.analyzed) {
+        // If a game is already analyzed but still marked pending, clear the stale queue state.
+        if (game.analysisStatus === 'pending' || game.analysisStatus === 'analyzing') {
+            await db.games.update(gameId, {
+                analysisStatus: 'failed',
+                analysisStartedAt: null,
+                analysisHeartbeatAt: null
+            });
+        }
+        return;
+    }
 
     const heroProfiles = await getHeroProfiles();
     const heroSide = getHeroSideFromGame(game, heroProfiles);
     const explicitHero = typeof game.isHero === 'boolean' ? game.isHero : true;
-    if (explicitHero && heroProfiles.length && !heroSide) {
+    const platform = (game.platform || game.source || (game.lichessId ? 'lichess' : '') || (game.pgnHash ? 'pgn' : '') || '').toLowerCase();
+    const allowAnonymous = platform === 'pgn' || platform === 'master' || platform === 'unknown';
+    if (explicitHero && heroProfiles.length && !heroSide && !allowAnonymous) {
         await db.games.update(gameId, { analyzed: false, analysisStatus: 'ignored' });
         return;
     }
 
-    if (!game.pgn || typeof game.pgn !== 'string') {
+    let pgn = await getGamePgn(gameId);
+    if ((!pgn || typeof pgn !== 'string') && typeof game?.pgn === 'string' && game.pgn.trim()) {
+        pgn = game.pgn;
+        await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || '' });
+    }
+    if ((!pgn || typeof pgn !== 'string') && game?.pgnHash) {
+        const byHash = await db.gameContent.where('pgnHash').equals(game.pgnHash).first();
+        if (byHash?.pgn) {
+            pgn = byHash.pgn;
+            await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || '' });
+        }
+    }
+    if ((!pgn || typeof pgn !== 'string') && game?.sourceGameId) {
+        const bySource = await db.gameContent.where('pgnHash').equals(game.sourceGameId).first();
+        if (bySource?.pgn) {
+            pgn = bySource.pgn;
+            await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || game.sourceGameId || '' });
+        }
+    }
+    if ((!pgn || typeof pgn !== 'string') && (game?.site || game?.sourceUrl)) {
+        const rawUrl = (game.sourceUrl || game.site || '').toString().trim();
+        try {
+            const url = new URL(rawUrl);
+            let fetched = '';
+            if (url.hostname.includes('lichess.org')) {
+                const id = url.pathname.split('/').filter(Boolean).pop();
+                if (id) {
+                    const res = await fetch(`https://lichess.org/game/export/${id}`);
+                    if (res.ok) fetched = await res.text();
+                }
+            }
+            if (fetched && fetched.trim()) {
+                pgn = fetched.trim();
+                await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || '' });
+            }
+        } catch {
+            // ignore URL parsing/fetch errors
+        }
+    }
+    if (!pgn || typeof pgn !== 'string') {
         console.warn(`Skipping analysis for game ${gameId}: Missing or invalid PGN.`);
-        await db.games.update(gameId, { analyzed: true });
+        await db.games.update(gameId, {
+            analyzed: true,
+            analysisStatus: 'failed',
+            analysisStartedAt: null,
+            analysisHeartbeatAt: null
+        });
         return;
     }
 
     const chess = new Chess();
     try {
-        chess.loadPgn(game.pgn);
+        chess.loadPgn(pgn, { sloppy: true });
     } catch (e) {
         console.error(`Invalid PGN parsing for game ${gameId}`, e);
-        await db.games.update(gameId, { analyzed: true, analysisStatus: 'failed' });
+        await db.games.update(gameId, {
+            analyzed: true,
+            analysisStatus: 'failed',
+            analysisStartedAt: null,
+            analysisHeartbeatAt: null
+        });
         return;
     }
 
@@ -535,7 +654,8 @@ export const processGame = async (gameId) => {
     const history = chess.history({ verbose: true });
     chess.reset();
 
-    const existingLog = Array.isArray(game.analysisLog) ? game.analysisLog : [];
+    const existingRecord = await getGameAnalysis(gameId);
+    const existingLog = Array.isArray(existingRecord?.analysisLog) ? existingRecord.analysisLog : [];
     const resuming = existingLog.length > 0 && existingLog.length < history.length;
     const analysisLog = resuming ? existingLog : [];
 
@@ -644,7 +764,7 @@ export const processGame = async (gameId) => {
 
     // Check if version changed
     const currentVersion = engine.version;
-    const newVersion = profile?.version || '17.1-single';
+    const newVersion = profile?.version || getDefaultEngineVersion();
 
     console.log(`[Analyzer] Profile Version: ${newVersion}, Current Engine Version: ${currentVersion}`);
 
@@ -666,9 +786,30 @@ export const processGame = async (gameId) => {
 
     if (newVersion?.startsWith('17.1')) {
         // Stockfish 17.1 no longer has "Use NNUE" option
-        // Default nets for 17.1 (must exist in /public)
-        engineOptions.push({ name: 'EvalFile', value: 'nn-1c0000000000.nnue' });
-        engineOptions.push({ name: 'EvalFileSmall', value: 'nn-37f18f62d772.nnue' });
+        // Only set EvalFile options if the engine supports them and assets exist.
+        const caps = engine.getInfo()?.caps || {};
+        const supportsEvalFile = !!(caps.evalFile || caps.evalFileSmall);
+
+        if (supportsEvalFile) {
+            const hasSmall = await checkPublicAsset('nn-37f18f62d772.nnue');
+            const hasLarge = await checkPublicAsset('nn-1c0000000000.nnue');
+
+            if (newVersion === '17.1-lite') {
+                if (hasSmall) {
+                    engineOptions.push({ name: 'EvalFile', value: 'nn-37f18f62d772.nnue' });
+                    engineOptions.push({ name: 'EvalFileSmall', value: 'nn-37f18f62d772.nnue' });
+                }
+            } else if (hasLarge || hasSmall) {
+                if (hasLarge) {
+                    engineOptions.push({ name: 'EvalFile', value: 'nn-1c0000000000.nnue' });
+                } else if (hasSmall) {
+                    engineOptions.push({ name: 'EvalFile', value: 'nn-37f18f62d772.nnue' });
+                }
+                if (hasSmall) {
+                    engineOptions.push({ name: 'EvalFileSmall', value: 'nn-37f18f62d772.nnue' });
+                }
+            }
+        }
     } else {
         engineOptions.push({ name: 'Use NNUE', value: useNNUE });
         engineOptions.push({ name: 'EvalFile', value: 'nn-5af11540bbfe.nnue' });
@@ -846,6 +987,8 @@ export const processGame = async (gameId) => {
             classification = getClassification({
                 evalDiff,
                 isBestMove,
+                isExactBest: userMoveUCI === bestMoveUCI,
+                isTopLine: isInTopLines,
                 scoreBefore: scoreBeforeCp,
                 scoreAfter: myScoreAfter,
                 materialDelta,
@@ -885,9 +1028,12 @@ export const processGame = async (gameId) => {
                     const deepBestThreshold = THRESHOLDS.BEST * (phase === 'opening' ? 1.3 : 1);
                     const deepIsBestMove = userMoveUCI === deepBestMoveUCI || deepEvalDiff <= deepBestThreshold;
 
+                    const deepIsTopLine = !!deepUserLine;
                     const deepClassification = getClassification({
                         evalDiff: deepEvalDiff,
                         isBestMove: deepIsBestMove,
+                        isExactBest: userMoveUCI === deepBestMoveUCI,
+                        isTopLine: deepIsTopLine,
                         scoreBefore: deepScoreBeforeCp,
                         scoreAfter: deepScoreAfter,
                         materialDelta,
@@ -963,9 +1109,9 @@ export const processGame = async (gameId) => {
             });
 
             // Save progress every move so UI updates in real-time
+            await saveGameAnalysis({ gameId, analysisLog });
             await db.games.update(gameId, {
                 analysisHeartbeatAt: new Date().toISOString(),
-                analysisLog,
                 analysisProgress: Math.round(((i + 1) / Math.max(1, history.length)) * 100)
             });
 
@@ -1033,11 +1179,13 @@ export const processGame = async (gameId) => {
                 });
             } else {
                 console.error(`[Analyzer] Game ${gameId} failed after ${retryCount - 1} retries.`);
+                if (analysisLog.length > 0) {
+                    await saveGameAnalysis({ gameId, analysisLog });
+                }
                 await db.games.update(gameId, {
                     analyzed: true,
                     analysisStatus: 'failed',
-                    analysisRetryCount: retryCount,
-                    analysisLog // Keep whatever log we have
+                    analysisRetryCount: retryCount
                 });
             }
             return;
@@ -1050,13 +1198,13 @@ export const processGame = async (gameId) => {
             } catch {
                 // ignore
             }
+            await saveGameAnalysis({ gameId, analysisLog });
             await db.games.update(gameId, {
                 analyzed: true,
                 analysisStatus: 'failed',
                 analysisStartedAt: null,
                 analysisHeartbeatAt: null,
-                analysisProgress: Math.round((analysisLog.length / Math.max(1, history.length)) * 100),
-                analysisLog
+                analysisProgress: Math.round((analysisLog.length / Math.max(1, history.length)) * 100)
             });
         } else {
             await db.games.update(gameId, { analyzed: true, analysisStatus: 'failed', analysisStartedAt: null, analysisHeartbeatAt: null });
@@ -1067,6 +1215,8 @@ export const processGame = async (gameId) => {
     // Save Reel Positions
     await storePuzzlePositions(reelPositions);
 
+    await saveGameAnalysis({ gameId, analysisLog });
+
     // Save Game Analytics
     await db.games.update(gameId, {
         analyzed: true,
@@ -1075,7 +1225,6 @@ export const processGame = async (gameId) => {
         analysisHeartbeatAt: null,
         analysisProgress: 100,
         analyzedAt: new Date().toISOString(),
-        analysisLog, // Full history for graph
         accuracy: {
             white: whiteMoves ? Math.round(whiteAccuracySum / whiteMoves) : 0,
             black: blackMoves ? Math.round(blackAccuracySum / blackMoves) : 0

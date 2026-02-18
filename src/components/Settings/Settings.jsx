@@ -6,6 +6,7 @@ import { AlertCircle, CheckCircle } from 'lucide-react';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { useHeroProfiles } from '../../hooks/useHeroProfiles';
 import { getHeroDisplayName, isHeroGameForProfiles } from '../../services/heroProfiles';
+import { getDefaultEngineVersion, isMobileDevice } from '../../services/engineDefaults';
 
 const ENGINE_PROFILES_KEY = 'engineProfiles';
 const ENGINE_ACTIVE_KEY = 'activeEngineProfileId';
@@ -13,6 +14,7 @@ const BOARD_LIGHT_KEY = 'boardLightSquare';
 const BOARD_DARK_KEY = 'boardDarkSquare';
 const BOARD_FLASH_WHITE_KEY = 'boardFlashWhite';
 const BOARD_FLASH_BLACK_KEY = 'boardFlashBlack';
+const BEST_MOVE_ARROW_KEY = 'showBestMoveArrow';
 const DEFAULT_BOARD_LIGHT = '#e2e8f0';
 const DEFAULT_BOARD_DARK = '#475569';
 const DEFAULT_FLASH_WHITE = '#D9C64A';
@@ -44,7 +46,8 @@ const buildLegacyProfile = () => {
         deepDepth,
         hash,
         threads,
-        useNNUE
+        useNNUE,
+        version: getDefaultEngineVersion()
     };
 };
 
@@ -62,7 +65,7 @@ const normalizeProfile = (profile, fallbackId) => {
         threads: clampInt(safe.threads ?? 1, 1, 128, 1), // Allow more threads (clamped by UI later)
         timePerMove: clampInt(safe.timePerMove ?? 0, 0, 60000, 0), // 0 = off, max 60s
         useNNUE: typeof safe.useNNUE === 'boolean' ? safe.useNNUE : true,
-        version: safe.version || '17.1-single'
+        version: safe.version || getDefaultEngineVersion()
     };
 };
 
@@ -95,13 +98,23 @@ const getInitialEngineState = () => {
 export const Settings = () => {
     const { profiles: heroProfiles, activeProfiles, filterIds, setFilterIds } = useHeroProfiles();
     const heroLabel = useMemo(() => getHeroDisplayName(activeProfiles), [activeProfiles]);
-    const [status, setStatus] = useState(null);
+    const [stopStatus, setStopStatus] = useState(null);
+    const [clearStatus, setClearStatus] = useState(null);
     const [engineInfo, setEngineInfo] = useState(() => engine.getInfo());
     const [boardLight, setBoardLight] = useState(() => localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT);
     const [boardDark, setBoardDark] = useState(() => localStorage.getItem(BOARD_DARK_KEY) || DEFAULT_BOARD_DARK);
     const [flashWhite, setFlashWhite] = useState(() => localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE);
     const [flashBlack, setFlashBlack] = useState(() => localStorage.getItem(BOARD_FLASH_BLACK_KEY) || DEFAULT_FLASH_BLACK);
+    const [showBestMoveArrow, setShowBestMoveArrow] = useState(() => {
+        try {
+            const raw = localStorage.getItem(BEST_MOVE_ARROW_KEY);
+            return raw === null ? true : raw === 'true';
+        } catch {
+            return true;
+        }
+    });
     const initialEngineState = useMemo(() => getInitialEngineState(), []);
+    const isMobile = useMemo(() => isMobileDevice(), []);
     const [profiles, setProfiles] = useState(initialEngineState.profiles);
     const [activeProfileId, setActiveProfileId] = useState(initialEngineState.activeId);
     const [newProfileName, setNewProfileName] = useState('');
@@ -132,8 +145,8 @@ export const Settings = () => {
 
     useEffect(() => {
         // Ensure worker initialized so we can read id name / caps.
-        // Use the active profile's version if available, or default to 17.1-single
-        const version = activeProfile?.version || '17.1-single';
+        // Use the active profile's version if available, or choose a sensible default.
+        const version = activeProfile?.version || getDefaultEngineVersion();
         engine.init(version).then(() => setEngineInfo(engine.getInfo())).catch(() => { });
 
         const t = setTimeout(() => setEngineInfo(engine.getInfo()), 400);
@@ -168,6 +181,15 @@ export const Settings = () => {
             // Ignore persistence failures
         }
     }, [boardLight, boardDark, flashWhite, flashBlack]);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(BEST_MOVE_ARROW_KEY, String(showBestMoveArrow));
+            window.dispatchEvent(new Event('bestMoveArrowChanged'));
+        } catch {
+            // ignore
+        }
+    }, [showBestMoveArrow]);
 
     useEffect(() => {
         if (!activeProfile) return;
@@ -245,7 +267,8 @@ export const Settings = () => {
     }, [games, activeProfiles]);
 
     const handleStopAnalysis = async () => {
-        setStatus({ type: 'loading', message: 'Stopping analysis...' });
+        setStopStatus({ type: 'loading', message: 'Stopping analysis...' });
+        setClearStatus(null);
         try {
             engine.stop();
             engine.terminate();
@@ -266,22 +289,24 @@ export const Settings = () => {
                 analysisHeartbeatAt: null
             });
 
-            setStatus({ type: 'success', message: 'Analysis stopped. Current game failed, queue reset to idle.' });
+            setStopStatus({ type: 'success', message: 'Analysis stopped. Current game failed, queue reset to idle.' });
         } catch (err) {
             console.error(err);
-            setStatus({ type: 'error', message: 'Failed to stop analysis.' });
+            setStopStatus({ type: 'error', message: 'Failed to stop analysis.' });
         }
     };
 
     const handleClearAnalysis = async () => {
-        setStatus({ type: 'loading', message: 'Clearing analysis data...' });
+        setClearStatus({ type: 'loading', message: 'Clearing analysis data...' });
+        setStopStatus(null);
         try {
             engine.stop();
             engine.terminate();
 
-            await db.transaction('rw', db.games, db.positions, db.ai_analyses, async () => {
+            await db.transaction('rw', db.games, db.positions, db.ai_analyses, db.gameAnalysis, async () => {
                 await db.positions.clear();
                 await db.ai_analyses.clear();
+                await db.gameAnalysis.clear();
                 await db.games.toCollection().modify((g) => {
                     g.analyzed = false;
                     g.analysisStatus = null;
@@ -289,7 +314,6 @@ export const Settings = () => {
                     g.analysisHeartbeatAt = null;
                     g.analysisProgress = null;
                     g.analyzedAt = null;
-                    g.analysisLog = [];
                     g.accuracy = null;
                     g.avgCpLoss = null;
                     g.maxAccuracyStreak = null;
@@ -298,10 +322,10 @@ export const Settings = () => {
                 });
             });
 
-            setStatus({ type: 'success', message: 'All analysis data cleared. Games are back to idle.' });
+            setClearStatus({ type: 'success', message: 'All analysis data cleared. Games are back to idle.' });
         } catch (err) {
             console.error(err);
-            setStatus({ type: 'error', message: 'Failed to clear analysis data.' });
+            setClearStatus({ type: 'error', message: 'Failed to clear analysis data.' });
         }
     };
 
@@ -477,11 +501,11 @@ export const Settings = () => {
                         Stop Analysis
                     </button>
 
-                    {status && (
+                    {stopStatus && (
                         <div className="mt-4 flex items-center gap-2 text-sm">
-                            {status.type === 'success' && <CheckCircle size={16} className="text-green-400" />}
-                            {status.type === 'error' && <AlertCircle size={16} className="text-red-400" />}
-                            <span className="text-secondary">{status.message}</span>
+                            {stopStatus.type === 'success' && <CheckCircle size={16} className="text-green-400" />}
+                            {stopStatus.type === 'error' && <AlertCircle size={16} className="text-red-400" />}
+                            <span className="text-secondary">{stopStatus.message}</span>
                         </div>
                     )}
                 </div>
@@ -494,6 +518,14 @@ export const Settings = () => {
                     <button className="btn btn-secondary" onClick={() => setConfirmClearAnalysisOpen(true)}>
                         Clear Analysis
                     </button>
+
+                    {clearStatus && (
+                        <div className="mt-4 flex items-center gap-2 text-sm">
+                            {clearStatus.type === 'success' && <CheckCircle size={16} className="text-green-400" />}
+                            {clearStatus.type === 'error' && <AlertCircle size={16} className="text-red-400" />}
+                            <span className="text-secondary">{clearStatus.message}</span>
+                        </div>
+                    )}
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
@@ -586,6 +618,28 @@ export const Settings = () => {
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Analysis Aids</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Control helper overlays shown on the board during analysis.
+                    </p>
+                    <div className="flex items-center gap-3">
+                        <input
+                            type="checkbox"
+                            id="best-move-arrow-toggle"
+                            checked={showBestMoveArrow}
+                            onChange={(e) => setShowBestMoveArrow(e.target.checked)}
+                            className="w-4 h-4"
+                        />
+                        <label htmlFor="best-move-arrow-toggle" className="text-sm font-medium text-primary cursor-pointer select-none">
+                            Show best move arrow on the board
+                        </label>
+                    </div>
+                    <p className="text-xs text-muted mt-2">
+                        Disable to hide automatic best-move hints. Hover previews in Analytics still work.
+                    </p>
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
                     <h3 className="text-sm font-semibold text-primary mb-3">Engine Profiles</h3>
                     <p className="text-sm text-secondary mb-4">
                         Group engine settings by profile so you can switch between fast and deep analysis modes.
@@ -598,13 +652,19 @@ export const Settings = () => {
                         <div>
                             <label className="text-xs text-muted uppercase tracking-wider">Engine Version</label>
                             <select
-                                value={activeProfile?.version || '17.1-single'}
+                                value={activeProfile?.version || getDefaultEngineVersion()}
                                 onChange={(e) => updateActiveProfile({ version: e.target.value })}
                                 className="bg-subtle border rounded px-3 py-2 text-sm text-primary w-full mt-2"
                             >
+                                <option value="17.1-lite">Stockfish 17.1 Lite (Small, Fast)</option>
                                 <option value="17.1-single">Stockfish 17.1 (Standard, Single-Thread)</option>
                                 <option value="17.1-multi">Stockfish 17.1 (High Perf, Multi-Thread)</option>
                             </select>
+                            <div className="text-xs text-muted mt-2">
+                                {isMobile
+                                    ? 'Lite is recommended for mobile to reduce storage and improve load time.'
+                                    : 'Lite is smaller and loads faster; Standard is stronger.'}
+                            </div>
                         </div>
                         <div>
                             <label className="text-xs text-muted uppercase tracking-wider">Active Profile</label>
