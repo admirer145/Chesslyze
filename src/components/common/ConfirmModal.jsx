@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 export const ConfirmModal = ({
@@ -26,7 +27,7 @@ export const ConfirmModal = ({
         onCancel?.();
     };
 
-    return (
+    const content = (
         <div className="confirm-modal" role="dialog" aria-modal="true">
             <div className="confirm-modal__backdrop" onClick={handleCancel} />
             <div className="confirm-modal__panel">
@@ -71,4 +72,7 @@ export const ConfirmModal = ({
             </div>
         </div>
     );
+
+    if (typeof document === 'undefined') return content;
+    return createPortal(content, document.body);
 };

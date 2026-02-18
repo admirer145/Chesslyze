@@ -3,6 +3,7 @@ import { storePuzzlePositions } from './puzzles';
 import { getHeroProfiles, getHeroSideFromGame } from './heroProfiles';
 import { engine } from './engine';
 import { Chess } from 'chess.js';
+import { getDefaultEngineVersion } from './engineDefaults';
 
 const THRESHOLDS = {
     BLUNDER: 250,
@@ -35,6 +36,47 @@ const clampInt = (value, min, max, fallback) => {
     return Math.min(max, Math.max(min, parsed));
 };
 
+const publicAssetCache = new Map();
+const resolvePublicUrl = (filename) => {
+    if (typeof window === 'undefined') return filename;
+    const base = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL)
+        ? import.meta.env.BASE_URL
+        : '/';
+    const normalized = base.endsWith('/') ? base : `${base}/`;
+    return new URL(`${normalized}${filename}`, window.location.origin).href;
+};
+
+const checkPublicAsset = async (filename) => {
+    if (publicAssetCache.has(filename)) return publicAssetCache.get(filename);
+    if (typeof fetch !== 'function' || typeof window === 'undefined') {
+        publicAssetCache.set(filename, false);
+        return false;
+    }
+
+    const url = resolvePublicUrl(filename);
+    let ok = false;
+    try {
+        const head = await fetch(url, { method: 'HEAD', cache: 'force-cache' });
+        const ct = head.headers && head.headers.get ? head.headers.get('content-type') : '';
+        ok = head.ok && !(ct && ct.includes('text/html'));
+    } catch {
+        ok = false;
+    }
+
+    if (!ok) {
+        try {
+            const res = await fetch(url, { method: 'GET', cache: 'force-cache' });
+            const ct = res.headers && res.headers.get ? res.headers.get('content-type') : '';
+            ok = res.ok && !(ct && ct.includes('text/html'));
+        } catch {
+            ok = false;
+        }
+    }
+
+    publicAssetCache.set(filename, ok);
+    return ok;
+};
+
 const loadActiveEngineProfile = () => {
     if (typeof window === 'undefined') return null;
     try {
@@ -54,7 +96,7 @@ const loadActiveEngineProfile = () => {
             threads: clampInt(selected?.threads ?? 1, 1, 32, 1),
             timePerMove: clampInt(selected?.timePerMove ?? 0, 0, 60000, 0),
             useNNUE: typeof selected?.useNNUE === 'boolean' ? selected.useNNUE : true,
-            version: selected?.version || '17.1-single'
+            version: selected?.version || getDefaultEngineVersion()
         };
     } catch {
         return null;
@@ -679,7 +721,7 @@ export const processGame = async (gameId) => {
 
     // Check if version changed
     const currentVersion = engine.version;
-    const newVersion = profile?.version || '17.1-single';
+    const newVersion = profile?.version || getDefaultEngineVersion();
 
     console.log(`[Analyzer] Profile Version: ${newVersion}, Current Engine Version: ${currentVersion}`);
 
@@ -701,9 +743,30 @@ export const processGame = async (gameId) => {
 
     if (newVersion?.startsWith('17.1')) {
         // Stockfish 17.1 no longer has "Use NNUE" option
-        // Default nets for 17.1 (must exist in /public)
-        engineOptions.push({ name: 'EvalFile', value: 'nn-1c0000000000.nnue' });
-        engineOptions.push({ name: 'EvalFileSmall', value: 'nn-37f18f62d772.nnue' });
+        // Only set EvalFile options if the engine supports them and assets exist.
+        const caps = engine.getInfo()?.caps || {};
+        const supportsEvalFile = !!(caps.evalFile || caps.evalFileSmall);
+
+        if (supportsEvalFile) {
+            const hasSmall = await checkPublicAsset('nn-37f18f62d772.nnue');
+            const hasLarge = await checkPublicAsset('nn-1c0000000000.nnue');
+
+            if (newVersion === '17.1-lite') {
+                if (hasSmall) {
+                    engineOptions.push({ name: 'EvalFile', value: 'nn-37f18f62d772.nnue' });
+                    engineOptions.push({ name: 'EvalFileSmall', value: 'nn-37f18f62d772.nnue' });
+                }
+            } else if (hasLarge || hasSmall) {
+                if (hasLarge) {
+                    engineOptions.push({ name: 'EvalFile', value: 'nn-1c0000000000.nnue' });
+                } else if (hasSmall) {
+                    engineOptions.push({ name: 'EvalFile', value: 'nn-37f18f62d772.nnue' });
+                }
+                if (hasSmall) {
+                    engineOptions.push({ name: 'EvalFileSmall', value: 'nn-37f18f62d772.nnue' });
+                }
+            }
+        }
     } else {
         engineOptions.push({ name: 'Use NNUE', value: useNNUE });
         engineOptions.push({ name: 'EvalFile', value: 'nn-5af11540bbfe.nnue' });
