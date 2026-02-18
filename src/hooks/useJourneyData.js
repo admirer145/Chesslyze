@@ -20,9 +20,15 @@ const monthKey = (date) => {
 
 const rangeToDate = (range) => {
     const now = new Date();
-    if (range === '1m') return new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-    if (range === '3m') return new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
-    if (range === '1y') return new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    const daysAgo = (days) => {
+        const d = new Date(now);
+        d.setDate(d.getDate() - days);
+        d.setHours(0, 0, 0, 0);
+        return d;
+    };
+    if (range === '1m') return daysAgo(30);
+    if (range === '3m') return daysAgo(90);
+    if (range === '1y') return daysAgo(365);
     return null;
 };
 
@@ -165,11 +171,11 @@ const normalizeTitle = (title) => (title || '').trim().toUpperCase();
 const isBotTitle = (title) => normalizeTitle(title) === 'BOT';
 const isBotOpponent = (game) => isBotTitle(game.opponentTitle);
 
-export const useJourneyData = () => {
+export const useJourneyData = (initialFilters = null) => {
     const { activeProfiles } = useHeroProfiles();
     const heroLabel = useMemo(() => getHeroDisplayName(activeProfiles), [activeProfiles]);
     const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
-    const [filters, setFilters] = useState({
+    const DEFAULT_FILTERS = {
         range: 'all',
         perf: 'all',
         color: 'all',
@@ -177,7 +183,11 @@ export const useJourneyData = () => {
         result: 'all',
         opening: '',
         opponent: ''
-    });
+    };
+    const [filters, setFilters] = useState(() => ({
+        ...DEFAULT_FILTERS,
+        ...(initialFilters && typeof initialFilters === 'object' ? initialFilters : {})
+    }));
 
     const games = useLiveQuery(async () => {
         if (!activeProfiles.length) return [];
@@ -218,12 +228,39 @@ export const useJourneyData = () => {
     const effectivePerf = filters.perf === 'all' ? mostPlayedPerf : filters.perf;
 
     const ratingHistory = useMemo(() => {
-        const source = filteredGames.filter((g) => g.perf === effectivePerf && (typeof g.heroRatingPost === 'number' || typeof g.heroRating === 'number'));
-        return source.map((g) => ({
-            date: toDate(g.date)?.toLocaleDateString() || 'Unknown',
-            rawDate: g.date,
-            rating: (typeof g.heroRatingPost === 'number' ? g.heroRatingPost : g.heroRating)
-        }));
+        const source = filteredGames
+            .filter((g) => g.perf === effectivePerf && (typeof g.heroRatingPost === 'number' || typeof g.heroRating === 'number'))
+            .map((g, idx) => {
+                const dateObj = toDate(g.date);
+                const ts = dateObj ? dateObj.getTime() : null;
+                const ratingAfterRaw = (typeof g.heroRatingPost === 'number' ? g.heroRatingPost : g.heroRating);
+                const ratingAfter = Number(ratingAfterRaw);
+                if (!Number.isFinite(ratingAfter)) return null;
+                const ratingBeforeRaw = (typeof g.heroRating === 'number'
+                    ? g.heroRating
+                    : (typeof g.heroRatingPost === 'number' && typeof g.heroRatingDiff === 'number'
+                        ? g.heroRatingPost - g.heroRatingDiff
+                        : null));
+                const ratingBefore = Number.isFinite(Number(ratingBeforeRaw)) ? Number(ratingBeforeRaw) : null;
+                return {
+                    date: dateObj ? dateObj.toLocaleDateString() : 'Unknown',
+                    rawDate: g.date,
+                    ts: typeof ts === 'number' ? ts + (idx % 1000) : idx,
+                    rating: ratingAfter,
+                    ratingBefore,
+                    ratingAfter,
+                    ratingDiff: typeof g.heroRatingDiff === 'number' ? g.heroRatingDiff : null,
+                    opponent: g.opponent,
+                    opponentTitle: g.opponentTitle,
+                    result: g.result,
+                    perf: g.perf,
+                    rated: g.rated
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0))
+            .map((entry, index) => ({ ...entry, gameIndex: index + 1 }));
+        return source;
     }, [filteredGames, effectivePerf]);
 
     const accuracySeries = useMemo(() => {
