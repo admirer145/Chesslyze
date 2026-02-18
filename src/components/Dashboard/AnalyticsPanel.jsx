@@ -293,12 +293,12 @@ export const AnalyticsPanel = ({ game, onJumpToMove, activeIndex = -1, onBestHov
             <div className="p-4 border-b grid grid-cols-2 gap-4">
                 <div className="flex flex-col items-center p-3 bg-subtle rounded-lg border border-transparent hover:border-white/10 transition-colors">
                     <span className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1">White</span>
-                    <div className="text-2xl font-bold text-white">{accuracy?.white || 0}%</div>
+                    <div className="text-2xl font-bold text-primary">{accuracy?.white || 0}%</div>
                     <span className="text-[10px] text-muted">Accuracy</span>
                 </div>
                 <div className="flex flex-col items-center p-3 bg-subtle rounded-lg border border-transparent hover:border-black/50 transition-colors">
                     <span className="text-xs font-semibold text-secondary uppercase tracking-wider mb-1">Black</span>
-                    <div className="text-2xl font-bold text-white">{accuracy?.black || 0}%</div>
+                    <div className="text-2xl font-bold text-primary">{accuracy?.black || 0}%</div>
                     <span className="text-[10px] text-muted">Accuracy</span>
                 </div>
             </div>

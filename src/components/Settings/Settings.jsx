@@ -7,6 +7,7 @@ import { ConfirmModal } from '../common/ConfirmModal';
 import { useHeroProfiles } from '../../hooks/useHeroProfiles';
 import { getHeroDisplayName, isHeroGameForProfiles } from '../../services/heroProfiles';
 import { getDefaultEngineVersion, isMobileDevice } from '../../services/engineDefaults';
+import { getStoredTheme, setTheme } from '../../services/theme';
 
 const ENGINE_PROFILES_KEY = 'engineProfiles';
 const ENGINE_ACTIVE_KEY = 'activeEngineProfileId';
@@ -101,6 +102,7 @@ export const Settings = () => {
     const [stopStatus, setStopStatus] = useState(null);
     const [clearStatus, setClearStatus] = useState(null);
     const [engineInfo, setEngineInfo] = useState(() => engine.getInfo());
+    const [appTheme, setAppTheme] = useState(() => getStoredTheme());
     const [boardLight, setBoardLight] = useState(() => localStorage.getItem(BOARD_LIGHT_KEY) || DEFAULT_BOARD_LIGHT);
     const [boardDark, setBoardDark] = useState(() => localStorage.getItem(BOARD_DARK_KEY) || DEFAULT_BOARD_DARK);
     const [flashWhite, setFlashWhite] = useState(() => localStorage.getItem(BOARD_FLASH_WHITE_KEY) || DEFAULT_FLASH_WHITE);
@@ -190,6 +192,10 @@ export const Settings = () => {
             // ignore
         }
     }, [showBestMoveArrow]);
+
+    useEffect(() => {
+        setTheme(appTheme);
+    }, [appTheme]);
 
     useEffect(() => {
         if (!activeProfile) return;
@@ -490,6 +496,32 @@ export const Settings = () => {
                             })}
                         </div>
                     )}
+                </div>
+
+                <div className="p-6 rounded-lg border bg-panel">
+                    <h3 className="text-sm font-semibold text-primary mb-3">Appearance</h3>
+                    <p className="text-sm text-secondary mb-4">
+                        Toggle between light and dark mode across the app.
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            className={`pill ${appTheme === 'light' ? 'pill--active' : ''}`}
+                            onClick={() => setAppTheme('light')}
+                        >
+                            Light
+                        </button>
+                        <button
+                            type="button"
+                            className={`pill ${appTheme === 'dark' ? 'pill--active' : ''}`}
+                            onClick={() => setAppTheme('dark')}
+                        >
+                            Dark
+                        </button>
+                    </div>
+                    <div className="text-xs text-muted mt-2">
+                        Your preference is saved locally on this device.
+                    </div>
                 </div>
 
                 <div className="p-6 rounded-lg border bg-panel">
