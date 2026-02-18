@@ -25,6 +25,38 @@ const InsightCard = ({ title, value, description, icon: Icon, tone }) => (
     </div>
 );
 
+const formatOpeningTick = (value, maxLen = 14) => {
+    if (!value || typeof value !== 'string') return '';
+    if (value.length <= maxLen) return value;
+    return `${value.slice(0, maxLen - 3)}...`;
+};
+
+const OpeningEvolutionTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || payload.length === 0) return null;
+    const sorted = payload
+        .filter((entry) => typeof entry?.value === 'number')
+        .sort((a, b) => b.value - a.value);
+
+    if (sorted.length === 0) return null;
+
+    return (
+        <div className="journey-tooltip">
+            <div className="journey-tooltip__label">{label}</div>
+            <div className="journey-tooltip__list">
+                {sorted.map((entry) => (
+                    <div key={entry.dataKey} className="journey-tooltip__row">
+                        <div className="journey-tooltip__name">
+                            <span className="journey-tooltip__dot" style={{ background: entry.color }} />
+                            <span>{entry.dataKey}</span>
+                        </div>
+                        <div className="journey-tooltip__value">{entry.value}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 export const ChessJourney = () => {
     const {
         filters,
@@ -467,9 +499,17 @@ export const ChessJourney = () => {
                             </div>
                         ) : (
                             <ResponsiveContainer width="100%" height={240}>
-                                <BarChart data={openings}>
+                                <BarChart data={openings} margin={{ bottom: 16 }}>
                                     <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
-                                    <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} interval={0} />
+                                    <XAxis
+                                        dataKey="name"
+                                        tick={{ fill: '#94a3b8', fontSize: 10, angle: -35, textAnchor: 'end' }}
+                                        height={60}
+                                        interval="preserveStartEnd"
+                                        minTickGap={8}
+                                        tickMargin={8}
+                                        tickFormatter={formatOpeningTick}
+                                    />
                                     <YAxis hide />
                                     <Tooltip
                                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
@@ -496,10 +536,7 @@ export const ChessJourney = () => {
                                 <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
                                 <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} />
                                 <YAxis hide />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
-                                    labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
-                                />
+                                <Tooltip content={<OpeningEvolutionTooltip />} />
                                 {openings.map((opening, idx) => (
                                     <Area
                                         key={opening.name}

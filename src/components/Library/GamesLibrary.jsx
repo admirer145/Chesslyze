@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
 import { Filter, Search, RotateCcw, ChevronDown, ChevronUp, Trophy, Brain, Calendar, X, Zap, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { ConfirmModal } from '../common/ConfirmModal';
+import { AppFooter } from '../common/AppFooter';
 import { useHeroProfiles } from '../../hooks/useHeroProfiles';
 import { getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
 
@@ -1103,6 +1104,8 @@ export const GamesLibrary = () => {
                     </div>
                 </div>
             </div>
+
+            <AppFooter />
 
             <ConfirmModal
                 open={confirmAnalyzeOpen}

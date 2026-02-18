@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { useHeroProfiles } from '../../hooks/useHeroProfiles';
 import { DEFAULT_PUZZLE_LIMIT, getPuzzleGenerationEnabled, setPuzzleGenerationEnabled, subscribePuzzleGeneration } from '../../services/puzzles';
 import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
+import { AppFooter } from '../common/AppFooter';
 
 const MOVE_BADGE_MAP = {
     brilliant: { label: '!!', tone: 'brilliant' },
@@ -1625,6 +1626,7 @@ export const ReelFeed = () => {
                     </aside>
                 )}
                 </div>
+                <AppFooter />
             </div>
         </div>
     );

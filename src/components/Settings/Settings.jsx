@@ -8,6 +8,7 @@ import { useHeroProfiles } from '../../hooks/useHeroProfiles';
 import { getHeroDisplayName, isHeroGameForProfiles } from '../../services/heroProfiles';
 import { getDefaultEngineVersion, isMobileDevice } from '../../services/engineDefaults';
 import { getStoredTheme, setTheme } from '../../services/theme';
+import { AppFooter } from '../common/AppFooter';
 
 const ENGINE_PROFILES_KEY = 'engineProfiles';
 const ENGINE_ACTIVE_KEY = 'activeEngineProfileId';
@@ -904,6 +905,8 @@ export const Settings = () => {
                 </div>
 
             </div>
+
+            <AppFooter />
 
             <ConfirmModal
                 open={confirmStopOpen}

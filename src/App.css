@@ -2337,6 +2337,26 @@ a {
   padding-bottom: 24px;
 }
 
+.dashboard-board-stack {
+  width: min(100%, 84vmin);
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-footer {
+  width: min(100%, 84vmin);
+  max-width: 900px;
+  margin: 24px auto 0;
+}
+
+.dashboard-board-stack .board-header,
+.dashboard-board-stack .board-wrap {
+  width: 100%;
+  max-width: none;
+}
+
 .dashboard-board-area.is-empty {
   justify-content: center;
   padding-top: 32px;
@@ -5498,6 +5518,53 @@ a {
   margin-bottom: 32px;
 }
 
+.journey-tooltip {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  box-shadow: 0 12px 24px rgba(2, 6, 23, 0.18);
+}
+
+.journey-tooltip__label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.journey-tooltip__list {
+  display: grid;
+  gap: 4px;
+}
+
+.journey-tooltip__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.journey-tooltip__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.journey-tooltip__value {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.journey-tooltip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
 .variant-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -6872,6 +6939,10 @@ a {
   color: var(--accent-primary);
 }
 
+:root[data-theme='light'] .bottom-sheet__content {
+  background: rgba(248, 250, 252, 0.85);
+}
+
 :root[data-theme='light'] .opening-chip-scroller {
   background: rgba(248, 250, 252, 0.95);
   border-bottom-color: rgba(148, 163, 184, 0.35);
@@ -6886,6 +6957,11 @@ a {
   color: var(--text-secondary);
 }
 
+:root[data-theme='light'] .opening-chip__bar {
+  background: rgba(148, 163, 184, 0.3);
+}
+
 :root[data-theme='light'] .journey-avatar {
   color: #0f172a;
+  background: linear-gradient(140deg, rgba(56, 189, 248, 0.28), rgba(245, 200, 75, 0.22));
 }

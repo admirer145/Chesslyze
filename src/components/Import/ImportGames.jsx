@@ -7,6 +7,7 @@ import { upsertHeroProfile } from '../../services/heroProfiles';
 import { useRef } from 'react';
 import { importPgnGames } from '../../services/pgn';
 import { useNavigate } from 'react-router-dom';
+import { AppFooter } from '../common/AppFooter';
 
 export const ImportGames = () => {
     const navigate = useNavigate();
@@ -1313,6 +1314,7 @@ export const ImportGames = () => {
                     </div>
                 </div>
             </div>
+            <AppFooter />
         </div>
     );
 };
