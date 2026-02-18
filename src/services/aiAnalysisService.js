@@ -33,7 +33,7 @@ const buildEngineContext = (pgn, analysisLog, heroSide) => {
     try {
         const chess = new Chess();
         if (pgn && typeof pgn === 'string' && pgn.trim()) {
-            chess.loadPgn(pgn);
+            chess.loadPgn(pgn, { sloppy: true });
             history = chess.history({ verbose: true });
         }
     } catch {
@@ -163,6 +163,13 @@ const buildEngineContext = (pgn, analysisLog, heroSide) => {
     }
     if (countPositive() < minPositive) {
         injectPositives(positivePoolAll);
+    }
+
+    if (candidates.length < targetCount) {
+        const bestPool = prefers
+            .filter(e => e.classification === 'best')
+            .sort(sortPositive);
+        pick(bestPool, targetCount, candidates, seen);
     }
 
     if (candidates.length < targetCount) {

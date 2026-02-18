@@ -89,7 +89,7 @@ const getMoveInfoFromPgn = (pgn, ply) => {
     if (!pgn || !ply) return null;
     try {
         const chess = new Chess();
-        chess.loadPgn(pgn);
+        chess.loadPgn(pgn, { sloppy: true });
         const moves = chess.history({ verbose: true });
         const entry = moves[ply - 1];
         if (!entry) return null;

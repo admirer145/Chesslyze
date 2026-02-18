@@ -543,7 +543,18 @@ const generateExplanation = (classification, evalDiff, move, bestMove) => {
 
 export const processGame = async (gameId) => {
     const game = await db.games.get(gameId);
-    if (!game || game.analyzed) return; // Skip if already analyzed
+    if (!game) return;
+    if (game.analyzed) {
+        // If a game is already analyzed but still marked pending, clear the stale queue state.
+        if (game.analysisStatus === 'pending' || game.analysisStatus === 'analyzing') {
+            await db.games.update(gameId, {
+                analysisStatus: 'failed',
+                analysisStartedAt: null,
+                analysisHeartbeatAt: null
+            });
+        }
+        return;
+    }
 
     const heroProfiles = await getHeroProfiles();
     const heroSide = getHeroSideFromGame(game, heroProfiles);
@@ -565,6 +576,13 @@ export const processGame = async (gameId) => {
         if (byHash?.pgn) {
             pgn = byHash.pgn;
             await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || '' });
+        }
+    }
+    if ((!pgn || typeof pgn !== 'string') && game?.sourceGameId) {
+        const bySource = await db.gameContent.where('pgnHash').equals(game.sourceGameId).first();
+        if (bySource?.pgn) {
+            pgn = bySource.pgn;
+            await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || game.sourceGameId || '' });
         }
     }
     if ((!pgn || typeof pgn !== 'string') && (game?.site || game?.sourceUrl)) {
@@ -589,16 +607,26 @@ export const processGame = async (gameId) => {
     }
     if (!pgn || typeof pgn !== 'string') {
         console.warn(`Skipping analysis for game ${gameId}: Missing or invalid PGN.`);
-        await db.games.update(gameId, { analyzed: true });
+        await db.games.update(gameId, {
+            analyzed: true,
+            analysisStatus: 'failed',
+            analysisStartedAt: null,
+            analysisHeartbeatAt: null
+        });
         return;
     }
 
     const chess = new Chess();
     try {
-        chess.loadPgn(pgn);
+        chess.loadPgn(pgn, { sloppy: true });
     } catch (e) {
         console.error(`Invalid PGN parsing for game ${gameId}`, e);
-        await db.games.update(gameId, { analyzed: true, analysisStatus: 'failed' });
+        await db.games.update(gameId, {
+            analyzed: true,
+            analysisStatus: 'failed',
+            analysisStartedAt: null,
+            analysisHeartbeatAt: null
+        });
         return;
     }
 

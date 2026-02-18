@@ -333,6 +333,10 @@ export const bulkUpsertGames = async (games) => {
             else if (next.lichessId) next.platform = 'lichess';
             else if (next.pgnHash) next.platform = 'pgn';
         }
+        if (next.platform === 'pgn' && typeof pgn === 'string' && pgn.trim()) {
+            // Keep PGN for PGN-imported games as a fallback if gameContent is missing.
+            next.pgn = pgn.trim();
+        }
         if (!next.sourceGameId) {
             if (next.platform === 'lichess' && next.lichessId) next.sourceGameId = next.lichessId;
             if (next.platform === 'pgn' && next.pgnHash) next.sourceGameId = next.pgnHash;
