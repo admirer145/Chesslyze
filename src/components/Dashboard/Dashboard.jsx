@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../../services/db';
+import { db, saveGameContent } from '../../services/db';
 import { Chessboard } from 'react-chessboard';
 import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, FastForward, Rewind, ChevronDown, GripHorizontal } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -104,9 +104,6 @@ export const Dashboard = () => {
         let cpCount = 0;
         let maxStreak = 0;
         let maxSwing = 0;
-        let bookMoves = 0;
-        let bookTotal = 0;
-
         const heroGames = all.filter((g) => isHeroGameForProfiles(g, activeProfiles));
 
         heroGames.forEach(g => {
@@ -133,12 +130,6 @@ export const Dashboard = () => {
             if (typeof g.maxEvalSwing === 'number') {
                 maxSwing = Math.max(maxSwing, g.maxEvalSwing);
             }
-            if (Array.isArray(g.analysisLog)) {
-                g.analysisLog.forEach((entry) => {
-                    if (entry.bookMove) bookMoves += 1;
-                    if (entry.phase === 'opening') bookTotal += 1;
-                });
-            }
         });
 
         return {
@@ -148,9 +139,7 @@ export const Dashboard = () => {
             accuracy: analyzedCount ? Math.round(totalAccuracy / analyzedCount) : 0,
             avgCpLoss: cpCount ? Math.round(totalCpLoss / cpCount) : 0,
             maxStreak,
-            maxSwing,
-            bookMoves,
-            bookTotal
+            maxSwing
         };
     });
 
@@ -291,9 +280,56 @@ export const Dashboard = () => {
     // Separate query to observe analysisLog changes - useLiveQuery doesn't track nested changes well
     const analysisLog = useLiveQuery(async () => {
         if (!activeGame?.id) return null;
-        const game = await db.games.get(activeGame.id);
-        return game?.analysisLog || null;
+        const record = await db.gameAnalysis.get(activeGame.id);
+        return record?.analysisLog || null;
     }, [activeGame?.id]);
+
+    const activePgn = useLiveQuery(async () => {
+        if (!activeGame?.id) return activeGame?.pgn || '';
+        const record = await db.gameContent.get(activeGame.id);
+        return record?.pgn || activeGame?.pgn || '';
+    }, [activeGame?.id, activeGame?.pgn]);
+
+    useEffect(() => {
+        if (!activeGame?.id) return;
+        if (activePgn) return;
+        let cancelled = false;
+
+        const backfill = async () => {
+            let pgn = '';
+            if (typeof activeGame?.pgn === 'string' && activeGame.pgn.trim()) {
+                pgn = activeGame.pgn.trim();
+            }
+
+            if (!pgn && (activeGame?.site || activeGame?.sourceUrl)) {
+                const rawUrl = (activeGame.sourceUrl || activeGame.site || '').toString().trim();
+                try {
+                    const url = new URL(rawUrl);
+                    if (url.hostname.includes('lichess.org')) {
+                        const id = url.pathname.split('/').filter(Boolean).pop();
+                        if (id) {
+                            const res = await fetch(`https://lichess.org/game/export/${id}`);
+                            if (res.ok) {
+                                const text = await res.text();
+                                if (text && text.trim()) pgn = text.trim();
+                            }
+                        }
+                    }
+                } catch {
+                    // ignore
+                }
+            }
+
+            if (!cancelled && pgn) {
+                await saveGameContent({ gameId: activeGame.id, pgn, pgnHash: activeGame.pgnHash || '' });
+            }
+        };
+
+        backfill();
+        return () => {
+            cancelled = true;
+        };
+    }, [activeGame?.id, activeGame?.site, activeGame?.sourceUrl, activeGame?.pgn, activeGame?.pgnHash, activePgn]);
 
     useEffect(() => {
         if (activeGame?.analyzed) {
@@ -344,12 +380,12 @@ export const Dashboard = () => {
 
 
     useEffect(() => {
-        if (activeGame && activeGame.pgn) {
+        if (activeGame && activePgn) {
             // Only reset if it's a new game we haven't loaded yet
             if (loadedGameIdRef.current !== activeGame.id) {
                 try {
                     const chess = new Chess();
-                    chess.loadPgn(activeGame.pgn);
+                    chess.loadPgn(activePgn, { sloppy: true });
 
                     // Check for custom start position
                     const header = chess.header();
@@ -383,7 +419,7 @@ export const Dashboard = () => {
                 }
             }
         }
-    }, [activeGame]);
+    }, [activeGame?.id, activePgn]);
 
     useEffect(() => {
         if (!activeGame?.id) return;
@@ -651,13 +687,13 @@ export const Dashboard = () => {
     const getMeta = (key) => {
         if (!activeGame) return '?';
         if (activeGame[key]) return getSafeName(activeGame[key]);
-        const match = activeGame.pgn && activeGame.pgn.match(new RegExp(`\\[${key} "(.+?)"\\]`));
+        const match = activePgn && activePgn.match(new RegExp(`\\[${key} "(.+?)"\\]`));
         return match ? match[1] : '?';
     };
 
     const getTitleTag = (tag) => {
-        if (!activeGame?.pgn) return '';
-        const match = activeGame.pgn.match(new RegExp(`\\[${tag} "([^"]*)"\\]`));
+        if (!activePgn) return '';
+        const match = activePgn.match(new RegExp(`\\[${tag} "([^"]*)"\\]`));
         const value = match ? match[1] : '';
         if (!value || value === '?' || value === '-') return '';
         return value.trim();
@@ -1136,6 +1172,7 @@ export const Dashboard = () => {
                         <div className="absolute inset-0 flex items-center justify-center p-4" style={{ zIndex: 9999 }}>
                             <AIAnalysisModal
                                 game={activeGame}
+                                pgn={activePgn}
                                 onClose={() => setShowAIModal(false)}
                                 onAnalysisComplete={() => {
                                     setActiveTab('ai');

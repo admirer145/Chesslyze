@@ -1,4 +1,4 @@
-import { db } from './db';
+import { db, getGamePgn, getGameAnalysis, saveGameAnalysis } from './db';
 import { storePuzzlePositions } from './puzzles';
 import { getHeroProfiles, getHeroSideFromGame } from './heroProfiles';
 import { engine } from './engine';
@@ -506,12 +506,46 @@ export const processGame = async (gameId) => {
     const heroProfiles = await getHeroProfiles();
     const heroSide = getHeroSideFromGame(game, heroProfiles);
     const explicitHero = typeof game.isHero === 'boolean' ? game.isHero : true;
-    if (explicitHero && heroProfiles.length && !heroSide) {
+    const platform = (game.platform || game.source || (game.lichessId ? 'lichess' : '') || (game.pgnHash ? 'pgn' : '') || '').toLowerCase();
+    const allowAnonymous = platform === 'pgn' || platform === 'master' || platform === 'unknown';
+    if (explicitHero && heroProfiles.length && !heroSide && !allowAnonymous) {
         await db.games.update(gameId, { analyzed: false, analysisStatus: 'ignored' });
         return;
     }
 
-    if (!game.pgn || typeof game.pgn !== 'string') {
+    let pgn = await getGamePgn(gameId);
+    if ((!pgn || typeof pgn !== 'string') && typeof game?.pgn === 'string' && game.pgn.trim()) {
+        pgn = game.pgn;
+        await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || '' });
+    }
+    if ((!pgn || typeof pgn !== 'string') && game?.pgnHash) {
+        const byHash = await db.gameContent.where('pgnHash').equals(game.pgnHash).first();
+        if (byHash?.pgn) {
+            pgn = byHash.pgn;
+            await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || '' });
+        }
+    }
+    if ((!pgn || typeof pgn !== 'string') && (game?.site || game?.sourceUrl)) {
+        const rawUrl = (game.sourceUrl || game.site || '').toString().trim();
+        try {
+            const url = new URL(rawUrl);
+            let fetched = '';
+            if (url.hostname.includes('lichess.org')) {
+                const id = url.pathname.split('/').filter(Boolean).pop();
+                if (id) {
+                    const res = await fetch(`https://lichess.org/game/export/${id}`);
+                    if (res.ok) fetched = await res.text();
+                }
+            }
+            if (fetched && fetched.trim()) {
+                pgn = fetched.trim();
+                await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || '' });
+            }
+        } catch {
+            // ignore URL parsing/fetch errors
+        }
+    }
+    if (!pgn || typeof pgn !== 'string') {
         console.warn(`Skipping analysis for game ${gameId}: Missing or invalid PGN.`);
         await db.games.update(gameId, { analyzed: true });
         return;
@@ -519,7 +553,7 @@ export const processGame = async (gameId) => {
 
     const chess = new Chess();
     try {
-        chess.loadPgn(game.pgn);
+        chess.loadPgn(pgn);
     } catch (e) {
         console.error(`Invalid PGN parsing for game ${gameId}`, e);
         await db.games.update(gameId, { analyzed: true, analysisStatus: 'failed' });
@@ -535,7 +569,8 @@ export const processGame = async (gameId) => {
     const history = chess.history({ verbose: true });
     chess.reset();
 
-    const existingLog = Array.isArray(game.analysisLog) ? game.analysisLog : [];
+    const existingRecord = await getGameAnalysis(gameId);
+    const existingLog = Array.isArray(existingRecord?.analysisLog) ? existingRecord.analysisLog : [];
     const resuming = existingLog.length > 0 && existingLog.length < history.length;
     const analysisLog = resuming ? existingLog : [];
 
@@ -963,9 +998,9 @@ export const processGame = async (gameId) => {
             });
 
             // Save progress every move so UI updates in real-time
+            await saveGameAnalysis({ gameId, analysisLog });
             await db.games.update(gameId, {
                 analysisHeartbeatAt: new Date().toISOString(),
-                analysisLog,
                 analysisProgress: Math.round(((i + 1) / Math.max(1, history.length)) * 100)
             });
 
@@ -1033,11 +1068,13 @@ export const processGame = async (gameId) => {
                 });
             } else {
                 console.error(`[Analyzer] Game ${gameId} failed after ${retryCount - 1} retries.`);
+                if (analysisLog.length > 0) {
+                    await saveGameAnalysis({ gameId, analysisLog });
+                }
                 await db.games.update(gameId, {
                     analyzed: true,
                     analysisStatus: 'failed',
-                    analysisRetryCount: retryCount,
-                    analysisLog // Keep whatever log we have
+                    analysisRetryCount: retryCount
                 });
             }
             return;
@@ -1050,13 +1087,13 @@ export const processGame = async (gameId) => {
             } catch {
                 // ignore
             }
+            await saveGameAnalysis({ gameId, analysisLog });
             await db.games.update(gameId, {
                 analyzed: true,
                 analysisStatus: 'failed',
                 analysisStartedAt: null,
                 analysisHeartbeatAt: null,
-                analysisProgress: Math.round((analysisLog.length / Math.max(1, history.length)) * 100),
-                analysisLog
+                analysisProgress: Math.round((analysisLog.length / Math.max(1, history.length)) * 100)
             });
         } else {
             await db.games.update(gameId, { analyzed: true, analysisStatus: 'failed', analysisStartedAt: null, analysisHeartbeatAt: null });
@@ -1067,6 +1104,8 @@ export const processGame = async (gameId) => {
     // Save Reel Positions
     await storePuzzlePositions(reelPositions);
 
+    await saveGameAnalysis({ gameId, analysisLog });
+
     // Save Game Analytics
     await db.games.update(gameId, {
         analyzed: true,
@@ -1075,7 +1114,6 @@ export const processGame = async (gameId) => {
         analysisHeartbeatAt: null,
         analysisProgress: 100,
         analyzedAt: new Date().toISOString(),
-        analysisLog, // Full history for graph
         accuracy: {
             white: whiteMoves ? Math.round(whiteAccuracySum / whiteMoves) : 0,
             black: blackMoves ? Math.round(blackAccuracySum / blackMoves) : 0

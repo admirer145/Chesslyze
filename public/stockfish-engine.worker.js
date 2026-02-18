@@ -3,7 +3,19 @@
 
 /* eslint-disable no-restricted-globals */
 
-const wasmBase = '/stockfish-17-multi.wasm';
+const resolveBaseUrl = () => {
+    try {
+        const url = (self.location && self.location.href) ? self.location.href : '';
+        const clean = url.split('#')[0].split('?')[0];
+        const idx = clean.lastIndexOf('/');
+        return idx >= 0 ? clean.slice(0, idx + 1) : '/';
+    } catch {
+        return '/';
+    }
+};
+
+const baseUrl = resolveBaseUrl();
+const wasmBase = `${baseUrl}stockfish-17-multi.wasm`;
 
 self.fetch = (orig => async (input, init) => {
     const url = typeof input === 'string' ? input : (input && input.url) || String(input);
@@ -19,7 +31,7 @@ self.Module = self.Module || {};
 self.Module.locateFile = (path) => {
     if (path === 'stockfish.worker.js') {
         // Ensure pthread workers see a hash with wasm path and "worker" flag
-        return `/stockfish.worker.js#${wasmBase},worker`;
+        return `${baseUrl}stockfish.worker.js#${wasmBase},worker`;
     }
     if (path.endsWith('.wasm')) {
         return wasmBase;
@@ -27,4 +39,4 @@ self.Module.locateFile = (path) => {
     return path;
 };
 
-importScripts('/stockfish-17-multi.js');
+importScripts(`${baseUrl}stockfish-17-multi.js`);

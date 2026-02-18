@@ -1,9 +1,9 @@
 import { saveAIAnalysis, getAIAnalysis, getGame } from './db';
 import { validateAIResponse } from '../utils/aiSchema';
 
-export const generateAnalysisPrompt = (game) => {
+export const generateAnalysisPrompt = (game, pgnOverride = null) => {
     // Basic metadata extraction
-    const pgn = game.pgn || '';
+    const pgn = typeof pgnOverride === 'string' ? pgnOverride : (game?.pgn || '');
     const white = game.white || 'White';
     const black = game.black || 'Black';
     const result = game.result || '?';

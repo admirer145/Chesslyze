@@ -279,9 +279,10 @@ export const Settings = () => {
             engine.stop();
             engine.terminate();
 
-            await db.transaction('rw', db.games, db.positions, db.ai_analyses, async () => {
+            await db.transaction('rw', db.games, db.positions, db.ai_analyses, db.gameAnalysis, async () => {
                 await db.positions.clear();
                 await db.ai_analyses.clear();
+                await db.gameAnalysis.clear();
                 await db.games.toCollection().modify((g) => {
                     g.analyzed = false;
                     g.analysisStatus = null;
@@ -289,7 +290,6 @@ export const Settings = () => {
                     g.analysisHeartbeatAt = null;
                     g.analysisProgress = null;
                     g.analyzedAt = null;
-                    g.analysisLog = [];
                     g.accuracy = null;
                     g.avgCpLoss = null;
                     g.maxAccuracyStreak = null;

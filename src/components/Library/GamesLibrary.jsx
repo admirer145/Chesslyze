@@ -221,7 +221,11 @@ export const GamesLibrary = () => {
         try {
             const ordered = [...games];
             const basePriority = Date.now();
-            await db.transaction('rw', db.games, async () => {
+            const ids = ordered.map((g) => g?.id).filter((id) => id != null);
+            await db.transaction('rw', db.games, db.gameAnalysis, async () => {
+                if (ids.length) {
+                    await db.gameAnalysis.where('gameId').anyOf(ids).delete();
+                }
                 for (let i = 0; i < ordered.length; i++) {
                     const g = ordered[i];
                     if (!g?.id) continue;
@@ -231,7 +235,6 @@ export const GamesLibrary = () => {
                         analysisStartedAt: null,
                         analysisHeartbeatAt: null,
                         analysisProgress: 0,
-                        analysisLog: [],
                         priority: basePriority + (ordered.length - i)
                     });
                 }
@@ -254,11 +257,13 @@ export const GamesLibrary = () => {
                 return;
             }
             const chunkSize = 500;
-            await db.transaction('rw', db.games, db.positions, db.ai_analyses, async () => {
+            await db.transaction('rw', db.games, db.positions, db.ai_analyses, db.gameAnalysis, db.gameContent, async () => {
                 for (let i = 0; i < ids.length; i += chunkSize) {
                     const chunk = ids.slice(i, i + chunkSize);
                     await db.positions.where('gameId').anyOf(chunk).delete();
                     await db.ai_analyses.where('gameId').anyOf(chunk).delete();
+                    await db.gameAnalysis.where('gameId').anyOf(chunk).delete();
+                    await db.gameContent.where('gameId').anyOf(chunk).delete();
                     await db.games.bulkDelete(chunk);
                 }
             });
