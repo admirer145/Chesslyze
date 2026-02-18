@@ -1015,32 +1015,32 @@ export const ImportGames = () => {
                                     <div className="grid grid-cols-3 gap-2">
                                         <button
                                             onClick={() => setCcImportMode('smart')}
-                                            className={`btn ${ccImportMode === 'smart' ? 'bg-emerald-600 text-white ring-2 ring-emerald-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
+                                            className={`btn ${ccImportMode === 'smart' ? 'bg-blue-600 text-white ring-2 ring-blue-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
                                             type="button"
                                         >
                                             <Zap size={16} />
                                             <span className="text-[11px] font-semibold">Quick</span>
-                                            <span className={`text-[9px] ${ccImportMode === 'smart' ? 'text-emerald-100' : 'text-muted'}`}>Last 90 days</span>
+                                            <span className={`text-[9px] ${ccImportMode === 'smart' ? 'text-blue-100' : 'text-muted'}`}>Last 90 days</span>
                                         </button>
 
                                         <button
                                             onClick={() => setCcImportMode('custom')}
-                                            className={`btn ${ccImportMode === 'custom' ? 'bg-emerald-600 text-white ring-2 ring-emerald-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
+                                            className={`btn ${ccImportMode === 'custom' ? 'bg-blue-600 text-white ring-2 ring-blue-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
                                             type="button"
                                         >
                                             <Calendar size={16} />
                                             <span className="text-[11px] font-semibold">Custom</span>
-                                            <span className={`text-[9px] ${ccImportMode === 'custom' ? 'text-emerald-100' : 'text-muted'}`}>Date range</span>
+                                            <span className={`text-[9px] ${ccImportMode === 'custom' ? 'text-blue-100' : 'text-muted'}`}>Date range</span>
                                         </button>
 
                                         <button
                                             onClick={() => setCcImportMode('full')}
-                                            className={`btn ${ccImportMode === 'full' ? 'bg-emerald-600 text-white ring-2 ring-emerald-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
+                                            className={`btn ${ccImportMode === 'full' ? 'bg-blue-600 text-white ring-2 ring-blue-500' : 'btn-secondary'} py-3 flex flex-col items-center gap-1 transition-all`}
                                             type="button"
                                         >
                                             <Archive size={16} />
                                             <span className="text-[11px] font-semibold">Full</span>
-                                            <span className={`text-[9px] ${ccImportMode === 'full' ? 'text-emerald-100' : 'text-muted'}`}>All history</span>
+                                            <span className={`text-[9px] ${ccImportMode === 'full' ? 'text-blue-100' : 'text-muted'}`}>All history</span>
                                         </button>
                                     </div>
 
