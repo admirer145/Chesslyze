@@ -114,6 +114,17 @@ const OpeningDetail = ({ opening }) => {
     const [masterGameLoadingId, setMasterGameLoadingId] = useState(null);
     const [openingFen, setOpeningFen] = useState('');
     const [openingFenKey, setOpeningFenKey] = useState('');
+    const loadOpeningPgn = async () => {
+        if (!opening?.sampleGameId) return '';
+        try {
+            const content = await db.gameContent.get(opening.sampleGameId);
+            if (content?.pgn) return content.pgn;
+        } catch {
+            // ignore and fall back
+        }
+        const game = await db.games.get(opening.sampleGameId);
+        return game?.pgn || '';
+    };
 
     const cachedEntry = useLiveQuery(async () => {
         if (!opening?.eco) return null;
@@ -135,9 +146,12 @@ const OpeningDetail = ({ opening }) => {
         try {
             let fen = openingFen;
             if (!fen) {
-                const game = await db.games.get(opening.sampleGameId);
-                if (!game?.pgn) throw new Error('No PGN for sample game');
-                fen = deriveOpeningFen(game.pgn);
+                const pgn = await loadOpeningPgn();
+                if (!pgn) {
+                    setMasterError('No PGN available for this opening yet.');
+                    return;
+                }
+                fen = deriveOpeningFen(pgn);
                 if (fen) {
                     setOpeningFen(fen);
                     setOpeningFenKey(fenKey(fen));
@@ -176,9 +190,9 @@ const OpeningDetail = ({ opening }) => {
             setOpeningFenKey('');
             if (!opening?.sampleGameId) return;
             try {
-                const game = await db.games.get(opening.sampleGameId);
-                if (!game?.pgn) return;
-                const fen = deriveOpeningFen(game.pgn);
+                const pgn = await loadOpeningPgn();
+                if (!pgn) return;
+                const fen = deriveOpeningFen(pgn);
                 if (!active) return;
                 setOpeningFen(fen);
                 setOpeningFenKey(fenKey(fen));
@@ -229,9 +243,9 @@ const OpeningDetail = ({ opening }) => {
         if (openingFenKey) return openingFenKey;
         if (!opening?.sampleGameId) return '';
         try {
-            const game = await db.games.get(opening.sampleGameId);
-            if (!game?.pgn) return '';
-            const fen = deriveOpeningFen(game.pgn);
+            const pgn = await loadOpeningPgn();
+            if (!pgn) return '';
+            const fen = deriveOpeningFen(pgn);
             const key = fenKey(fen);
             setOpeningFen(fen);
             setOpeningFenKey(key);
@@ -267,6 +281,13 @@ const OpeningDetail = ({ opening }) => {
         } finally {
             setMasterGameLoadingId(null);
         }
+    };
+
+    const openUserGame = (gameId) => {
+        if (!gameId) return;
+        localStorage.setItem('activeGameId', String(gameId));
+        window.dispatchEvent(new Event('activeGameChanged'));
+        navigate('/');
     };
 
     if (!opening) {
@@ -371,13 +392,19 @@ const OpeningDetail = ({ opening }) => {
                 <h4 className="text-sm font-semibold text-primary mb-3">Opening Deep Dives (Best User Games)</h4>
                 <div className="flex flex-col gap-3">
                     {opening.topGames?.length ? opening.topGames.map((game) => (
-                        <div key={game.id} className="p-3 rounded bg-subtle flex items-center justify-between text-sm">
+                        <button
+                            key={game.id}
+                            type="button"
+                            className="p-3 rounded bg-subtle flex items-center justify-between text-sm"
+                            onClick={() => openUserGame(game.id)}
+                            disabled={!game.id}
+                        >
                             <div>
                                 <div className="text-primary font-semibold">{game.white} vs {game.black}</div>
                                 <div className="text-xs text-muted">{game.date ? new Date(game.date).toLocaleDateString() : 'Unknown date'}</div>
                             </div>
                             <div className="text-xs text-secondary">Accuracy {game.accuracy}%</div>
-                        </div>
+                        </button>
                     )) : (
                         <div className="text-sm text-muted">No analyzed games yet for deep dive.</div>
                     )}
