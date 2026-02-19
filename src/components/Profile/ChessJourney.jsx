@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useJourneyData } from '../../hooks/useJourneyData';
 import { Trophy, Zap, Shield, Flame, Activity, Filter, Share2, Settings, Download, Search } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid, LineChart, Line } from 'recharts';
@@ -25,7 +25,86 @@ const InsightCard = ({ title, value, description, icon: Icon, tone }) => (
     </div>
 );
 
+const formatOpeningTick = (value, maxLen = 14) => {
+    if (!value || typeof value !== 'string') return '';
+    if (value.length <= maxLen) return value;
+    return `${value.slice(0, maxLen - 3)}...`;
+};
+
+const OpeningEvolutionTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || payload.length === 0) return null;
+    const sorted = payload
+        .filter((entry) => typeof entry?.value === 'number')
+        .sort((a, b) => b.value - a.value);
+
+    if (sorted.length === 0) return null;
+
+    return (
+        <div className="journey-tooltip">
+            <div className="journey-tooltip__label">{label}</div>
+            <div className="journey-tooltip__list">
+                {sorted.map((entry) => (
+                    <div key={entry.dataKey} className="journey-tooltip__row">
+                        <div className="journey-tooltip__name">
+                            <span className="journey-tooltip__dot" style={{ background: entry.color }} />
+                            <span>{entry.dataKey}</span>
+                        </div>
+                        <div className="journey-tooltip__value">{entry.value}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const formatShortDate = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+
+const formatLongDate = (value) => {
+    if (!value) return 'Unknown date';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
+const RatingTimelineTooltip = ({ active, payload }) => {
+    if (!active || !payload || payload.length === 0) return null;
+    const entry = payload[0]?.payload;
+    if (!entry) return null;
+    const opponentLabel = entry.opponentTitle ? `${entry.opponentTitle} ${entry.opponent}` : entry.opponent;
+    return (
+        <div className="journey-tooltip">
+            <div className="journey-tooltip__label">{formatLongDate(entry.rawDate || entry.ts)}</div>
+            <div className="journey-tooltip__list">
+                <div className="journey-tooltip__row">
+                    <div className="journey-tooltip__name">Rating</div>
+                    <div className="journey-tooltip__value">
+                        {typeof entry.ratingAfter === 'number' ? entry.ratingAfter : entry.rating}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 export const ChessJourney = () => {
+    const FILTERS_STORAGE_KEY = 'journeyFilters';
+    const RATING_ZOOM_STORAGE_KEY = 'journeyRatingZoom';
+    const [initialFilters] = useState(() => {
+        if (typeof window === 'undefined') return null;
+        try {
+            const raw = localStorage.getItem(FILTERS_STORAGE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+            return null;
+        }
+    });
     const {
         filters,
         setFilters,
@@ -43,10 +122,40 @@ export const ChessJourney = () => {
         mostBrilliantGames,
         winsVsTitled,
         favoriteOpponents
-    } = useJourneyData();
+    } = useJourneyData(initialFilters);
 
     const heroInitial = summary?.heroUser ? summary.heroUser.charAt(0).toUpperCase() : '?';
     const navigate = useNavigate();
+    const [ratingZoom, setRatingZoom] = useState(() => {
+        if (typeof window === 'undefined') return 'all';
+        try {
+            const raw = localStorage.getItem(RATING_ZOOM_STORAGE_KEY);
+            if (!raw) return 'all';
+            if (raw === 'all') return 'all';
+            const asNumber = Number(raw);
+            return Number.isFinite(asNumber) ? asNumber : 'all';
+        } catch {
+            return 'all';
+        }
+    });
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
+        } catch {
+            // ignore write failures (private mode, storage full, etc.)
+        }
+    }, [filters]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            localStorage.setItem(RATING_ZOOM_STORAGE_KEY, String(ratingZoom));
+        } catch {
+            // ignore write failures (private mode, storage full, etc.)
+        }
+    }, [ratingZoom]);
 
     const openGame = (gameId) => {
         if (!gameId) return;
@@ -98,6 +207,48 @@ export const ChessJourney = () => {
         a.download = 'chess-journey-export.json';
         a.click();
         URL.revokeObjectURL(url);
+    };
+
+    const visibleRatingHistory = useMemo(() => {
+        if (!ratingHistory || ratingHistory.length === 0) return [];
+        if (ratingZoom === 'all') return ratingHistory;
+        const size = Math.min(Number(ratingZoom) || ratingHistory.length, ratingHistory.length);
+        return ratingHistory.slice(ratingHistory.length - size);
+    }, [ratingHistory, ratingZoom]);
+
+    const ratingStart = visibleRatingHistory.length ? visibleRatingHistory[0] : null;
+    const ratingEnd = visibleRatingHistory.length ? visibleRatingHistory[visibleRatingHistory.length - 1] : null;
+    const ratingIndexToDate = useMemo(() => {
+        const map = new Map();
+        visibleRatingHistory.forEach((entry) => {
+            if (typeof entry.gameIndex === 'number') {
+                map.set(entry.gameIndex, entry.rawDate || entry.date);
+            }
+        });
+        return map;
+    }, [visibleRatingHistory]);
+
+    const ratingTickIndices = useMemo(() => {
+        const ticks = [];
+        let lastLabel = null;
+        for (const entry of visibleRatingHistory) {
+            if (typeof entry.gameIndex !== 'number') continue;
+            const label = formatShortDate(entry.rawDate || entry.date);
+            if (label && label !== lastLabel) {
+                ticks.push(entry.gameIndex);
+                lastLabel = label;
+            }
+        }
+        if (ticks.length > 6) {
+            const step = Math.ceil(ticks.length / 6);
+            return ticks.filter((_, idx) => idx % step === 0);
+        }
+        return ticks;
+    }, [visibleRatingHistory]);
+
+    const formatGameIndexTick = (value) => {
+        const dateValue = ratingIndexToDate.get(value);
+        return formatShortDate(dateValue || value);
     };
 
     if (!summary) {
@@ -160,7 +311,12 @@ export const ChessJourney = () => {
                 <div className="section-header">
                     <div>
                         <h2>Rating Timeline</h2>
-                        <p>Timeline is scoped to the selected variant.</p>
+                        <p>
+                            Timeline is scoped to the selected variant.
+                            {ratingStart && ratingEnd
+                                ? ` ${formatShortDate(ratingStart.rawDate || ratingStart.date)} → ${formatShortDate(ratingEnd.rawDate || ratingEnd.date)}`
+                                : ''}
+                        </p>
                     </div>
                     <div className="section-controls">
                         <div className="chip-group">
@@ -171,6 +327,18 @@ export const ChessJourney = () => {
                                     onClick={() => setFilters({ ...filters, range: key })}
                                 >
                                     {key.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="chip-group">
+                            {[25, 50, 100, 'all'].map((value) => (
+                                <button
+                                    key={value}
+                                    className={`pill ${ratingZoom === value ? 'pill--active' : ''}`}
+                                    onClick={() => setRatingZoom(value)}
+                                    title={value === 'all' ? 'Show all games' : `Show last ${value} games`}
+                                >
+                                    {value === 'all' ? 'All' : `${value}G`}
                                 </button>
                             ))}
                         </div>
@@ -208,21 +376,35 @@ export const ChessJourney = () => {
                         </div>
                     ) : (
                         <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={ratingHistory}>
+                            <AreaChart data={visibleRatingHistory} margin={{ left: 12, right: 12, top: 8, bottom: 12 }}>
                                 <defs>
                                     <linearGradient id="journeyRating" x1="0" y1="0" x2="0" y2="1">
                                         <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.35} />
                                         <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
                                     </linearGradient>
                                 </defs>
-                                <XAxis dataKey="date" hide />
-                                <YAxis domain={['auto', 'auto']} hide />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
-                                    itemStyle={{ color: '#38bdf8' }}
-                                    formatter={(value) => [`${value}`, 'Rating']}
-                                    labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                                <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
+                                <XAxis
+                                    dataKey="gameIndex"
+                                    type="number"
+                                    scale="linear"
+                                    domain={['dataMin', 'dataMax']}
+                                    tickFormatter={formatGameIndexTick}
+                                    ticks={ratingTickIndices}
+                                    tick={{ fill: '#94a3b8', fontSize: 11 }}
+                                    tickMargin={8}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    minTickGap={12}
                                 />
+                                <YAxis
+                                    domain={['auto', 'auto']}
+                                    tick={{ fill: '#94a3b8', fontSize: 11 }}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    width={40}
+                                />
+                                <Tooltip content={<RatingTimelineTooltip />} />
                                 <Area
                                     type="monotone"
                                     dataKey="rating"
@@ -467,9 +649,17 @@ export const ChessJourney = () => {
                             </div>
                         ) : (
                             <ResponsiveContainer width="100%" height={240}>
-                                <BarChart data={openings}>
+                                <BarChart data={openings} margin={{ bottom: 16 }}>
                                     <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
-                                    <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} interval={0} />
+                                    <XAxis
+                                        dataKey="name"
+                                        tick={{ fill: '#94a3b8', fontSize: 10, angle: -35, textAnchor: 'end' }}
+                                        height={60}
+                                        interval="preserveStartEnd"
+                                        minTickGap={8}
+                                        tickMargin={8}
+                                        tickFormatter={formatOpeningTick}
+                                    />
                                     <YAxis hide />
                                     <Tooltip
                                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
@@ -496,10 +686,7 @@ export const ChessJourney = () => {
                                 <CartesianGrid stroke="rgba(148,163,184,0.12)" vertical={false} />
                                 <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} />
                                 <YAxis hide />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', color: '#f8fafc', borderRadius: 12 }}
-                                    labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
-                                />
+                                <Tooltip content={<OpeningEvolutionTooltip />} />
                                 {openings.map((opening, idx) => (
                                     <Area
                                         key={opening.name}

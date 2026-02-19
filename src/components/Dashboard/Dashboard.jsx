@@ -12,6 +12,7 @@ import { AIInsightsView } from './AIInsightsView';
 import { Sparkles } from 'lucide-react';
 import { useHeroProfiles } from '../../hooks/useHeroProfiles';
 import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
+import { AppFooter } from '../common/AppFooter';
 
 const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
     <div className="flex items-center gap-4 p-3 rounded-md hover:bg-subtle transition-colors cursor-default">
@@ -983,182 +984,190 @@ export const Dashboard = () => {
                 {/* Main Board Area */}
                 <div className={`dashboard-board-area flex-1 flex flex-col items-center justify-start min-h-0 w-full p-4 ${!activeGame ? 'is-empty' : ''}`}>
 
-                    {activeGame && (
-                        <div className="board-header">
-                            <div className="board-header__left">
-                                <div className="board-header__meta">
-                                    <span className="board-meta-pill">{getMeta('perf')}</span>
-                                    <span className="board-meta-sep">•</span>
-                                    <span>{new Date(activeGame.date).toLocaleDateString()}</span>
-                                    <span className="board-meta-sep">•</span>
-                                    <span>{activeGame.result}</span>
-                                </div>
-                                <div className="board-header__opening">
-                                    <span className="opening-name">{activeGame.openingName || activeGame.eco || 'Unknown Opening'}</span>
-                                    {activeGame.eco && <span className="opening-eco">{activeGame.eco}</span>}
-                                </div>
-                            </div>
-                            <div className="board-header__actions">
-                                {activeGame && (
-                                    <div className="split-button">
-                                        <button
-                                            onClick={handleAnalyzePrimary}
-                                            disabled={activeGame.analysisStatus === 'analyzing'}
-                                            className={`split-button__main ${activeGame.analysisStatus === 'analyzing' ? 'is-loading' : ''}`}
-                                        >
-                                            <Zap size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
-                                            {lastAnalyzeMode === 'ai'
-                                                ? (aiAnalysis ? 'Open AI Coach' : 'Analyze (AI)')
-                                                : (activeGame.analysisStatus === 'analyzing'
-                                                    ? 'Analyzing...'
-                                                    : (activeGame.analysisStatus === 'failed'
-                                                        ? 'Retry Analysis (Stockfish)'
-                                                        : (activeGame.analyzed ? 'Re-analyze (Stockfish)' : 'Analyze (Stockfish)')))}
-                                        </button>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setAnalysisMenuOpen((v) => !v);
-                                            }}
-                                            className="split-button__toggle"
-                                            aria-label="Choose analysis mode"
-                                        >
-                                            <ChevronDown size={14} />
-                                        </button>
-                                        {analysisMenuOpen && (
-                                            <div className="split-button__menu" onClick={(e) => e.stopPropagation()}>
-                                                <button onClick={() => handleAnalyzeSelect('stockfish')}>
-                                                    {activeGame.analyzed ? 'Re-analyze (Stockfish)' : 'Stockfish Analysis'}
-                                                </button>
-                                                <button onClick={() => handleAnalyzeSelect('ai')}>
-                                                    {aiAnalysis ? 'Re-run AI Analysis' : 'AI Analysis'}
-                                                </button>
-                                                {aiAnalysis && (
-                                                    <button onClick={() => {
-                                                        setLastAnalyzeMode('ai');
-                                                        localStorage.setItem('dashboardAnalyzeMode', 'ai');
-                                                        setAnalysisMenuOpen(false);
-                                                        setActiveTab('ai');
-                                                    }}>
-                                                        Open AI Coach
-                                                    </button>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                                {!isMobile && (
-                                    <button
-                                        onClick={() => setRightPanelOpen((v) => !v)}
-                                        className="panel-toggle"
-                                    >
-                                        {rightPanelOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-                                        {rightPanelOpen ? 'Hide Panel' : 'Show Panel'}
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
                     {activeGame ? (
-                        <div className="board-wrap flex flex-col gap-1 shrink-0">
-                            {/* Top Player */}
-                            <div className="flex justify-between items-end px-1">
-                                <div className="flex items-baseline gap-2 text-secondary">
-                                    {topPlayer.title && <span className="title-badge">{topPlayer.title}</span>}
-                                    <span className="font-semibold">{topPlayer.name}</span>
-                                    <span className="text-sm font-light">({topPlayer.rating})</span>
+                        <div className="dashboard-board-stack">
+                            <div className="board-header">
+                                <div className="board-header__left">
+                                    <div className="board-header__meta">
+                                        <span className="board-meta-pill">{getMeta('perf')}</span>
+                                        <span className="board-meta-sep">•</span>
+                                        <span>{new Date(activeGame.date).toLocaleDateString()}</span>
+                                        <span className="board-meta-sep">•</span>
+                                        <span>{activeGame.result}</span>
+                                    </div>
+                                    <div className="board-header__opening">
+                                        <span className="opening-name">{activeGame.openingName || activeGame.eco || 'Unknown Opening'}</span>
+                                        {activeGame.eco && <span className="opening-eco">{activeGame.eco}</span>}
+                                    </div>
                                 </div>
-                                <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'Black' : 'White'}</div>
-                            </div>
-
-                            {/* BOARD + EVAL BAR */}
-                            <div className="board-row" style={{ position: 'relative', zIndex: 2 }}>
-                                <div
-                                    ref={boardContainerRef}
-                                    className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
-                                >
-                                    <Chessboard options={chessboardOptions} />
-                                    {lastMoveRects && !previewFen && (
-                                        <>
-                                            <div
-                                                key={`last-move-from-${lastMoveFlash}`}
-                                                className="last-move-flash last-move-flash--from"
-                                                style={{
-                                                    left: lastMoveRects.from.left,
-                                                    top: lastMoveRects.from.top,
-                                                    width: lastMoveRects.from.size,
-                                                    height: lastMoveRects.from.size,
-                                                    background: `radial-gradient(circle at 50% 50%, ${flashPalette.fromFill}, rgba(0, 0, 0, 0) 70%)`,
-                                                    boxShadow: `0 0 18px ${flashPalette.fromRing}`
+                                <div className="board-header__actions">
+                                    {activeGame && (
+                                        <div className="split-button">
+                                            <button
+                                                onClick={handleAnalyzePrimary}
+                                                disabled={activeGame.analysisStatus === 'analyzing'}
+                                                className={`split-button__main ${activeGame.analysisStatus === 'analyzing' ? 'is-loading' : ''}`}
+                                            >
+                                                <Zap size={14} className={activeGame.analysisStatus === 'analyzing' ? 'animate-pulse' : ''} />
+                                                {lastAnalyzeMode === 'ai'
+                                                    ? (aiAnalysis ? 'Open AI Coach' : 'Analyze (AI)')
+                                                    : (activeGame.analysisStatus === 'analyzing'
+                                                        ? 'Analyzing...'
+                                                        : (activeGame.analysisStatus === 'failed'
+                                                            ? 'Retry Analysis (Stockfish)'
+                                                            : (activeGame.analyzed ? 'Re-analyze (Stockfish)' : 'Analyze (Stockfish)')))}
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setAnalysisMenuOpen((v) => !v);
                                                 }}
-                                            />
-                                            <div
-                                                key={`last-move-to-${lastMoveFlash}`}
-                                                className="last-move-flash last-move-flash--to"
-                                                style={{
-                                                    left: lastMoveRects.to.left,
-                                                    top: lastMoveRects.to.top,
-                                                    width: lastMoveRects.to.size,
-                                                    height: lastMoveRects.to.size,
-                                                    background: `radial-gradient(circle at 50% 50%, ${flashPalette.toFill}, rgba(0, 0, 0, 0) 70%)`,
-                                                    boxShadow: `0 0 24px ${flashPalette.toRing}`
-                                                }}
-                                            />
-                                        </>
-                                    )}
-                                    {badgeStyle && classificationBadge && (
-                                        <div
-                                            className={`board-badge badge-${classificationBadge.tone}`}
-                                            style={{
-                                                left: badgeStyle.left,
-                                                top: badgeStyle.top,
-                                                width: badgeStyle.size,
-                                                height: badgeStyle.size,
-                                                fontSize: badgeStyle.fontSize
-                                            }}
-                                        >
-                                            {classificationBadge.label}
+                                                className="split-button__toggle"
+                                                aria-label="Choose analysis mode"
+                                            >
+                                                <ChevronDown size={14} />
+                                            </button>
+                                            {analysisMenuOpen && (
+                                                <div className="split-button__menu" onClick={(e) => e.stopPropagation()}>
+                                                    <button onClick={() => handleAnalyzeSelect('stockfish')}>
+                                                        {activeGame.analyzed ? 'Re-analyze (Stockfish)' : 'Stockfish Analysis'}
+                                                    </button>
+                                                    <button onClick={() => handleAnalyzeSelect('ai')}>
+                                                        {aiAnalysis ? 'Re-run AI Analysis' : 'AI Analysis'}
+                                                    </button>
+                                                    {aiAnalysis && (
+                                                        <button onClick={() => {
+                                                            setLastAnalyzeMode('ai');
+                                                            localStorage.setItem('dashboardAnalyzeMode', 'ai');
+                                                            setAnalysisMenuOpen(false);
+                                                            setActiveTab('ai');
+                                                        }}>
+                                                            Open AI Coach
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     )}
-                                    {kingResultBadges && (
-                                        <>
-                                            <div
-                                                className={`king-result-badge king-result-badge--${kingResultBadges.white.status}`}
-                                                style={{ left: kingResultBadges.white.left, top: kingResultBadges.white.top }}
-                                            >
-                                                {kingResultBadges.white.status === 'win' ? 'WIN' : kingResultBadges.white.status === 'lose' ? 'LOSE' : 'DRAW'}
-                                            </div>
-                                            <div
-                                                className={`king-result-badge king-result-badge--${kingResultBadges.black.status}`}
-                                                style={{ left: kingResultBadges.black.left, top: kingResultBadges.black.top }}
-                                            >
-                                                {kingResultBadges.black.status === 'win' ? 'WIN' : kingResultBadges.black.status === 'lose' ? 'LOSE' : 'DRAW'}
-                                            </div>
-                                        </>
+                                    {!isMobile && (
+                                        <button
+                                            onClick={() => setRightPanelOpen((v) => !v)}
+                                            className="panel-toggle"
+                                        >
+                                            {rightPanelOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+                                            {rightPanelOpen ? 'Hide Panel' : 'Show Panel'}
+                                        </button>
                                     )}
-                                </div>
-                                <div className="eval-rail eval-rail--interactive" title={`Evaluation: ${evalText}`} aria-hidden="true">
-                                    <div className="eval-bar eval-bar--outside">
-                                        <div className="eval-bar__black" style={{ height: `${Math.round((1 - evalPct) * 100)}%` }} />
-                                        <div className="eval-bar__white" style={{ height: `${Math.round(evalPct * 100)}%` }} />
-                                        <div className="eval-bar__mid" />
-                                        <div className="eval-bar__marker" style={{ top: `${evalMarkerTopPct}%` }} />
-                                    </div>
-                                    <div className="eval-rail__value" style={{ top: `${evalMarkerTopPct}%` }}>
-                                        {evalText}
-                                    </div>
                                 </div>
                             </div>
 
-                            {/* Bottom Player */}
-                            <div className="flex justify-between items-start px-1">
-                                <div className="flex items-baseline gap-2 text-primary">
-                                    {bottomPlayer.title && <span className="title-badge">{bottomPlayer.title}</span>}
-                                    <span className="font-bold text-lg">{bottomPlayer.name}</span>
-                                    <span className="text-sm font-light">({bottomPlayer.rating})</span>
+                            <div className="board-wrap flex flex-col gap-1 shrink-0">
+                                {/* Top Player */}
+                                <div className="flex justify-between items-end px-1">
+                                    <div className="flex items-baseline gap-2 text-secondary">
+                                        {topPlayer.title && <span className="title-badge">{topPlayer.title}</span>}
+                                        <span className="font-semibold">{topPlayer.name}</span>
+                                        <span className="text-sm font-light">({topPlayer.rating})</span>
+                                    </div>
+                                    <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'Black' : 'White'}</div>
                                 </div>
-                                <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'White' : 'Black'}</div>
+
+                                {/* BOARD + EVAL BAR */}
+                                <div className="board-row" style={{ position: 'relative', zIndex: 2 }}>
+                                    <div
+                                        ref={boardContainerRef}
+                                        className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
+                                    >
+                                        <Chessboard options={chessboardOptions} />
+                                        {lastMoveRects && !previewFen && (
+                                            <>
+                                                <div
+                                                    key={`last-move-from-${lastMoveFlash}`}
+                                                    className="last-move-flash last-move-flash--from"
+                                                    style={{
+                                                        left: lastMoveRects.from.left,
+                                                        top: lastMoveRects.from.top,
+                                                        width: lastMoveRects.from.size,
+                                                        height: lastMoveRects.from.size,
+                                                        background: `radial-gradient(circle at 50% 50%, ${flashPalette.fromFill}, rgba(0, 0, 0, 0) 70%)`,
+                                                        boxShadow: `0 0 18px ${flashPalette.fromRing}`
+                                                    }}
+                                                />
+                                                <div
+                                                    key={`last-move-to-${lastMoveFlash}`}
+                                                    className="last-move-flash last-move-flash--to"
+                                                    style={{
+                                                        left: lastMoveRects.to.left,
+                                                        top: lastMoveRects.to.top,
+                                                        width: lastMoveRects.to.size,
+                                                        height: lastMoveRects.to.size,
+                                                        background: `radial-gradient(circle at 50% 50%, ${flashPalette.toFill}, rgba(0, 0, 0, 0) 70%)`,
+                                                        boxShadow: `0 0 24px ${flashPalette.toRing}`
+                                                    }}
+                                                />
+                                            </>
+                                        )}
+                                        {badgeStyle && classificationBadge && (
+                                            <div
+                                                className={`board-badge badge-${classificationBadge.tone}`}
+                                                style={{
+                                                    left: badgeStyle.left,
+                                                    top: badgeStyle.top,
+                                                    width: badgeStyle.size,
+                                                    height: badgeStyle.size,
+                                                    fontSize: badgeStyle.fontSize
+                                                }}
+                                            >
+                                                {classificationBadge.label}
+                                            </div>
+                                        )}
+                                        {kingResultBadges && (
+                                            <>
+                                                <div
+                                                    className={`king-result-badge king-result-badge--${kingResultBadges.white.status}`}
+                                                    style={{ left: kingResultBadges.white.left, top: kingResultBadges.white.top }}
+                                                >
+                                                    {kingResultBadges.white.status === 'win' ? 'WIN' : kingResultBadges.white.status === 'lose' ? 'LOSE' : 'DRAW'}
+                                                </div>
+                                                <div
+                                                    className={`king-result-badge king-result-badge--${kingResultBadges.black.status}`}
+                                                    style={{ left: kingResultBadges.black.left, top: kingResultBadges.black.top }}
+                                                >
+                                                    {kingResultBadges.black.status === 'win' ? 'WIN' : kingResultBadges.black.status === 'lose' ? 'LOSE' : 'DRAW'}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                    <div className="eval-rail eval-rail--interactive" title={`Evaluation: ${evalText}`} aria-hidden="true">
+                                        <div className="eval-bar eval-bar--outside">
+                                            <div className="eval-bar__black" style={{ height: `${Math.round((1 - evalPct) * 100)}%` }} />
+                                            <div className="eval-bar__white" style={{ height: `${Math.round(evalPct * 100)}%` }} />
+                                            <div className="eval-bar__mid" />
+                                            <div className="eval-bar__marker" style={{ top: `${evalMarkerTopPct}%` }} />
+                                        </div>
+                                        <div className="eval-rail__value" style={{ top: `${evalMarkerTopPct}%` }}>
+                                            {evalText}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Bottom Player */}
+                                <div className="flex justify-between items-start px-1">
+                                    <div className="flex items-baseline gap-2 text-primary">
+                                        {bottomPlayer.title && <span className="title-badge">{bottomPlayer.title}</span>}
+                                        <span className="font-bold text-lg">{bottomPlayer.name}</span>
+                                        <span className="text-sm font-light">({bottomPlayer.rating})</span>
+                                    </div>
+                                    <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'White' : 'Black'}</div>
+                                </div>
+                            </div>
+
+                            {/* Controls */}
+                            <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
+                                <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
+                                <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
+                                <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
+                                <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
                             </div>
                         </div>
                     ) : (
@@ -1185,15 +1194,7 @@ export const Dashboard = () => {
                         </div>
                     )}
 
-                    {/* Controls */}
-                    {activeGame && (
-                        <div className="board-wrap flex items-center justify-center gap-4 w-full py-4 shrink-0">
-                            <button onClick={handleStart} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="Start"><Rewind size={20} fill="currentColor" /></button>
-                            <button onClick={handlePrev} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Previous"><ChevronLeft size={24} /></button>
-                            <button onClick={handleNext} className="p-3 hover:bg-subtle rounded-full text-primary transition-colors bg-subtle border" title="Next"><ChevronRight size={24} /></button>
-                            <button onClick={handleEnd} className="p-2 hover:bg-subtle rounded-full text-secondary transition-colors" title="End"><FastForward size={20} fill="currentColor" /></button>
-                        </div>
-                    )}
+                    <AppFooter className="dashboard-footer" />
 
                     {!isMobile && !rightPanelOpen && showContextPanel && (
                         <button className="panel-toggle panel-toggle--floating" onClick={() => setRightPanelOpen(true)}>
