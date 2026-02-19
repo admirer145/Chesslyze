@@ -147,13 +147,13 @@ const initEngine = async (version) => {
             rawPostMessage({ type: 'WARNING', message: "Multi-threaded engine requires secure context (COOP/COEP Headers)." });
         }
 
-        // Use import.meta.url to resolve paths relative to the current module
-        // This ensures paths work correctly with Vite's base path configuration (e.g., /Chesslyze/)
+        const baseEnv = import.meta.env.BASE_URL || '/';
+        const basePath = baseEnv.endsWith('/') ? baseEnv : `${baseEnv}/`;
         let scriptPath = version === '17.1-multi'
-            ? new URL('../../public/stockfish-engine.worker.js#/stockfish-17-multi.wasm', import.meta.url).href
+            ? `${basePath}stockfish-engine.worker.js?base=${encodeURIComponent(basePath)}#/stockfish-17-multi.wasm`
             : version === '17.1-lite'
-                ? new URL('../../public/stockfish-17-lite.js', import.meta.url).href
-                : new URL('../../public/stockfish-17-single.js', import.meta.url).href;
+                ? `${basePath}stockfish-17-lite.js`
+                : `${basePath}stockfish-17-single.js`;
 
         if (version === '17.1-lite') {
             const ok = await checkScriptAvailable(scriptPath);
@@ -163,7 +163,7 @@ const initEngine = async (version) => {
                     type: 'WARNING',
                     message: "Lite engine missing in this build. Falling back to Stockfish 17.1 Standard."
                 });
-                scriptPath = new URL('../../public/stockfish-17-single.js', import.meta.url).href;
+                scriptPath = `${basePath}stockfish-17-single.js`;
             }
         }
 

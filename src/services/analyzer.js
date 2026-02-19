@@ -166,8 +166,8 @@ const getClassification = ({
     const stillWinning = beforeWinning && after >= SLIGHT_EDGE;
     const stillLosing = beforeLosing && afterLosing;
 
-    const deferredSac = typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -3;
-    const sacrifice = materialDelta <= -2 || deferredSac || (typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -2);
+    const sacrifice = materialDelta <= -2;
+    const deferredMajorSac = typeof pvMaterialDelta === 'number' && pvMaterialDelta <= -5;
     const majorMaterialLoss = materialDelta <= -5; // rook/queen
 
     const rating = typeof playerRating === 'number' ? playerRating : null;
@@ -187,8 +187,8 @@ const getClassification = ({
     // =========================
     if (isBestMove) {
         const immediateSac = materialDelta <= -2;
-        const pieceSac = materialDelta <= -3 || deferredSac; // minor piece or more
-    const BRILLIANT_GAP = 80 * brilliantFactor;
+        const pieceSac = materialDelta <= -3; // minor piece or more
+        const BRILLIANT_GAP = (isOpening ? 140 : 120) * brilliantFactor;
 
     // 🔥 BRILLIANT: Best move + genuine sacrifice + non-obvious
     // Requires:
@@ -197,27 +197,38 @@ const getClassification = ({
     //  - Not already in an overwhelming position (< +5.0)
     //  - Position stays reasonable after the sacrifice
     //  - Move stands out from alternatives (gap to second best)
-    const notOverwhelming = before < 500;
-    const positionHeld = after >= -NEAR_EQUAL && after >= before - 50;
-    const standoutMove = gap !== null && gap >= BRILLIANT_GAP;
-    const isBestish = !!(isExactBest || (isTopLine && evalDiff <= THRESHOLDS.BEST * 0.7) || isBestMove);
-    const complexPosition = Math.abs(before) <= 300;
-    const improves = (after - before) >= 60;
-    const winningSac = majorMaterialLoss && (isMateScore(after) || after >= WINNING);
+        const notOverwhelming = before < 350;
+        const positionHeld = after >= -NEAR_EQUAL && after >= before - 50;
+        const standoutMove = gap !== null && gap >= BRILLIANT_GAP;
+        const isBestish = !!(isExactBest || (isTopLine && evalDiff <= THRESHOLDS.BEST * 0.7) || isBestMove);
+        const complexPosition = Math.abs(before) <= 300;
+        const improves = (after - before) >= 60;
+        const winningSac = majorMaterialLoss && (isMateScore(after) || after >= WINNING);
+        const mateAfter = isMateScore(after) && after > 0;
+        const nonOverwhelmingOrMate = notOverwhelming || winningSac || mateAfter;
+        const deferredSacEligible = deferredMajorSac &&
+            (standoutMove || mateAfter) &&
+            nonOverwhelmingOrMate &&
+            (after >= -NEAR_EQUAL || winningSac || mateAfter) &&
+            (hasTacticalMotif || improves || complexPosition || mateAfter);
+        const forcedMateSac = deferredMajorSac && mateAfter;
 
-    if (
+        if (
             !isRecapture &&
             isBestish &&
-            sacrifice &&
             (
-                // Path A: Major sacrifice leading to winning/mate even if already better
-                winningSac ||
-                // Path B: Piece-level sacrifice with standout or big improvement in a complex position
-                (pieceSac && (standoutMove || (improves && complexPosition))) ||
-                // Path C: Smaller sacrifice with a tactical motif and clear separation
-                (immediateSac && hasTacticalMotif && standoutMove) ||
-                // Path D: Sacrifice that holds a complex position without dropping eval
-                (complexPosition && positionHeld && standoutMove)
+                (sacrifice && nonOverwhelmingOrMate && (
+                    // Path A: Major sacrifice leading to winning/mate even if already better
+                    winningSac ||
+                    // Path B: Piece-level sacrifice with standout or big improvement in a complex position
+                    (pieceSac && (standoutMove || (improves && complexPosition))) ||
+                    // Path C: Smaller sacrifice with a tactical motif and clear separation
+                    (immediateSac && hasTacticalMotif && standoutMove)
+                )) ||
+                // Path D: Deferred major sacrifice (e.g., hanging queen) that stands out
+                deferredSacEligible ||
+                // Path E: Forced mate with a deferred major sacrifice (e.g., hanging queen)
+                forcedMateSac
             )
         ) {
             return 'brilliant';
@@ -966,14 +977,40 @@ export const processGame = async (gameId) => {
                 Math.abs(scoreBeforeCp) <= 80;        // avoid unstable evals
             const isBookMove = isExplicitBookMove || isEngineBookMove;
 
-            const secondLine = pvLines.find((l) => (l?.multipv || 1) === 2);
-            const secondScoreCp = secondLine ? evalToCp(secondLine) : null;
-            const gapToSecond = secondScoreCp === null ? null : (scoreBeforeCp - secondScoreCp);
             const bestThreshold = THRESHOLDS.BEST * (phase === 'opening' ? 1.3 : 1);
             const isBestMove = userMoveUCI === bestMoveUCI || evalDiff <= bestThreshold;
 
             const pvForUser = (userLine?.pv || bestLine?.pv || '').trim();
             const pvMaterial = estimatePvMaterialDelta(fenBefore, pvForUser, 6);
+
+            let secondLine = pvLines.find((l) => (l?.multipv || 1) === 2);
+            let secondScoreCp = secondLine ? evalToCp(secondLine) : null;
+            let gapToSecond = secondScoreCp === null ? null : (scoreBeforeCp - secondScoreCp);
+
+            // If user requested MultiPV=1, we won't have a second line.
+            // For potential great/brilliant moves, do a quick 2-line probe to get the gap.
+            if (gapToSecond === null && isBestMove && !isBookMove) {
+                const needsGapCheck =
+                    materialDelta <= -2 ||
+                    (typeof pvMaterial?.delta === 'number' && pvMaterial.delta <= -5) ||
+                    Math.abs(scoreBeforeCp) <= 300;
+                if (needsGapCheck) {
+                    try {
+                        const gapResult = await safeAnalyze(fenBefore, { depth: shallowDepth, multiPv: 2, movetime: timePerMove });
+                        const gapLines = Array.isArray(gapResult.pvLines) ? gapResult.pvLines : [];
+                        const gapBestLine = gapLines.find((l) => (l?.multipv || 1) === 1) || gapResult.evaluation || {};
+                        const gapSecondLine = gapLines.find((l) => (l?.multipv || 1) === 2);
+                        const gapSecondScoreCp = gapSecondLine ? evalToCp(gapSecondLine) : null;
+                        if (gapSecondScoreCp !== null) {
+                            secondLine = gapSecondLine;
+                            secondScoreCp = gapSecondScoreCp;
+                            gapToSecond = evalToCp(gapBestLine) - gapSecondScoreCp;
+                        }
+                    } catch {
+                        // If probe fails, keep gap null and continue.
+                    }
+                }
+            }
 
             const motifs = detectMotifs({
                 chessAfter,

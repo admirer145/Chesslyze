@@ -5,7 +5,14 @@
 
 const resolveBaseUrl = () => {
     try {
-        const url = (self.location && self.location.href) ? self.location.href : '';
+        const loc = self.location;
+        const search = loc && typeof loc.search === 'string' ? loc.search : '';
+        const params = new URLSearchParams(search);
+        const override = params.get('base');
+        if (override) {
+            return override.endsWith('/') ? override : `${override}/`;
+        }
+        const url = (loc && loc.href) ? loc.href : '';
         const clean = url.split('#')[0].split('?')[0];
         const idx = clean.lastIndexOf('/');
         return idx >= 0 ? clean.slice(0, idx + 1) : '/';
