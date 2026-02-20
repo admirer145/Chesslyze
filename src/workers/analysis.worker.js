@@ -142,20 +142,25 @@ const initEngine = async (version) => {
         const hasSAB = typeof SharedArrayBuffer !== 'undefined';
         log(`Worker: Environment Check - Secure Context: ${isSecure}, SharedArrayBuffer: ${hasSAB}`);
 
+        let effectiveVersion = version;
         if (version === '17.1-multi' && (!isSecure || !hasSAB)) {
-            warn("Worker: Multi-threaded engine requested but environment is not secure. Fallback to single-threaded?");
-            rawPostMessage({ type: 'WARNING', message: "Multi-threaded engine requires secure context (COOP/COEP Headers)." });
+            warn("Worker: Multi-threaded engine requested but environment is not secure. Falling back to single-threaded engine.");
+            rawPostMessage({
+                type: 'WARNING',
+                message: "Multi-threaded engine requires SharedArrayBuffer (COOP/COEP). Falling back to Stockfish 17.1 Standard."
+            });
+            effectiveVersion = '17.1-single';
         }
 
         const baseEnv = import.meta.env.BASE_URL || '/';
         const basePath = baseEnv.endsWith('/') ? baseEnv : `${baseEnv}/`;
-        let scriptPath = version === '17.1-multi'
+        let scriptPath = effectiveVersion === '17.1-multi'
             ? `${basePath}stockfish-engine.worker.js?base=${encodeURIComponent(basePath)}#/stockfish-17-multi.wasm`
-            : version === '17.1-lite'
+            : effectiveVersion === '17.1-lite'
                 ? `${basePath}stockfish-17-lite.js`
                 : `${basePath}stockfish-17-single.js`;
 
-        if (version === '17.1-lite') {
+        if (effectiveVersion === '17.1-lite') {
             const ok = await checkScriptAvailable(scriptPath);
             if (!ok) {
                 warn("Worker: Lite engine missing. Falling back to standard single-thread engine.");

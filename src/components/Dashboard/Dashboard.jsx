@@ -6,6 +6,7 @@ import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, FastFor
 import { Link } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { processGame } from '../../services/analyzer';
+import { stripPgnComments } from '../../services/pgn';
 import { AnalyticsPanel } from './AnalyticsPanel';
 import { AIAnalysisModal } from './AIAnalysisModal';
 import { AIInsightsView } from './AIInsightsView';
@@ -13,6 +14,77 @@ import { Sparkles } from 'lucide-react';
 import { useHeroProfiles } from '../../hooks/useHeroProfiles';
 import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../../services/heroProfiles';
 import { AppFooter } from '../common/AppFooter';
+
+const CLOCK_PLACEHOLDER = '—:—';
+
+const parseClockString = (raw) => {
+    if (!raw || typeof raw !== 'string') return null;
+    const token = raw.trim();
+    const parts = token.split(':');
+    if (!parts.length) return { seconds: null, raw: token };
+    const parseIntSafe = (value) => {
+        const n = parseInt(value, 10);
+        return Number.isFinite(n) ? n : null;
+    };
+    const parseFloatSafe = (value) => {
+        const normalized = value.replace(',', '.');
+        const n = parseFloat(normalized);
+        return Number.isFinite(n) ? n : null;
+    };
+    let seconds = null;
+    if (parts.length === 3) {
+        const h = parseIntSafe(parts[0]);
+        const m = parseIntSafe(parts[1]);
+        const s = parseFloatSafe(parts[2]);
+        if (h === null || m === null || s === null) return { seconds: null, raw: token };
+        seconds = (h * 3600) + (m * 60) + s;
+    } else if (parts.length === 2) {
+        const m = parseIntSafe(parts[0]);
+        const s = parseFloatSafe(parts[1]);
+        if (m === null || s === null) return { seconds: null, raw: token };
+        seconds = (m * 60) + s;
+    } else {
+        const s = parseFloatSafe(parts[0]);
+        if (s === null) return { seconds: null, raw: token };
+        seconds = s;
+    }
+    return { seconds, raw: token };
+};
+
+const formatClockValue = (entry) => {
+    if (!entry) return CLOCK_PLACEHOLDER;
+    if (!Number.isFinite(entry.seconds)) {
+        return entry.raw || CLOCK_PLACEHOLDER;
+    }
+    const total = Math.max(0, Math.floor(entry.seconds));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(Math.floor(seconds)).padStart(2, '0')}`;
+};
+
+const parseTimeControlBase = (value) => {
+    if (!value || value === '-' || value === '?') return null;
+    const raw = value.toString().trim();
+    if (!raw) return null;
+    const baseStr = raw.split('+')[0];
+    const base = parseInt(baseStr, 10);
+    return Number.isFinite(base) ? base : null;
+};
+
+const extractPgnClocks = (pgn) => {
+    if (!pgn) return [];
+    const clocks = [];
+    const re = /\[%clk\s+([0-9:.]+)\s*\]/gi;
+    let match;
+    while ((match = re.exec(pgn)) !== null) {
+        if (match[1]) clocks.push(match[1].trim());
+    }
+    return clocks;
+};
 
 const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
     <div className="flex items-center gap-4 p-3 rounded-md hover:bg-subtle transition-colors cursor-default">
@@ -414,7 +486,8 @@ export const Dashboard = () => {
             if (loadedGameIdRef.current !== activeGame.id) {
                 try {
                     const chess = new Chess();
-                    chess.loadPgn(activePgn, { sloppy: true });
+                    const cleanPgn = stripPgnComments(activePgn);
+                    chess.loadPgn(cleanPgn, { sloppy: true });
 
                     // Check for custom start position
                     const header = chess.header();
@@ -449,6 +522,17 @@ export const Dashboard = () => {
             }
         }
     }, [activeGame?.id, activePgn]);
+
+    const clockByPly = useMemo(() => {
+        if (!activePgn) return [];
+        const clocks = extractPgnClocks(activePgn);
+        const total = Math.max(history.length, clocks.length);
+        if (!total) return [];
+        return Array.from({ length: total }, (_, idx) => {
+            const raw = clocks[idx];
+            return raw ? parseClockString(raw) : null;
+        });
+    }, [activePgn, history.length]);
 
     useEffect(() => {
         if (!activeGame?.id) return;
@@ -744,6 +828,45 @@ export const Dashboard = () => {
     const bottomPlayer = boardOrientation === 'white' ?
         { name: getMeta('White'), rating: getMeta('WhiteElo') || getMeta('whiteRating'), title: whiteTitle } :
         { name: getMeta('Black'), rating: getMeta('BlackElo') || getMeta('blackRating'), title: blackTitle };
+
+    const timeControlRaw = activeGame?.timeControl || getMeta('TimeControl');
+    const baseSeconds = parseTimeControlBase(timeControlRaw);
+    const clockState = useMemo(() => {
+        const hasAny = clockByPly.some(Boolean);
+        const baseEntry = Number.isFinite(baseSeconds) ? { seconds: baseSeconds, raw: null } : null;
+        let white = null;
+        let black = null;
+        if (hasAny && moveIndex >= 0) {
+            const maxIndex = Math.min(moveIndex, clockByPly.length - 1);
+            for (let i = 0; i <= maxIndex; i += 1) {
+                const entry = clockByPly[i];
+                if (!entry) continue;
+                if (i % 2 === 0) {
+                    white = entry;
+                } else {
+                    black = entry;
+                }
+            }
+        }
+        if ((!white || !black) && baseEntry) {
+            white = white || baseEntry;
+            black = black || baseEntry;
+        }
+        return {
+            show: hasAny || !!baseEntry,
+            white,
+            black
+        };
+    }, [clockByPly, moveIndex, baseSeconds]);
+
+    const topColor = boardOrientation === 'white' ? 'black' : 'white';
+    const bottomColor = boardOrientation === 'white' ? 'white' : 'black';
+    const topClockEntry = topColor === 'white' ? clockState.white : clockState.black;
+    const bottomClockEntry = bottomColor === 'white' ? clockState.white : clockState.black;
+    const topClockLabel = formatClockValue(topClockEntry);
+    const bottomClockLabel = formatClockValue(bottomClockEntry);
+    const topClockLow = Number.isFinite(topClockEntry?.seconds) && topClockEntry.seconds <= 10;
+    const bottomClockLow = Number.isFinite(bottomClockEntry?.seconds) && bottomClockEntry.seconds <= 10;
 
     const defaultArrow = useMemo(() => {
         // Show best move arrow when analysis data is available, regardless of active tab
@@ -1063,13 +1186,19 @@ export const Dashboard = () => {
 
                             <div className="board-wrap flex flex-col gap-1 shrink-0">
                                 {/* Top Player */}
-                                <div className="flex justify-between items-end px-1">
+                                <div className="board-player-row flex justify-between items-center px-1">
                                     <div className="flex items-baseline gap-2 text-secondary">
                                         {topPlayer.title && <span className="title-badge">{topPlayer.title}</span>}
                                         <span className="font-semibold">{topPlayer.name}</span>
                                         <span className="text-sm font-light">({topPlayer.rating})</span>
                                     </div>
-                                    <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'Black' : 'White'}</div>
+                                    {clockState.show && (
+                                        <div className="board-player-meta">
+                                            <div className={`board-clock board-clock--inline${topClockEntry ? '' : ' is-missing'}${topClockLow ? ' is-low' : ''}`}>
+                                                {topClockLabel}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* BOARD + EVAL BAR */}
@@ -1152,13 +1281,19 @@ export const Dashboard = () => {
                                 </div>
 
                                 {/* Bottom Player */}
-                                <div className="flex justify-between items-start px-1">
+                                <div className="board-player-row flex justify-between items-center px-1">
                                     <div className="flex items-baseline gap-2 text-primary">
                                         {bottomPlayer.title && <span className="title-badge">{bottomPlayer.title}</span>}
                                         <span className="font-bold text-lg">{bottomPlayer.name}</span>
                                         <span className="text-sm font-light">({bottomPlayer.rating})</span>
                                     </div>
-                                    <div className="text-xs text-muted/50">{boardOrientation === 'white' ? 'White' : 'Black'}</div>
+                                    {clockState.show && (
+                                        <div className="board-player-meta">
+                                            <div className={`board-clock board-clock--inline${bottomClockEntry ? '' : ' is-missing'}${bottomClockLow ? ' is-low' : ''}`}>
+                                                {bottomClockLabel}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
