@@ -12,6 +12,15 @@ const parseTags = (pgn) => {
     return tags;
 };
 
+export const stripPgnComments = (pgn) => {
+    if (!pgn) return '';
+    return pgn
+        .replace(/\{[^}]*\}/g, ' ')
+        .replace(/;[^\n\r]*/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
 const normalizeDateParts = (value) => {
     if (!value) return null;
     const raw = value.trim();
@@ -81,11 +90,12 @@ const hashPgn = (pgn) => {
     return `pgn_${(hash >>> 0).toString(16)}`;
 };
 
-export const parsePGN = (pgn) => {
+export const parsePGN = (pgn, options = {}) => {
     if (!pgn || !pgn.trim()) return null;
     try {
         const chess = new Chess();
-        chess.loadPgn(pgn, { sloppy: true });
+        const cleanPgn = stripPgnComments(pgn);
+        chess.loadPgn(cleanPgn, { sloppy: true });
         const header = chess.header();
         const tags = { ...parseTags(pgn), ...header };
 
@@ -93,7 +103,7 @@ export const parsePGN = (pgn) => {
         const timeControl = parseTimeControl(tags.TimeControl);
         const speed = classifySpeed(timeControl);
 
-        return {
+        const game = {
             white: tags.White || 'Unknown',
             black: tags.Black || 'Unknown',
             whiteTitle: tags.WhiteTitle || '',
@@ -116,8 +126,11 @@ export const parsePGN = (pgn) => {
             analyzed: false,
             analysisStatus: 'idle'
         };
+        if (options.returnError) return { game, error: null };
+        return game;
     } catch (e) {
         console.error('Invalid PGN', e);
+        if (options.returnError) return { game: null, error: e };
         return null;
     }
 };
@@ -135,11 +148,15 @@ export const importPgnGames = async (rawPgn, options = {}) => {
     if (!chunks.length) return { imported: 0, skipped: 0, errors: 0 };
 
     const parsed = [];
+    const errorDetails = [];
     let errors = 0;
     chunks.forEach((chunk) => {
-        const game = parsePGN(chunk);
+        const result = parsePGN(chunk, { returnError: true });
+        const game = result?.game;
         if (!game) {
             errors += 1;
+            const message = result?.error?.message || 'Invalid PGN.';
+            errorDetails.push({ index: errorDetails.length + 1, message });
             return;
         }
         const pgnHash = hashPgn(chunk);
@@ -158,7 +175,7 @@ export const importPgnGames = async (rawPgn, options = {}) => {
         });
     });
 
-    if (!parsed.length) return { imported: 0, skipped: 0, errors };
+    if (!parsed.length) return { imported: 0, skipped: 0, errors, errorDetails };
 
     const uniqueByHash = new Map();
     let dupes = 0;
@@ -183,5 +200,5 @@ export const importPgnGames = async (rawPgn, options = {}) => {
     }
 
     const skipped = dupes + (uniqueGames.length - imported);
-    return { imported, skipped, errors };
+    return { imported, skipped, errors, errorDetails };
 };

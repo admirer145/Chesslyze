@@ -788,8 +788,11 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
     const promptText = () => {
         if (!heroMoved) {
             const type = position.classification || 'mistake';
-            const article = ['inaccuracy'].includes(type) ? 'an' : 'a';
-            return `Punish ${article} ${type}`;
+            if (['blunder', 'mistake', 'inaccuracy'].includes(type)) {
+                const article = type === 'inaccuracy' ? 'an' : 'a';
+                return `Punish ${article} ${type}`;
+            }
+            return 'Find the best response';
         }
         if (position.questionType === 'find_brilliant' || ['brilliant', 'great'].includes(position.classification)) {
             return 'Find the brilliant idea';

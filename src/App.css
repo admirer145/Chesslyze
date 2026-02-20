@@ -1814,12 +1814,65 @@ a {
   min-width: 0;
 }
 
+.board-player-row {
+  padding-right: 68px; /* eval rail (58px) + board-row gap (10px) */
+}
+
 .eval-rail {
   position: relative;
   width: 58px;
   flex: 0 0 58px;
   align-self: stretch;
   pointer-events: none;
+}
+
+.board-clock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.board-clock--inline {
+  min-height: 52px;
+  padding: 10px 16px;
+}
+
+.board-player-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.board-clock.is-missing {
+  color: var(--text-muted);
+  border-style: dashed;
+}
+
+.board-clock.is-low {
+  color: #f43f5e;
+  border-color: rgba(244, 63, 94, 0.5);
+  background: rgba(244, 63, 94, 0.08);
+}
+
+@media (max-width: 768px) {
+  .board-clock {
+    font-size: 12px;
+  }
+
+  .board-clock--inline {
+    min-height: 32px;
+    padding: 6px 10px;
+  }
 }
 
 .eval-rail--interactive {

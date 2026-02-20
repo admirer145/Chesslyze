@@ -506,13 +506,21 @@ export const ImportGames = () => {
         try {
             const result = await importPgnGames(pgnText, { importTag: pgnTag.trim() });
             setPgnStats(result);
+            if (result.errors > 0) {
+                const firstError = result.errorDetails && result.errorDetails.length
+                    ? result.errorDetails[0].message
+                    : 'One or more PGN entries could not be parsed.';
+                setPgnStatus('error');
+                setPgnMessage(`Imported ${result.imported} games. Failed to parse ${result.errors}. Example: ${firstError}`);
+                return;
+            }
             setPgnStatus('success');
             setPgnMessage(`Imported ${result.imported} games. Skipped ${result.skipped}.`);
             // Clear form
             setPgnText('');
             setPgnTag('');
             setPgnFileName('');
-            // Redirect to library
+            // Redirect to library only when no errors
             setTimeout(() => navigate('/library'), 1500);
         } catch (err) {
             console.error(err);
@@ -1307,7 +1315,9 @@ export const ImportGames = () => {
                             )}
                             {pgnStats && (
                                 <div className="text-xs text-muted">
-                                    {pgnStats.errors ? `${pgnStats.errors} invalid PGN(s) skipped.` : 'PGN import complete.'}
+                                    {pgnStats.errors
+                                        ? `${pgnStats.errors} invalid PGN(s) failed to parse.`
+                                        : 'PGN import complete.'}
                                 </div>
                             )}
                         </div>
