@@ -80,6 +80,66 @@ const fetchJsonWithRetry = async (url, retries = 2, delay = 1000, signal = null)
     }
 };
 
+const normalizeUsername = (value) => {
+    if (!value || typeof value !== 'string') return '';
+    return value.trim().toLowerCase();
+};
+
+const extractTimestamp = (game) => {
+    if (!game) return null;
+    if (typeof game.timestamp === 'number') return game.timestamp;
+    if (typeof game.end_time === 'number') return game.end_time * 1000;
+    if (typeof game.date === 'string') {
+        const ts = Date.parse(game.date);
+        if (Number.isFinite(ts)) return ts;
+    }
+    return null;
+};
+
+const getArchiveUrl = (username, timestamp) => {
+    if (!username || !Number.isFinite(timestamp)) return '';
+    const dt = new Date(timestamp);
+    const year = dt.getUTCFullYear();
+    const month = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    return `https://api.chess.com/pub/player/${encodeURIComponent(username)}/games/${year}/${month}`;
+};
+
+const isMatchBySource = (candidate, sourceGameId, sourceUrl) => {
+    if (!candidate) return false;
+    if (sourceGameId && (candidate.uuid === sourceGameId || candidate.url === sourceGameId)) return true;
+    if (sourceUrl && candidate.url === sourceUrl) return true;
+    return false;
+};
+
+export const fetchChessComGamePgn = async (game) => {
+    if (!game) return '';
+    const sourceUrl = typeof game.sourceUrl === 'string' ? game.sourceUrl.trim() : '';
+    const sourceGameId = typeof game.sourceGameId === 'string' ? game.sourceGameId.trim() : '';
+    const timestamp = extractTimestamp(game);
+    if (!Number.isFinite(timestamp)) return '';
+
+    const usernames = [];
+    const white = normalizeUsername(game.white);
+    const black = normalizeUsername(game.black);
+    if (white) usernames.push(white);
+    if (black && black !== white) usernames.push(black);
+
+    for (const username of usernames) {
+        const archiveUrl = getArchiveUrl(username, timestamp);
+        if (!archiveUrl) continue;
+        try {
+            const archive = await fetchJsonWithRetry(archiveUrl, 1, 1000);
+            const games = Array.isArray(archive?.games) ? archive.games : [];
+            const match = games.find((g) => isMatchBySource(g, sourceGameId, sourceUrl));
+            if (match?.pgn) return match.pgn;
+        } catch {
+            // ignore archive lookup errors and try next username
+        }
+    }
+
+    return '';
+};
+
 export const fetchChessComUser = async (username, signal = null) => {
     const profile = await fetchJsonWithRetry(`https://api.chess.com/pub/player/${username}`, 2, 1000, signal);
     let stats = null;

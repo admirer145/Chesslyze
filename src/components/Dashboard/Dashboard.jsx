@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, saveGameContent } from '../../services/db';
+import { fetchChessComGamePgn } from '../../services/chesscom';
 import { Chessboard } from 'react-chessboard';
 import { ArrowUpRight, Activity, Target, Zap, ChevronLeft, ChevronRight, FastForward, Rewind, ChevronDown, GripHorizontal } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -416,6 +417,16 @@ export const Dashboard = () => {
                             }
                         }
                     }
+                } catch {
+                    // ignore
+                }
+            }
+
+            const platform = (activeGame?.platform || activeGame?.source || '').toLowerCase();
+            if (!pgn && platform === 'chesscom') {
+                try {
+                    const fetched = await fetchChessComGamePgn(activeGame);
+                    if (fetched && fetched.trim()) pgn = fetched.trim();
                 } catch {
                     // ignore
                 }

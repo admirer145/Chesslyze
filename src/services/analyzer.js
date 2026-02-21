@@ -1,9 +1,10 @@
-import { db, getGamePgn, getGameAnalysis, saveGameAnalysis } from './db';
+import { db, getGamePgn, getGameAnalysis, saveGameAnalysis, saveGameContent } from './db';
 import { storePuzzlePositions } from './puzzles';
 import { getHeroProfiles, getHeroSideFromGame } from './heroProfiles';
 import { engine } from './engine';
 import { Chess } from 'chess.js';
 import { getDefaultEngineVersion } from './engineDefaults';
+import { fetchChessComGamePgn } from './chesscom';
 
 const THRESHOLDS = {
     BLUNDER: 250,
@@ -629,6 +630,17 @@ export const processGame = async (gameId) => {
             }
         } catch {
             // ignore URL parsing/fetch errors
+        }
+    }
+    if ((!pgn || typeof pgn !== 'string') && platform === 'chesscom') {
+        try {
+            const fetched = await fetchChessComGamePgn(game);
+            if (fetched && fetched.trim()) {
+                pgn = fetched.trim();
+                await saveGameContent({ gameId, pgn, pgnHash: game.pgnHash || '' });
+            }
+        } catch {
+            // ignore chess.com backfill errors
         }
     }
     if (!pgn || typeof pgn !== 'string') {
