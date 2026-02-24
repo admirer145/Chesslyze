@@ -84,6 +84,7 @@ const normalizeGame = (g, heroProfiles, extras = {}) => {
     const whiteTitle = (g.whiteTitle || '').trim();
     const blackTitle = (g.blackTitle || '').trim();
     const opponentTitle = isWhite ? blackTitle : whiteTitle;
+    const heroTitle = isWhite ? whiteTitle : blackTitle;
     const perf = (g.perf || g.speed || 'standard').toLowerCase();
     const openingName = g.openingName || g.eco || 'Unknown Opening';
     const openingFamily = openingName.split(':')[0]?.trim() || openingName;
@@ -106,6 +107,7 @@ const normalizeGame = (g, heroProfiles, extras = {}) => {
         oppRating: typeof oppRating === 'number' ? oppRating : null,
         opponent,
         opponentTitle,
+        heroTitle: heroTitle ? heroTitle.trim().toUpperCase() : '',
         perf,
         rated,
         result,
@@ -489,7 +491,15 @@ export const useJourneyData = (initialFilters = null) => {
         const draws = filteredGames.filter((g) => g.result === 'draw').length;
         const losses = filteredGames.filter((g) => g.result === 'loss').length;
         const winRate = totalGames ? Math.round((wins / totalGames) * 100) : 0;
-        const highestRating = Math.max(0, ...filteredGames.map((g) => (typeof g.heroRatingPost === 'number' ? g.heroRatingPost : (g.heroRating || 0))));
+        let highestRating = 0;
+        let highestPerf = null;
+        filteredGames.forEach((g) => {
+            const rating = (typeof g.heroRatingPost === 'number' ? g.heroRatingPost : (g.heroRating || 0));
+            if (typeof rating === 'number' && rating > highestRating) {
+                highestRating = rating;
+                highestPerf = g.perf || null;
+            }
+        });
         const avgAccuracy = average(analyzedGames.map((g) => g.accuracy).filter((v) => typeof v === 'number'));
         return {
             heroUser: heroLabel,
@@ -499,6 +509,7 @@ export const useJourneyData = (initialFilters = null) => {
             losses,
             winRate,
             highestRating,
+            highestPerf,
             avgAccuracy,
             effectivePerf
         };

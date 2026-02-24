@@ -87,6 +87,18 @@ const extractPgnClocks = (pgn) => {
     return clocks;
 };
 
+const normalizeTab = (value) => (['moves', 'analysis', 'ai'].includes(value) ? value : null);
+
+const isValidFen = (fen) => {
+    if (typeof fen !== 'string' || !fen.trim()) return false;
+    try {
+        const chess = new Chess(fen);
+        return !!chess.fen();
+    } catch {
+        return false;
+    }
+};
+
 const StatRow = ({ label, value, subtext, icon: Icon, color }) => (
     <div className="flex items-center gap-4 p-3 rounded-md hover:bg-subtle transition-colors cursor-default">
         <div className={`p-2 rounded-md bg-app border text-${color}-400`}>
@@ -255,6 +267,7 @@ export const Dashboard = () => {
 
     // Track loaded game ID to prevent resetting when analysis updates the record
     const loadedGameIdRef = React.useRef(null);
+    const hydratedGameIdRef = React.useRef(null);
 
     // Responsive board width
     const [boardWidth, setBoardWidth] = useState(500);
@@ -354,18 +367,23 @@ export const Dashboard = () => {
 
     const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false);
     const [lastAnalyzeMode, setLastAnalyzeMode] = useState(() => localStorage.getItem('dashboardAnalyzeMode') || 'stockfish');
-    const loadSavedMoveIndex = (gameId, maxIndex) => {
-        if (!gameId || typeof window === 'undefined') return null;
+    const loadSavedBoardState = (gameId, maxIndex) => {
+        if (!gameId || typeof window === 'undefined') return { moveIndex: null, previewFen: null, activeTab: null };
         try {
             const raw = localStorage.getItem(`${DASHBOARD_STATE_PREFIX}${gameId}`);
-            if (!raw) return null;
+            if (!raw) return { moveIndex: null, previewFen: null, activeTab: null };
             const parsed = JSON.parse(raw);
             const saved = Number(parsed?.moveIndex);
-            if (!Number.isFinite(saved)) return null;
-            const clamped = Math.max(-1, Math.min(maxIndex, saved));
-            return clamped;
+            const moveIndex = Number.isFinite(saved) ? Math.max(-1, Math.min(maxIndex, saved)) : null;
+            const tab = normalizeTab(parsed?.activeTab);
+            const rawPreview = typeof parsed?.previewFen === 'string' ? parsed.previewFen : null;
+            const previewFen = (tab === 'analysis' || (!tab && isValidFen(rawPreview))) && isValidFen(rawPreview)
+                ? rawPreview
+                : null;
+            const activeTab = tab || (previewFen ? 'analysis' : null);
+            return { moveIndex, previewFen, activeTab };
         } catch {
-            return null;
+            return { moveIndex: null, previewFen: null, activeTab: null };
         }
     };
 
@@ -492,6 +510,10 @@ export const Dashboard = () => {
 
 
     useEffect(() => {
+        hydratedGameIdRef.current = null;
+    }, [activeGame?.id]);
+
+    useEffect(() => {
         if (activeGame && activePgn) {
             // Only reset if it's a new game we haven't loaded yet
             if (loadedGameIdRef.current !== activeGame.id) {
@@ -521,12 +543,17 @@ export const Dashboard = () => {
                     }
 
                     if (!usedJump) {
-                        const savedIndex = loadSavedMoveIndex(activeGame.id, moves.length - 1);
-                        if (Number.isFinite(savedIndex)) nextIndex = savedIndex;
+                        const savedState = loadSavedBoardState(activeGame.id, moves.length - 1);
+                        if (Number.isFinite(savedState.moveIndex)) nextIndex = savedState.moveIndex;
+                        if (savedState.activeTab) setActiveTab(savedState.activeTab);
+                        setPreviewFen(savedState.activeTab === 'analysis' ? savedState.previewFen : null);
+                    } else {
+                        setPreviewFen(null);
                     }
                     setMoveIndex(nextIndex);
 
                     loadedGameIdRef.current = activeGame.id;
+                    hydratedGameIdRef.current = activeGame.id;
                 } catch (e) {
                     console.error("Invalid PGN in dashboard", e);
                 }
@@ -547,14 +574,19 @@ export const Dashboard = () => {
 
     useEffect(() => {
         if (!activeGame?.id) return;
+        if (hydratedGameIdRef.current !== activeGame.id) return;
         try {
+            const safeTab = normalizeTab(activeTab);
+            const safePreview = safeTab === 'analysis' && isValidFen(previewFen) ? previewFen : null;
             localStorage.setItem(`${DASHBOARD_STATE_PREFIX}${activeGame.id}`, JSON.stringify({
-                moveIndex
+                moveIndex,
+                activeTab: safeTab,
+                previewFen: safePreview
             }));
         } catch {
             // Ignore persistence errors
         }
-    }, [activeGame?.id, moveIndex]);
+    }, [activeGame?.id, moveIndex, previewFen, activeTab]);
 
     const handleNext = () => {
         if (moveIndex < history.length - 1) {

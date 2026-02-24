@@ -5725,6 +5725,28 @@ a {
   font-weight: 600;
 }
 
+.list-title--titled {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.journey-title-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.16);
+}
+
 .list-meta {
   font-size: 12px;
   color: var(--text-muted);
@@ -5852,6 +5874,119 @@ a {
   color: var(--text-muted);
   font-size: 12px;
   padding-top: 12px;
+}
+
+.journey-share-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.75);
+  backdrop-filter: blur(10px);
+}
+
+.journey-share-dialog {
+  width: min(980px, 100%);
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 20px;
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+  box-shadow: 0 30px 80px rgba(2, 6, 23, 0.5);
+}
+
+.journey-share-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.journey-share-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.journey-share-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.journey-share-preview {
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(2, 6, 23, 0.6);
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.journey-share-card {
+  width: min(520px, 100%);
+  height: auto;
+  max-height: 72vh;
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.55);
+}
+
+.journey-share-controls {
+  display: grid;
+  gap: 12px;
+}
+
+.journey-share-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.share-toggle {
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(30, 41, 59, 0.6);
+  color: var(--text-secondary);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.share-toggle.is-active {
+  border-color: rgba(245, 200, 75, 0.6);
+  background: rgba(245, 200, 75, 0.16);
+  color: #fde68a;
+}
+
+.journey-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.journey-share-message {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+  .journey-share-modal {
+    padding: 16px;
+  }
+
+  .journey-share-dialog {
+    padding: 16px;
+  }
+
+  .journey-share-card {
+    max-height: 60vh;
+  }
 }
 
 .journey-loading {
@@ -6667,6 +6802,12 @@ a {
 :root[data-theme='light'] .journey-list-card {
   background: rgba(255, 255, 255, 0.92);
   border-color: rgba(148, 163, 184, 0.3);
+}
+
+:root[data-theme='light'] .journey-title-badge {
+  color: #92400e;
+  border-color: rgba(146, 64, 14, 0.35);
+  background: rgba(251, 191, 36, 0.35);
 }
 
 :root[data-theme='light'] .list-row--link:hover {
