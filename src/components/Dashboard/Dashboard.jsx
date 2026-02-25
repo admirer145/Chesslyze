@@ -264,6 +264,8 @@ export const Dashboard = () => {
     const [history, setHistory] = useState([]);
     const [startFen, setStartFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
     const [lastMoveFlash, setLastMoveFlash] = useState(0);
+    const [rightClickSquares, setRightClickSquares] = useState({});
+    const rightClickStartRef = useRef(null);
 
     // Track loaded game ID to prevent resetting when analysis updates the record
     const loadedGameIdRef = React.useRef(null);
@@ -743,10 +745,30 @@ export const Dashboard = () => {
         };
     }, [lastMove?.color, flashColors]);
 
+    const rightClickStyle = useMemo(() => {
+        const ring = 'rgba(34, 197, 94, 0.95)';
+        return {
+            backgroundImage: `radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0) 54%, ${ring} 58%, ${ring} 64%, rgba(0, 0, 0, 0) 68%)`,
+            borderRadius: '50%'
+        };
+    }, []);
+
+    const rightClickStyles = useMemo(() => {
+        const styles = {};
+        Object.keys(rightClickSquares || {}).forEach((square) => {
+            styles[square] = rightClickStyle;
+        });
+        return styles;
+    }, [rightClickSquares, rightClickStyle]);
+
     useEffect(() => {
         if (!lastMove) return;
         setLastMoveFlash((v) => v + 1);
     }, [lastMove?.from, lastMove?.to, activeGame?.id]);
+
+    useEffect(() => {
+        setRightClickSquares({});
+    }, [activeGame?.id]);
 
     useLayoutEffect(() => {
         if (!lastMove || previewFen) {
@@ -956,6 +978,13 @@ export const Dashboard = () => {
         const flashTo = {
             animation: `last-move-flash-to-${flashVariant} 0.45s cubic-bezier(0.2, 0.9, 0.2, 1)`
         };
+        const squareStyles = {
+            ...(showLastMove ? {
+                [lastMove.from]: { ...fromStyle, ...flashFrom },
+                [lastMove.to]: { ...toStyle, ...flashTo }
+            } : {}),
+            ...rightClickStyles
+        };
         return {
             id: "dashboard-board",
             position: previewFen || currentFen,
@@ -966,12 +995,33 @@ export const Dashboard = () => {
             arrows: arrow ? [{ startSquare: arrow.from, endSquare: arrow.to, color: 'rgba(245, 200, 75, 0.95)' }] : [],
             darkSquareStyle: { backgroundColor: boardColors.dark },
             lightSquareStyle: { backgroundColor: boardColors.light },
-            squareStyles: showLastMove ? {
-                [lastMove.from]: { ...fromStyle, ...flashFrom },
-                [lastMove.to]: { ...toStyle, ...flashTo }
-            } : {}
+            squareStyles,
+            onSquareMouseDown: ({ square }, e) => {
+                if (e?.button !== 2) return;
+                rightClickStartRef.current = square || null;
+            },
+            onSquareMouseUp: ({ square }, e) => {
+                if (e?.button !== 2) return;
+                const start = rightClickStartRef.current;
+                rightClickStartRef.current = null;
+                if (!square || !start || square !== start) return;
+                setRightClickSquares((prev) => {
+                    const next = { ...(prev || {}) };
+                    if (next[square]) delete next[square];
+                    else next[square] = true;
+                    return next;
+                });
+            },
+            onSquareClick: () => {
+                if (!rightClickSquares || Object.keys(rightClickSquares).length === 0) return;
+                setRightClickSquares({});
+            },
+            onPieceClick: () => {
+                if (!rightClickSquares || Object.keys(rightClickSquares).length === 0) return;
+                setRightClickSquares({});
+            }
         };
-    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow, lastMove, lastMoveFlash, boardColors, flashPalette]);
+    }, [currentFen, previewFen, boardWidth, boardOrientation, hoverArrow, defaultArrow, lastMove, lastMoveFlash, boardColors, flashPalette, rightClickStyles]);
 
     const evalCp = useMemo(() => {
         if (!analysisLog || analysisLog.length === 0) return 0;
@@ -1246,9 +1296,10 @@ export const Dashboard = () => {
 
                                 {/* BOARD + EVAL BAR */}
                                 <div className="board-row" style={{ position: 'relative', zIndex: 2 }}>
-                                    <div
+                                        <div
                                         ref={boardContainerRef}
                                         className="board-shell relative aspect-square w-full shadow-2xl rounded-lg bg-panel border overflow-hidden mx-auto"
+                                        onContextMenu={(e) => e.preventDefault()}
                                     >
                                         <Chessboard options={chessboardOptions} />
                                         {lastMoveRects && !previewFen && (
