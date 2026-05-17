@@ -1401,24 +1401,63 @@ export const Dashboard = () => {
                         </div>
                     ) : (
                         <div className="dashboard-empty">
-                            <div className="dashboard-empty__card">
-                                <Activity size={56} className="text-muted mb-4" />
-                                <h3 className="text-xl font-semibold text-primary mb-2">
-                                    {hasGames ? 'No game selected' : 'No games yet'}
-                                </h3>
-                                <p className="text-secondary text-center mb-6 max-w-sm">
-                                    {hasGames
-                                        ? 'Pick a game from your library or import a PGN to start analyzing.'
-                                        : 'Import a game PGN to start analyzing your moves and unlock insights.'}
-                                </p>
-                                <div className="flex items-center gap-3">
-                                    <Link to="/import" className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-medium transition-colors">
-                                        Import Game
-                                    </Link>
-                                    <Link to="/library" className="px-6 py-2 bg-subtle hover:bg-subtle text-primary rounded-full font-medium transition-colors border border-white/10">
-                                        View Library
-                                    </Link>
-                                </div>
+                            <div className={`dashboard-empty__card ${!hasGames ? 'dashboard-empty__card--onboarding' : ''}`}>
+                                {!hasGames ? (
+                                    <>
+                                        <div className="dashboard-empty__badge">
+                                            <Activity size={14} />
+                                            Performance Intelligence
+                                        </div>
+                                        <h3 className="dashboard-empty__title">Build your chess performance profile</h3>
+                                        <p className="dashboard-empty__copy">
+                                            Connect Lichess, Chess.com, or PGN games to reveal long-term patterns, identify personal weaknesses, and turn your games into targeted training.
+                                        </p>
+
+                                        <div className="dashboard-empty__value-grid">
+                                            <div className="dashboard-empty__value">
+                                                <Target size={18} />
+                                                <span>Find weak spots</span>
+                                                <small>Openings, phases, ratings, and mistake trends.</small>
+                                            </div>
+                                            <div className="dashboard-empty__value">
+                                                <Zap size={18} />
+                                                <span>Create training</span>
+                                                <small>Practice moments generated from your games.</small>
+                                            </div>
+                                            <div className="dashboard-empty__value">
+                                                <ArrowUpRight size={18} />
+                                                <span>Track progress</span>
+                                                <small>Measure improvement across every format.</small>
+                                            </div>
+                                        </div>
+
+                                        <div className="dashboard-empty__actions">
+                                            <Link to="/import" className="dashboard-empty__primary">
+                                                Connect Games
+                                            </Link>
+                                            <Link to="/import" className="dashboard-empty__secondary">
+                                                Add PGN
+                                            </Link>
+                                        </div>
+                                        <p className="dashboard-empty__note">Setup takes about a minute. Your games stay local in your browser.</p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Activity size={48} className="text-muted mb-2" />
+                                        <h3 className="dashboard-empty__title">Choose a game to analyze</h3>
+                                        <p className="dashboard-empty__copy">
+                                            Open a game from your archive to inspect move quality, engine lines, and performance patterns.
+                                        </p>
+                                        <div className="dashboard-empty__actions">
+                                            <Link to="/library" className="dashboard-empty__primary">
+                                                Open Game Archive
+                                            </Link>
+                                            <Link to="/import" className="dashboard-empty__secondary">
+                                                Connect More Games
+                                            </Link>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}
