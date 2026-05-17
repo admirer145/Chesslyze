@@ -18,15 +18,12 @@ import { Settings } from './components/Settings/Settings';
 
 
 function App() {
-  // Use /Chesslyze/ basename in production, / in development
-  const basename = import.meta.env.PROD ? '/Chesslyze' : '/';
-
   useEffect(() => {
     ensureLegacyHeroProfile();
   }, []);
 
   return (
-    <Router basename={basename}>
+    <Router>
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />

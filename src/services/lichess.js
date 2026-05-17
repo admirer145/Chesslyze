@@ -13,6 +13,8 @@ const constructPgn = (game) => {
         `[Result "${game.winner ? (game.winner === 'white' ? '1-0' : '0-1') : '1/2-1/2'}"]`,
         `[WhiteElo "${game.players?.white?.rating || '?'}"]`,
         `[BlackElo "${game.players?.black?.rating || '?'}"]`,
+        `[WhiteRatingDiff "${game.players?.white?.ratingDiff ?? '?'}"]`,
+        `[BlackRatingDiff "${game.players?.black?.ratingDiff ?? '?'}"]`,
         `[Variant "${game.variant || 'Standard'}"]`,
         `[ECO "${game.opening?.eco || '?'}"]`,
         `[Opening "${game.opening?.name || '?'}"]`
@@ -38,6 +40,8 @@ const mapLichessGame = (game) => {
         blackTitle: game.players?.black?.user?.title || '',
         whiteRating: game.players?.white?.rating,
         blackRating: game.players?.black?.rating,
+        whiteRatingDiff: game.players?.white?.ratingDiff ?? null,
+        blackRatingDiff: game.players?.black?.ratingDiff ?? null,
         perf: speed,
         speed,
         timeControl,
@@ -132,6 +136,7 @@ export const fetchLichessGames = async (username, max = 50, filters = {}) => {
         opening: 'true',
         evals: 'false',
         pgnInJson: 'true',
+        ratingDiffs: 'true',
     });
 
     if (filters.since) params.append('since', filters.since.toString());
@@ -236,7 +241,9 @@ export const fetchLichessGames = async (username, max = 50, filters = {}) => {
             try {
                 const game = JSON.parse(buffer);
                 games.push(game);
-            } catch (e) { }
+            } catch (err) {
+                console.error('Failed to parse final game JSON line:', buffer, err);
+            }
         }
     } catch (err) {
         console.error("Stream reading error", err);
@@ -247,7 +254,7 @@ export const fetchLichessGames = async (username, max = 50, filters = {}) => {
 };
 
 // Get smart default import range — last 7 days
-export const getDefaultImportRange = (username) => {
+export const getDefaultImportRange = () => {
     const now = Date.now();
     const last7Days = now - (7 * 24 * 60 * 60 * 1000);
     return {

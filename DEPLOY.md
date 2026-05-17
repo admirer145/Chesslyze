@@ -1,60 +1,43 @@
-# Quick Start: Deploy to GitHub Pages
+# Quick Start: Deploy to Vercel
 
-## Step 1: Update Base Path (IMPORTANT!)
+## Step 1: Import the Project
 
-Edit `vite.config.js` and set the correct base path:
+Create a new Vercel project from this repository.
+
+## Step 2: Use the Vite Defaults
+
+Vercel should detect the app automatically. If you need to set the values manually:
+
+- Framework preset: `Vite`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Install command: `npm install`
+
+## Step 3: Deploy
+
+Push your changes and deploy from Vercel.
+
+## Current Routing Setup
+
+This app is built for the Vercel domain root:
 
 ```javascript
-base: '/YOUR-REPO-NAME/',  // Change 'YOUR-REPO-NAME' to your actual repo name
+base: '/'
 ```
 
-For example:
-- If your repo is `github.com/narendra/chesslyze`, use `base: '/chesslyze/'`
-- If using custom domain, use `base: '/'`
-
-## Step 2: Push to GitHub
-
-```bash
-git add .
-git commit -m "Add GitHub Pages deployment"
-git push origin main
-```
-
-## Step 3: Enable GitHub Pages
-
-1. Go to your repo on GitHub
-2. Click **Settings** → **Pages**
-3. Under "Build and deployment":
-   - Source: **GitHub Actions** (will be auto-selected)
-4. Wait 2-3 minutes for first deployment
-
-## Step 4: Access Your Site
-
-Your app will be live at:
-```
-https://YOUR-USERNAME.github.io/YOUR-REPO-NAME/
-```
-
-## That's It! 🎉
-
-Every time you push to `main`, GitHub Actions will automatically:
-1. Build your app
-2. Deploy to GitHub Pages
-3. Your changes go live in ~2-3 minutes
+The old GitHub Pages `/Chesslyze/` base path and `404.html` redirect workaround have been removed. The home page should load at `/` without a route rewrite.
 
 ## Troubleshooting
 
-**404 on routes?**
-→ Make sure `base` in `vite.config.js` matches your repo name exactly
+**Blank page with missing JS/CSS assets?**
+Check the browser console and network tab. Asset URLs should start with `/assets/`, not `/Chesslyze/assets/`.
 
-**Assets not loading?**
-→ Double-check the base path - it must match the repo name
+**Direct refresh on nested routes returns 404?**
+This repo currently avoids the old SPA fallback. If direct nested route refreshes become required later, add a Vercel rewrite intentionally.
 
 **PWA not working?**
-→ HTTPS is automatic on GitHub Pages, so PWA should work out of the box
+Vercel serves HTTPS automatically, so PWA features should work after a successful production build.
 
 ## Security Note
 
-✅ Safe for public repo - no secrets or API keys in this project
-✅ All code is client-side only
-✅ Data stored in user's browser (IndexedDB)
+Safe for public deployment: no secrets are required, the app is client-side, and user data is stored in the browser with IndexedDB.

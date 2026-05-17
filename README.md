@@ -88,27 +88,17 @@ Chesslyze is a Progressive Web App that provides deep, move-by-move analysis of 
 
 ## 🌐 Deployment
 
-### Deploy to GitHub Pages
+### Deploy to Vercel
 
-The project is configured for automatic deployment to GitHub Pages:
+The project is configured for root deployment on Vercel:
 
-1. **Update base path** in `vite.config.js`:
-   ```javascript
-   base: '/YOUR-REPO-NAME/',  // Change to your repo name
-   ```
+1. **Build command:** `npm run build`
+2. **Output directory:** `dist`
+3. **Install command:** `npm install`
 
-2. **Push to GitHub:**
-   ```bash
-   git push origin main
-   ```
-
-3. **Enable GitHub Pages** in repo Settings → Pages → Source: GitHub Actions
-
-4. **Access your site** at: `https://username.github.io/YOUR-REPO-NAME/`
+The Vite `base` is `/`, so generated assets load from the Vercel domain root.
 
 See [DEPLOY.md](./DEPLOY.md) for detailed instructions.
-
-**Live Demo:** `https://admirer145.github.io/Chesslyze/`
 
 ## 🛠️ Tech Stack
 

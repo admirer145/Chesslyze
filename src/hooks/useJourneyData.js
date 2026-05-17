@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../services/db';
 import { useHeroProfiles } from './useHeroProfiles';
-import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../services/heroProfiles';
+import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles, normalizeUsername } from '../services/heroProfiles';
+import { getSideRating, getSideRatingDiff, getSideRatingPost } from '../services/ratings';
+import { fetchLichessUser } from '../services/lichess';
 
 const toDate = (value) => {
     if (!value) return null;
@@ -32,34 +34,39 @@ const rangeToDate = (range) => {
     return null;
 };
 
-const parseRatingDiff = (value) => {
-    if (value === null || value === undefined) return null;
-    const num = Number(value);
-    return Number.isFinite(num) ? num : null;
+const getPlayerName = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    return value.name || '';
 };
 
-const readTagValue = (pgn, tag) => {
-    if (!pgn || !tag) return null;
-    const match = pgn.match(new RegExp(`\\[${tag} "([^"]*)"\\]`));
-    return match ? match[1] : null;
+const inferPlatform = (game) => {
+    const raw = game?.platform || game?.source || (game?.lichessId ? 'lichess' : '') || (game?.pgnHash ? 'pgn' : '');
+    return (raw || 'unknown').toLowerCase();
 };
 
-const getHeroRatingDiff = (g, isWhite, pgn) => {
-    const direct = isWhite
-        ? (g.whiteRatingDiff ?? g.whiteEloDiff ?? g.whiteRatingDelta)
-        : (g.blackRatingDiff ?? g.blackEloDiff ?? g.blackRatingDelta);
-    const directParsed = parseRatingDiff(direct);
-    if (directParsed !== null) return directParsed;
+const getProfileKey = (profile) => {
+    const platform = (profile?.platform || '').toLowerCase();
+    const username = normalizeUsername(profile?.usernameLower || profile?.displayName || '');
+    return platform && username ? `${platform}:${username}` : null;
+};
 
-    if (!pgn) return null;
-    const tags = isWhite
-        ? ['WhiteRatingDiff', 'WhiteEloDiff', 'WhiteRatingDelta']
-        : ['BlackRatingDiff', 'BlackEloDiff', 'BlackRatingDelta'];
-    for (const tag of tags) {
-        const value = readTagValue(pgn, tag);
-        const parsed = parseRatingDiff(value);
-        if (parsed !== null) return parsed;
+const getHeroProfileKeyFromGame = (game, profiles) => {
+    if (!game || !Array.isArray(profiles) || profiles.length === 0) return null;
+    if (typeof game.isHero === 'boolean' && !game.isHero) return null;
+
+    const gamePlatform = inferPlatform(game);
+    const whiteName = normalizeUsername(getPlayerName(game.white));
+    const blackName = normalizeUsername(getPlayerName(game.black));
+
+    for (const profile of profiles) {
+        const profileKey = getProfileKey(profile);
+        if (!profileKey) continue;
+        const [profilePlatform, username] = profileKey.split(':');
+        if (profilePlatform !== gamePlatform) continue;
+        if (whiteName === username || blackName === username) return profileKey;
     }
+
     return null;
 };
 
@@ -71,15 +78,14 @@ const normalizeGame = (g, heroProfiles, extras = {}) => {
     const black = typeof g.black === 'string' ? g.black : g.black?.name || '';
     const heroSide = getHeroSideFromGame(g, heroProfiles);
     if (!heroSide) return null;
+    const heroProfileKey = getHeroProfileKeyFromGame(g, heroProfiles);
 
     const isWhite = heroSide === 'white';
     const heroColor = isWhite ? 'white' : 'black';
-    const heroRating = isWhite ? (g.whiteRating ?? g.whiteElo) : (g.blackRating ?? g.blackElo);
-    const heroRatingDiff = getHeroRatingDiff(g, isWhite, pgn);
-    const heroRatingPost = (typeof heroRating === 'number' && typeof heroRatingDiff === 'number')
-        ? heroRating + heroRatingDiff
-        : heroRating;
-    const oppRating = isWhite ? (g.blackRating ?? g.blackElo) : (g.whiteRating ?? g.whiteElo);
+    const heroRating = getSideRating(g, heroColor);
+    const heroRatingDiff = getSideRatingDiff(g, heroColor, pgn);
+    const heroRatingPost = getSideRatingPost(g, heroColor, pgn);
+    const oppRating = getSideRating(g, isWhite ? 'black' : 'white');
     const opponent = isWhite ? black : white;
     const whiteTitle = (g.whiteTitle || '').trim();
     const blackTitle = (g.blackTitle || '').trim();
@@ -100,11 +106,12 @@ const normalizeGame = (g, heroProfiles, extras = {}) => {
         id: g.id,
         raw: g,
         date: g.date || g.timestamp || null,
+        heroProfileKey,
         heroColor,
-        heroRating: typeof heroRating === 'number' ? heroRating : null,
-        heroRatingDiff: typeof heroRatingDiff === 'number' ? heroRatingDiff : null,
-        heroRatingPost: typeof heroRatingPost === 'number' ? heroRatingPost : null,
-        oppRating: typeof oppRating === 'number' ? oppRating : null,
+        heroRating,
+        heroRatingDiff,
+        heroRatingPost,
+        oppRating,
         opponent,
         opponentTitle,
         heroTitle: heroTitle ? heroTitle.trim().toUpperCase() : '',
@@ -169,6 +176,15 @@ const average = (values) => {
     return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
 };
 
+const getPerfRatingsFromLichessUser = (user) => {
+    const perfs = user?.perfs || {};
+    return Object.fromEntries(
+        Object.entries(perfs)
+            .map(([perf, data]) => [perf.toLowerCase(), Number(data?.rating)])
+            .filter(([, rating]) => Number.isFinite(rating))
+    );
+};
+
 const normalizeTitle = (title) => (title || '').trim().toUpperCase();
 const isBotTitle = (title) => normalizeTitle(title) === 'BOT';
 const isBotOpponent = (game) => isBotTitle(game.opponentTitle);
@@ -177,6 +193,7 @@ export const useJourneyData = (initialFilters = null) => {
     const { activeProfiles } = useHeroProfiles();
     const heroLabel = useMemo(() => getHeroDisplayName(activeProfiles), [activeProfiles]);
     const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
+    const [currentRatings, setCurrentRatings] = useState({});
     const DEFAULT_FILTERS = {
         range: 'all',
         perf: 'all',
@@ -190,6 +207,48 @@ export const useJourneyData = (initialFilters = null) => {
         ...DEFAULT_FILTERS,
         ...(initialFilters && typeof initialFilters === 'object' ? initialFilters : {})
     }));
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadCurrentRatings = async () => {
+            const lichessProfiles = activeProfiles
+                .filter((profile) => (profile?.platform || '').toLowerCase() === 'lichess')
+                .map((profile) => ({
+                    profileKey: getProfileKey(profile),
+                    username: normalizeUsername(profile.usernameLower || profile.displayName || '')
+                }))
+                .filter((profile) => profile.profileKey && profile.username);
+
+            if (!lichessProfiles.length) {
+                setCurrentRatings({});
+                return;
+            }
+
+            try {
+                const profileRatings = await Promise.all(
+                    lichessProfiles.map(async ({ profileKey, username }) => {
+                        const user = await fetchLichessUser(username);
+                        return { profileKey, ratings: getPerfRatingsFromLichessUser(user) };
+                    })
+                );
+
+                if (cancelled) return;
+                const nextRatings = {};
+                profileRatings.forEach(({ profileKey, ratings }) => {
+                    Object.entries(ratings).forEach(([perf, rating]) => {
+                        nextRatings[`${profileKey}:${perf}`] = rating;
+                    });
+                });
+                setCurrentRatings(nextRatings);
+            } catch {
+                if (!cancelled) setCurrentRatings({});
+            }
+        };
+        loadCurrentRatings();
+        return () => {
+            cancelled = true;
+        };
+    }, [profileKey, activeProfiles]);
 
     const games = useLiveQuery(async () => {
         if (!activeProfiles.length) return [];
@@ -214,8 +273,38 @@ export const useJourneyData = (initialFilters = null) => {
             .filter(Boolean);
     }, [profileKey]);
 
-    const filteredGames = useMemo(() => applyFilters(games || [], filters), [games, filters]);
-    const filteredNoPerf = useMemo(() => applyFilters(games || [], filters, { ignore: ['perf'] }), [games, filters]);
+    const gamesWithCurrentRatings = useMemo(() => {
+        const source = games || [];
+        if (!source.length || !Object.keys(currentRatings).length) return source;
+
+        const latestByPerf = new Map();
+        source.forEach((g) => {
+            const ratingKey = `${g.heroProfileKey}:${g.perf}`;
+            if (!g.heroProfileKey || typeof currentRatings[ratingKey] !== 'number') return;
+            const ts = toDate(g.date)?.getTime() || 0;
+            const previous = latestByPerf.get(ratingKey);
+            if (!previous || ts >= previous.ts) {
+                latestByPerf.set(ratingKey, { id: g.id, ts });
+            }
+        });
+
+        return source.map((g) => {
+            const ratingKey = `${g.heroProfileKey}:${g.perf}`;
+            const currentRating = currentRatings[ratingKey];
+            if (typeof currentRating !== 'number') return g;
+            if (latestByPerf.get(ratingKey)?.id !== g.id) return g;
+            if (typeof g.heroRatingDiff === 'number') return g;
+            if (typeof g.heroRating !== 'number') return g;
+            return {
+                ...g,
+                heroRatingPost: currentRating,
+                heroRatingDiff: currentRating - g.heroRating
+            };
+        });
+    }, [games, currentRatings]);
+
+    const filteredGames = useMemo(() => applyFilters(gamesWithCurrentRatings || [], filters), [gamesWithCurrentRatings, filters]);
+    const filteredNoPerf = useMemo(() => applyFilters(gamesWithCurrentRatings || [], filters, { ignore: ['perf'] }), [gamesWithCurrentRatings, filters]);
     const analyzedGames = useMemo(() => filteredGames.filter((g) => g.analyzed), [filteredGames]);
 
     const perfCounts = useMemo(() => {
@@ -518,7 +607,7 @@ export const useJourneyData = (initialFilters = null) => {
     return {
         filters,
         setFilters,
-        games,
+        games: gamesWithCurrentRatings,
         filteredGames,
         analyzedGames,
         summary,

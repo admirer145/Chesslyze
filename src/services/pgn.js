@@ -4,7 +4,7 @@ import { db, bulkUpsertGames } from './db';
 const parseTags = (pgn) => {
     const tags = {};
     if (!pgn) return tags;
-    const tagRe = /\[([A-Za-z0-9_]+)\s+"([^\"]*)"\]/g;
+    const tagRe = /\[([A-Za-z0-9_]+)\s+"([^"]*)"\]/g;
     let match;
     while ((match = tagRe.exec(pgn)) !== null) {
         tags[match[1]] = match[2];
@@ -110,6 +110,8 @@ export const parsePGN = (pgn, options = {}) => {
             blackTitle: tags.BlackTitle || '',
             whiteRating: parseRating(tags.WhiteElo),
             blackRating: parseRating(tags.BlackElo),
+            whiteRatingDiff: parseRating(tags.WhiteRatingDiff || tags.WhiteEloDiff || tags.WhiteRatingDelta || tags.WhiteEloDelta || tags.WhiteRatingChange || tags.WhiteEloChange),
+            blackRatingDiff: parseRating(tags.BlackRatingDiff || tags.BlackEloDiff || tags.BlackRatingDelta || tags.BlackEloDelta || tags.BlackRatingChange || tags.BlackEloChange),
             result: tags.Result || '1/2-1/2',
             date: isoDate || '',
             timestamp: isoDate ? new Date(isoDate).getTime() : Date.now(),

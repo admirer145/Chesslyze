@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../services/db';
 import { useHeroProfiles } from './useHeroProfiles';
 import { getHeroDisplayName, getHeroSideFromGame, isHeroGameForProfiles } from '../services/heroProfiles';
+import { getSideRating, getSideRatingPost } from '../services/ratings';
 
 export const useUserStats = () => {
     const { activeProfiles } = useHeroProfiles();
@@ -20,6 +21,9 @@ export const useUserStats = () => {
             .map((g) => g.id);
         const analysisRows = analyzedIds.length ? await db.gameAnalysis.bulkGet(analyzedIds) : [];
         const analysisById = new Map(analyzedIds.map((id, idx) => [id, analysisRows[idx]?.analysisLog || []]));
+        const pgnIds = games.map((g) => g.id);
+        const pgnRows = pgnIds.length ? await db.gameContent.bulkGet(pgnIds) : [];
+        const pgnById = new Map(pgnIds.map((id, idx) => [id, pgnRows[idx]?.pgn || '']));
 
         if (!games.length) return null;
 
@@ -39,7 +43,6 @@ export const useUserStats = () => {
         let biggestUpset = null; // { opponent, ratingDiff, date, gameId, rating }
         let wildestGame = null; // { opponent, swing, date, gameId }
         let fastestWin = null; // { opponent, ply, date, gameId }
-        let longestGame = null; // { opponent, ply, date, gameId }
 
         const ratingHistory = [];
         const openings = {};
@@ -47,35 +50,35 @@ export const useUserStats = () => {
         // Mistakes Evolution
         // We'll split games into "Early" (first 20%) and "Recent" (last 20%) to compare stats
         const earlyCount = Math.ceil(games.length * 0.2);
-        const recentStartDate = games[games.length - Math.ceil(games.length * 0.2)]?.date;
 
         let earlyBlunders = 0;
         let earlyMoves = 0;
         let recentBlunders = 0;
         let recentMoves = 0;
 
-        let totalSolidMoves = 0; // for Archetype (low ACPL)
-        let totalAggressiveMoves = 0; // for Archetype (high ACPL/swings but winning)
-
         games.forEach((g, index) => {
             const heroSide = getHeroSideFromGame(g, activeProfiles);
             const isWhite = heroSide === 'white';
-            const myRating = isWhite ? g.whiteRating : g.blackRating;
-            const oppRating = isWhite ? g.blackRating : g.whiteRating;
+            const heroColor = isWhite ? 'white' : 'black';
+            const pgn = pgnById.get(g.id) || '';
+            const myRating = getSideRatingPost(g, heroColor, pgn);
+            const myRatingBefore = getSideRating(g, heroColor);
+            const oppRating = getSideRating(g, isWhite ? 'black' : 'white');
             const oppName = isWhite ? g.black : g.white;
             const log = analysisById.get(g.id) || [];
 
             totalGames++;
-            if (myRating > highestRating) highestRating = myRating;
-            currentRating = myRating;
+            if (typeof myRating === 'number' && myRating > highestRating) highestRating = myRating;
+            if (typeof myRating === 'number') currentRating = myRating;
 
-            if (g.date) {
+            if (g.date && typeof myRating === 'number') {
                 // Smoother history: only add if rating changed or significant time passed
                 // For now add all, Chart can downsample
                 ratingHistory.push({
                     date: new Date(g.date).toLocaleDateString(),
                     rawDate: g.date,
                     rating: myRating,
+                    ratingBefore: myRatingBefore,
                 });
             }
 
@@ -87,12 +90,14 @@ export const useUserStats = () => {
             if (result === 'win') {
                 wins++;
                 // Best Win (Highest Rated Opponent)
-                if (oppRating > (bestWin?.rating || 0)) {
+                if (typeof oppRating === 'number' && oppRating > (bestWin?.rating || 0)) {
                     bestWin = { opponent: oppName, rating: oppRating, date: g.date, gameId: g.id };
                 }
                 // Biggest Upset (Rating Diff)
-                const diff = oppRating - myRating;
-                if (diff > (biggestUpset?.ratingDiff || -9999)) {
+                const diff = typeof oppRating === 'number' && typeof myRatingBefore === 'number'
+                    ? oppRating - myRatingBefore
+                    : null;
+                if (typeof diff === 'number' && diff > (biggestUpset?.ratingDiff || -9999)) {
                     biggestUpset = { opponent: oppName, ratingDiff: diff, rating: oppRating, date: g.date, gameId: g.id };
                 }
                 // Fastest Win
