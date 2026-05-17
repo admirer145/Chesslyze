@@ -87,7 +87,7 @@ export const Layout = ({ children }) => {
                     {!isMobile && (
                         <>
                             <div className="mx-2" style={{ height: 16, width: 1, backgroundColor: 'var(--border-subtle)' }} />
-                            <span className="text-sm text-secondary">Personal Analytics</span>
+                            <span className="text-sm text-secondary">Performance Intelligence</span>
                         </>
                     )}
                 </div>
@@ -113,13 +113,13 @@ export const Layout = ({ children }) => {
                         {/* Sidebar */}
                         <aside className={`mobile-sidebar bg-panel border-r flex flex-col ${mobileMenuOpen ? 'is-open' : ''}`}>
                             <div className="flex-1 py-4 flex flex-col gap-1 overflow-y-auto">
-                                <NavItem to="/" icon={LayoutDashboard} label="Dashboard" collapsed={false} onClick={closeMobileMenu} />
-                                <NavItem to="/library" icon={LayoutList} label="Games Library" collapsed={false} onClick={closeMobileMenu} />
-                                <NavItem to="/reels" icon={Zap} label="Smart Puzzles" collapsed={false} onClick={closeMobileMenu} />
-                                <NavItem to="/openings" icon={BookOpen} label="Opening Explorer" collapsed={false} onClick={closeMobileMenu} />
-                                <NavItem to="/profile" icon={User} label="Chess Journey" collapsed={false} onClick={closeMobileMenu} />
+                                <NavItem to="/" icon={LayoutDashboard} label="Performance" collapsed={false} onClick={closeMobileMenu} />
+                                <NavItem to="/library" icon={LayoutList} label="Game Archive" collapsed={false} onClick={closeMobileMenu} />
+                                <NavItem to="/reels" icon={Zap} label="Training Feed" collapsed={false} onClick={closeMobileMenu} />
+                                <NavItem to="/openings" icon={BookOpen} label="Opening Intelligence" collapsed={false} onClick={closeMobileMenu} />
+                                <NavItem to="/profile" icon={User} label="Progress" collapsed={false} onClick={closeMobileMenu} />
                                 <div className="my-2 border-t mx-4" />
-                                <NavItem to="/import" icon={Import} label="Import Games" collapsed={false} onClick={closeMobileMenu} />
+                                <NavItem to="/import" icon={Import} label="Connect Games" collapsed={false} onClick={closeMobileMenu} />
                                 <NavItem to="/settings" icon={Settings} label="Settings" collapsed={false} onClick={closeMobileMenu} />
                             </div>
                         </aside>
@@ -133,13 +133,13 @@ export const Layout = ({ children }) => {
                         style={{ width: collapsed ? 60 : 240, transitionDuration: '0.3s' }}
                     >
                         <div className="flex-1 py-4 flex flex-col gap-1">
-                            <NavItem to="/" icon={LayoutDashboard} label="Dashboard" collapsed={collapsed} />
-                            <NavItem to="/library" icon={LayoutList} label="Games Library" collapsed={collapsed} />
-                            <NavItem to="/reels" icon={Zap} label="Smart Puzzles" collapsed={collapsed} />
-                            <NavItem to="/openings" icon={BookOpen} label="Opening Explorer" collapsed={collapsed} />
-                            <NavItem to="/profile" icon={User} label="Chess Journey" collapsed={collapsed} />
+                            <NavItem to="/" icon={LayoutDashboard} label="Performance" collapsed={collapsed} />
+                            <NavItem to="/library" icon={LayoutList} label="Game Archive" collapsed={collapsed} />
+                            <NavItem to="/reels" icon={Zap} label="Training Feed" collapsed={collapsed} />
+                            <NavItem to="/openings" icon={BookOpen} label="Opening Intelligence" collapsed={collapsed} />
+                            <NavItem to="/profile" icon={User} label="Progress" collapsed={collapsed} />
                             <div className="my-2 border-t mx-4" />
-                            <NavItem to="/import" icon={Import} label="Import Games" collapsed={collapsed} />
+                            <NavItem to="/import" icon={Import} label="Connect Games" collapsed={collapsed} />
                             <NavItem to="/settings" icon={Settings} label="Settings" collapsed={collapsed} />
                         </div>
 

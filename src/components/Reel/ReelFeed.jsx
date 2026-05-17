@@ -1013,7 +1013,7 @@ const ReelCard = ({ position, onNext, mode = 'best_move', onSolved, onContinueLi
                                 }}
                                 className="flex-1 btn btn-secondary py-3 justify-center"
                             >
-                                Continue in Dashboard
+                                Continue in Performance
                             </button>
                         )}
                         <button
@@ -1393,8 +1393,8 @@ export const ReelFeed = () => {
             <div className="puzzle-main">
                 <div className="puzzle-header">
                     <div>
-                        <div className="puzzle-title">Smart Puzzles</div>
-                        <div className="puzzle-subtitle">Train with lessons extracted from your own games.</div>
+                        <div className="puzzle-title">Training Feed</div>
+                        <div className="puzzle-subtitle">Targeted training generated from your own mistakes, tactics, and missed opportunities.</div>
                     </div>
                     <div className="puzzle-header__actions">
                         <button className="btn btn-secondary" onClick={() => setDeckNonce((n) => n + 1)}>Shuffle</button>

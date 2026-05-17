@@ -1,6 +1,8 @@
 import React, { useEffect } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { SEO } from './components/common/SEO';
 import './App.css';
 import { ensureLegacyHeroProfile } from './services/heroProfiles';
 
@@ -24,6 +26,7 @@ function App() {
 
   return (
     <Router>
+      <SEO />
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />
@@ -35,6 +38,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>
+      <Analytics />
     </Router>
   );
 }

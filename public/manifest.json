@@ -1,7 +1,7 @@
 {
     "name": "Chesslyze",
     "short_name": "Chesslyze",
-    "description": "Advanced chess analytics and personalized learning platform to improve your game",
+    "description": "Chess performance intelligence for cross-platform games, long-term patterns, targeted training, and measurable progress.",
     "start_url": ".",
     "scope": ".",
     "display": "standalone",

@@ -294,7 +294,7 @@ const OpeningDetail = ({ opening }) => {
         return (
             <div className="h-full flex flex-col items-center justify-center text-muted text-center p-8">
                 <BookOpen size={48} className="mb-4 opacity-20" />
-                <p>Select an opening from the list to analyze performance.</p>
+                <p>Select an opening to reveal repertoire patterns and targeted improvement opportunities.</p>
             </div>
         );
     }
@@ -720,7 +720,7 @@ export const OpeningExplorer = () => {
                 <>
                     <div className="opening-list-panel border-r bg-panel flex flex-col h-full">
                         <div className="p-4 border-b flex justify-between items-center">
-                            <h3 className="font-semibold text-xs uppercase tracking-wider text-muted">My Repertoire</h3>
+                            <h3 className="font-semibold text-xs uppercase tracking-wider text-muted">Opening Intelligence</h3>
                         </div>
                         <div className="flex-1 overflow-y-auto">
                             {openings.map(op => {

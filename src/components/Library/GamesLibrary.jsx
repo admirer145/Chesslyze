@@ -525,11 +525,11 @@ export const GamesLibrary = () => {
                     <div className="library-title">
                         <div className="library-title__badge">
                             <Trophy className="w-4 h-4" />
-                            <span>Games</span>
+                            <span>Archive</span>
                         </div>
-                        <h1 className="library-title__main">Games Library</h1>
+                        <h1 className="library-title__main">Game Archive</h1>
                         <p className="library-title__sub">
-                            A clean archive of your chess history, built for fast review.
+                            Search and review your complete cross-platform chess history.
                         </p>
                     </div>
 
@@ -838,7 +838,7 @@ export const GamesLibrary = () => {
                             <Search size={28} />
                         </div>
                         <h3>No games found</h3>
-                        <p>Try adjusting your filters or import new games to get started.</p>
+                        <p>Try adjusting your filters or connect games to build your performance profile.</p>
                         <div className="empty-actions">
                             <button
                                 onClick={() => setFilters({
@@ -851,7 +851,7 @@ export const GamesLibrary = () => {
                             </button>
                             <button onClick={() => navigate('/import')} className="btn-primary">
                                 <span>+</span>
-                                Import Games
+                                Connect Games
                             </button>
                         </div>
                     </div>

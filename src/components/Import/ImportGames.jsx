@@ -533,16 +533,16 @@ export const ImportGames = () => {
         <div className="h-full bg-app p-4 sm:p-8 overflow-y-auto">
             <div className="w-full max-w-5xl mx-auto">
                 <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold text-primary mb-2">Import Games</h1>
-                    <p className="text-secondary text-sm max-w-md mx-auto">Sync your Lichess or Chess.com history, or paste PGN files to start analyzing and improving.</p>
+                    <h1 className="text-3xl font-bold text-primary mb-2">Connect Games</h1>
+                    <p className="text-secondary text-sm max-w-md mx-auto">Connect your chess history to build a performance profile, reveal long-term patterns, and unlock targeted training.</p>
                 </div>
                 <div className="import-cards-grid">
                     <div className="bg-panel border border-white/5 rounded-2xl p-8 shadow-2xl animate-fade-in relative overflow-hidden">
                         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500" />
 
                         <div className="text-center mb-8">
-                            <h2 className="text-2xl font-bold text-primary mb-2">Sync Lichess Games</h2>
-                            <p className="text-secondary text-sm">Connect your Lichess account to import your personal history.</p>
+                            <h2 className="text-2xl font-bold text-primary mb-2">Connect Lichess</h2>
+                            <p className="text-secondary text-sm">Connect your Lichess account to build your performance profile from real games.</p>
                         </div>
 
                         {!userStats ? (
@@ -894,8 +894,8 @@ export const ImportGames = () => {
                         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-amber-500" />
 
                         <div className="text-center mb-8">
-                            <h2 className="text-2xl font-bold text-primary mb-2">Sync Chess.com Games</h2>
-                            <p className="text-secondary text-sm">Connect your Chess.com account to import your personal history.</p>
+                            <h2 className="text-2xl font-bold text-primary mb-2">Connect Chess.com</h2>
+                            <p className="text-secondary text-sm">Connect your Chess.com account to unify ratings, openings, mistakes, and progress.</p>
                         </div>
 
                         {!ccUserStats ? (
@@ -1243,7 +1243,7 @@ export const ImportGames = () => {
                         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-blue-500" />
 
                         <div className="text-center mb-8">
-                            <h2 className="text-2xl font-bold text-primary mb-2">Import PGN</h2>
+                            <h2 className="text-2xl font-bold text-primary mb-2">Add PGN Games</h2>
                             <p className="text-secondary text-sm">Analyze master games or any custom PGN without affecting hero analytics.</p>
                         </div>
 
@@ -1294,7 +1294,7 @@ export const ImportGames = () => {
                                     </span>
                                 ) : (
                                     <span className="flex items-center gap-2 justify-center">
-                                        <FileUp size={18} /> Import PGN
+                                        <FileUp size={18} /> Add PGN Games
                                     </span>
                                 )}
                             </button>
