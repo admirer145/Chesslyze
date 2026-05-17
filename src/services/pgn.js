@@ -1,5 +1,6 @@
 import { Chess } from 'chess.js';
 import { db, bulkUpsertGames } from './db';
+import { deriveOpeningMetadata } from './openings';
 
 const parseTags = (pgn) => {
     const tags = {};
@@ -102,6 +103,11 @@ export const parsePGN = (pgn, options = {}) => {
         const isoDate = toIsoDate(tags.UTCDate || tags.Date, tags.UTCTime || tags.Time);
         const timeControl = parseTimeControl(tags.TimeControl);
         const speed = classifySpeed(timeControl);
+        const opening = deriveOpeningMetadata({
+            eco: tags.ECO,
+            openingName: tags.Opening,
+            pgn
+        });
 
         const game = {
             white: tags.White || 'Unknown',
@@ -115,8 +121,8 @@ export const parsePGN = (pgn, options = {}) => {
             result: tags.Result || '1/2-1/2',
             date: isoDate || '',
             timestamp: isoDate ? new Date(isoDate).getTime() : Date.now(),
-            eco: tags.ECO || '',
-            openingName: tags.Opening || 'Unknown Opening',
+            eco: opening.eco,
+            openingName: opening.openingName,
             site: tags.Site || 'PGN Import',
             event: tags.Event || '',
             timeControl: tags.TimeControl || '',

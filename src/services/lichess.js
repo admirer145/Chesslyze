@@ -1,4 +1,5 @@
 import { bulkUpsertGames, getLatestGameTimestampForProfile, getDistinctGameDaysInRange, saveImportProgress, clearImportProgress } from './db';
+import { deriveOpeningMetadata } from './openings';
 
 const constructPgn = (game) => {
     const headers = [
@@ -26,6 +27,12 @@ const mapLichessGame = (game) => {
     const pgn = game.pgn || constructPgn(game);
     const speed = game.speed || game.perf || 'standard';
     const timeControl = game.clock ? `${game.clock.initial}+${game.clock.increment}` : '';
+    const opening = deriveOpeningMetadata({
+        eco: game.opening?.eco,
+        openingName: game.opening?.name,
+        pgn,
+        opening: game.opening
+    });
 
     return {
         lichessId: game.id,
@@ -46,8 +53,8 @@ const mapLichessGame = (game) => {
         speed,
         timeControl,
         result: game.winner ? (game.winner === 'white' ? '1-0' : '0-1') : '1/2-1/2',
-        eco: game.opening?.eco || '',
-        openingName: game.opening?.name || 'Unknown Opening',
+        eco: opening.eco,
+        openingName: opening.openingName,
         pgn: pgn,
         timestamp: game.createdAt,
         variant: game.variant || 'standard',

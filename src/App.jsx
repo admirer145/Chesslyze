@@ -17,11 +17,13 @@ import { OpeningExplorer } from './components/Opening/OpeningExplorer';
 import { Profile } from './components/Profile/Profile';
 import { Settings } from './components/Settings/Settings';
 // Removed Openings placeholder
+import { backfillOpeningsFromPgn } from './services/db';
 
 
 function App() {
   useEffect(() => {
     ensureLegacyHeroProfile();
+    backfillOpeningsFromPgn();
   }, []);
 
   return (

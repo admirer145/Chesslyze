@@ -1,4 +1,5 @@
 import Dexie from 'dexie';
+import { deriveOpeningMetadata, hasKnownOpeningName } from './openings';
 
 export const db = new Dexie('ChesslyzeDB');
 
@@ -26,7 +27,7 @@ db.version(6).stores({
     games: '++id, lichessId, site, date, white, black, result, eco, openingName, [white+result], [black+result], timestamp, analyzed, analysisStatus',
     positions: '++id, gameId, fen, eval, classification, bestMove', // Recreate with new PK and index
     openings: 'eco, name, winRate, frequency',
-}).upgrade(tx => {
+}).upgrade(() => {
     // Version 6 migration logic if needed
 });
 
@@ -260,7 +261,7 @@ export const addGames = async (games) => {
     if (!Array.isArray(games) || games.length === 0) return [];
     const stripped = games.map((g) => {
         if (!g) return g;
-        const { pgn, analysisLog, ...rest } = g;
+        const { pgn: _pgn, analysisLog: _analysisLog, ...rest } = g;
         return { ...rest };
     });
     const keys = await db.games.bulkAdd(stripped);
@@ -317,6 +318,37 @@ export const backfillTitlesFromPgn = async () => {
     }
 };
 
+export const backfillOpeningsFromPgn = async () => {
+    try {
+        await db.transaction('rw', db.games, db.gameContent, async () => {
+            const content = await db.gameContent.toArray();
+            const pgnByGameId = new Map(content.map((c) => [c.gameId, c.pgn]));
+
+            await db.games.toCollection().modify((g) => {
+                const needsEco = !g.eco || g.eco === '?' || g.eco === '-';
+                const needsName = !hasKnownOpeningName(g.openingName);
+                if (!needsEco && !needsName) return;
+
+                const pgn = pgnByGameId.get(g.id) || g.pgn || '';
+                if (!pgn) return;
+
+                const inferred = deriveOpeningMetadata({
+                    eco: g.eco,
+                    openingName: g.openingName,
+                    pgn
+                });
+
+                if (needsEco && inferred.eco) g.eco = inferred.eco;
+                if (needsName && hasKnownOpeningName(inferred.openingName)) {
+                    g.openingName = inferred.openingName;
+                }
+            });
+        });
+    } catch (error) {
+        console.warn('Backfill openings failed:', error);
+    }
+};
+
 const inferPlatform = (g) => {
     if (!g) return 'unknown';
     const raw = g.platform || g.source || (g.lichessId ? 'lichess' : '') || (g.pgnHash ? 'pgn' : '');
@@ -326,7 +358,7 @@ const inferPlatform = (g) => {
 export const bulkUpsertGames = async (games) => {
     const normalizedGames = games.map((g) => {
         if (!g) return g;
-        const { pgn, analysisLog, ...rest } = g;
+        const { pgn, analysisLog: _analysisLog, ...rest } = g;
         const next = { ...rest };
         if (!next.platform) {
             if (next.source) next.platform = next.source;

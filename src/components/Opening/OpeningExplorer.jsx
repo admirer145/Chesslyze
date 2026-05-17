@@ -530,12 +530,6 @@ export const OpeningExplorer = () => {
     const SELECTED_ECO_KEY = 'openingExplorerSelectedEco';
     const { activeProfiles } = useHeroProfiles();
     const profileKey = useMemo(() => activeProfiles.map((p) => p.id).join('|'), [activeProfiles]);
-    const getPlayerName = (player) => {
-        if (!player) return '';
-        if (typeof player === 'string') return player;
-        return player.name || '';
-    };
-
     const openings = useLiveQuery(async () => {
         if (!activeProfiles.length) return [];
         const allGames = await db.games.toArray();
@@ -554,16 +548,14 @@ export const OpeningExplorer = () => {
         };
 
         allGames.forEach(game => {
-            const whiteName = getPlayerName(game.white).toLowerCase();
-            const blackName = getPlayerName(game.black).toLowerCase();
             const isHeroGame = isHeroGameForProfiles(game, activeProfiles);
             if (!isHeroGame) return;
 
-            const name = game.eco || 'Unknown';
-            if (!stats[name]) {
-                stats[name] = {
-                    eco: name,
-                    name: game.openingName || 'Unknown Opening',
+            const openingKey = game.eco || game.openingName || 'Unknown';
+            if (!stats[openingKey]) {
+                stats[openingKey] = {
+                    eco: game.eco || openingKey,
+                    name: game.openingName || game.eco || 'Unknown Opening',
                     total: 0,
                     wins: 0,
                     losses: 0,
@@ -582,7 +574,7 @@ export const OpeningExplorer = () => {
                 };
             }
 
-            const opening = stats[name];
+            const opening = stats[openingKey];
             if (!opening.sampleGameId) opening.sampleGameId = game.id;
             opening.total++;
             const result = heroResult(game);
@@ -661,20 +653,6 @@ export const OpeningExplorer = () => {
         mq.addEventListener('change', handler);
         return () => mq.removeEventListener('change', handler);
     }, []);
-
-    useEffect(() => {
-        if (!openings || !openings.length) return;
-        if (selectedEco && openings.some((op) => op.eco === selectedEco)) return;
-        const nextEco = openings[0]?.eco || null;
-        if (nextEco) {
-            setSelectedEco(nextEco);
-            try {
-                localStorage.setItem(SELECTED_ECO_KEY, nextEco);
-            } catch {
-                // Ignore persistence errors
-            }
-        }
-    }, [openings, selectedEco]);
 
     if (!openings) return <div className="p-8 text-secondary">Loading openings...</div>;
 
